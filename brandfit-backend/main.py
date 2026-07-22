@@ -6,14 +6,14 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from openai import OpenAI
 
-app = FastAPI(title="BrandResume Core AI Engine")
+app = FastAPI(title="Impulso Core AI Engine")
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "service": "BrandResume Core AI Engine"
+        "service": "Impulso Core AI Engine"
     }
 # Configure CORS to accept extension requests seamlessly
 app.add_middleware(
@@ -104,7 +104,7 @@ async def optimize_resume(payload: OptimizeRequest):
 
     try:
         system_instructions = (
-            "You are the backend parsing engine for BrandResume. Analyze the incoming job description. "
+            "You are the backend parsing engine for Impulso. Analyze the incoming job description. "
             "Extract critical tech stack keywords, framework proficiencies, and professional skills. "
             "You MUST reply only with a valid JSON object matching this structure exactly:\n"
             "{\n"

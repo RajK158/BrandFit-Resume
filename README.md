@@ -1,6 +1,6 @@
-# BrandResume Auto-Apply
+# Impulso
 
-**Early development version.** This project is an unfinished Chrome extension plus FastAPI backend for job-application assistance (profile caching, job-description scraping, form autofill, and resume keyword tailoring). Branding and product naming may change later (for example, Impulso); do not treat this as a production-ready release.
+**Early development version.** Impulso is an unfinished Chrome extension plus FastAPI backend for job-application assistance (profile caching, job-description scraping, form autofill, and resume keyword tailoring). Do not treat this as a production-ready release.
 
 ## Current folder structure
 
@@ -19,6 +19,8 @@ BrandFit-Resume/
 ├── .gitattributes
 └── README.md
 ```
+
+Folder and file names still use the legacy `BrandFit` / `brandfit` paths; they have not been renamed yet.
 
 ## Backend setup (Python)
 
@@ -80,7 +82,7 @@ The optimize API is available at `http://localhost:8000/api/v1/optimize-resume`.
 2. Turn on **Developer mode**.
 3. Click **Load unpacked**.
 4. Select this repository root (the folder that contains `manifest.json`).
-5. Open the extension side panel from the toolbar action.
+5. Open the Impulso side panel from the toolbar action.
 
 ## Security note
 

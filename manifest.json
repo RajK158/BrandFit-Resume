@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "BrandResume Auto-Apply",
+  "name": "Impulso",
   "version": "1.2",
-  "description": "JobRight-style sidepanel for automated application processing.",
+  "description": "Local-first AI career copilot for resume analysis, application autofill, and job tracking.",
   "permissions": [
     "storage",
     "activeTab",
@@ -13,7 +13,7 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "Open BrandResume"
+    "default_title": "Open Impulso"
   },
   "background": {
     "service_worker": "background.js"
