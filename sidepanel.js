@@ -1,24 +1,45 @@
 // URL pointing to the local FastAPI optimize endpoint
 const CENTRAL_WEB_APP_URL = "http://127.0.0.1:8000/api/v1/optimize-resume";
 
-document.addEventListener('DOMContentLoaded', () => {
-  // 1. Initial State Hydration from local sync storage
-  chrome.storage.local.get(['firstName', 'lastName', 'email'], (data) => {
-    if (data.firstName) document.getElementById('firstName').value = data.firstName;
-    if (data.lastName) document.getElementById('lastName').value = data.lastName;
-    if (data.email) document.getElementById('email').value = data.email;
-  });
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await window.ImpulsoStorage.init();
+    const profile = await window.ImpulsoStorage.getMasterProfile();
+    const personal = (profile && profile.personal) || {};
+
+    if (personal.firstName) document.getElementById('firstName').value = personal.firstName;
+    if (personal.lastName) document.getElementById('lastName').value = personal.lastName;
+    if (personal.email) document.getElementById('email').value = personal.email;
+  } catch (error) {
+    console.error("ImpulsoStorage init/load failed:", error);
+    alert("Failed to load profile storage: " + (error.message || error));
+  }
 });
 
 // 2. Profile Cache Updates
-document.getElementById('saveBtn').addEventListener('click', () => {
-  chrome.storage.local.set({
-    firstName: document.getElementById('firstName').value,
-    lastName: document.getElementById('lastName').value,
-    email: document.getElementById('email').value
-  }, () => {
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const firstName = document.getElementById('firstName').value;
+  const lastName = document.getElementById('lastName').value;
+  const email = document.getElementById('email').value;
+
+  try {
+    const existing = await window.ImpulsoStorage.getMasterProfile();
+    const updated = {
+      ...existing,
+      personal: {
+        ...existing.personal,
+        firstName: firstName,
+        lastName: lastName,
+        email: email
+      }
+    };
+
+    await window.ImpulsoStorage.saveMasterProfile(updated);
     alert('Profile cached!');
-  });
+  } catch (error) {
+    console.error("ImpulsoStorage save failed:", error);
+    alert("Failed to save profile: " + (error.message || error));
+  }
 });
 
 // 3. Bulletproof Job Description Extraction Engine (Forced Injection Protocol)
