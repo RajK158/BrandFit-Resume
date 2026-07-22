@@ -12,7 +12,7 @@ const VALID_SECTIONS = [
 
 function showSection(sectionId) {
   if (!VALID_SECTIONS.includes(sectionId)) {
-    sectionId = "home";
+    sectionId = "current-job";
   }
 
   document.querySelectorAll(".view-section").forEach((section) => {
@@ -110,7 +110,7 @@ function initNavigation() {
 
   chrome.storage.local.get([ACTIVE_SECTION_KEY], (data) => {
     const saved = data[ACTIVE_SECTION_KEY];
-    showSection(VALID_SECTIONS.includes(saved) ? saved : "home");
+    showSection(VALID_SECTIONS.includes(saved) ? saved : "current-job");
   });
 }
 

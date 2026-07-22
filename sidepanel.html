@@ -11,16 +11,16 @@
   </header>
 
   <nav class="side-nav" role="tablist" aria-label="Impulso sections">
-    <button type="button" role="tab" id="nav-home" data-section="home" aria-controls="section-home" aria-selected="true" class="active">Home</button>
+    <button type="button" role="tab" id="nav-home" data-section="home" aria-controls="section-home" aria-selected="false">Home</button>
     <button type="button" role="tab" id="nav-profile" data-section="profile" aria-controls="section-profile" aria-selected="false">Profile</button>
-    <button type="button" role="tab" id="nav-current-job" data-section="current-job" aria-controls="section-current-job" aria-selected="false">Current Job</button>
+    <button type="button" role="tab" id="nav-current-job" data-section="current-job" aria-controls="section-current-job" aria-selected="true" class="active">Current Job</button>
     <button type="button" role="tab" id="nav-applications" data-section="applications" aria-controls="section-applications" aria-selected="false">Applications</button>
     <button type="button" role="tab" id="nav-analytics" data-section="analytics" aria-controls="section-analytics" aria-selected="false">Analytics</button>
     <button type="button" role="tab" id="nav-settings" data-section="settings" aria-controls="section-settings" aria-selected="false">Settings</button>
   </nav>
 
   <main class="panel-content">
-    <section id="section-home" class="view-section active" role="tabpanel" aria-labelledby="nav-home">
+    <section id="section-home" class="view-section" role="tabpanel" aria-labelledby="nav-home" hidden>
       <h2 class="section-title">Welcome to Impulso</h2>
       <ul class="status-list">
         <li>
@@ -57,7 +57,7 @@
       <button id="saveBtn" class="action btn-secondary" type="button">Save Core Profile</button>
     </section>
 
-    <section id="section-current-job" class="view-section" role="tabpanel" aria-labelledby="nav-current-job" hidden>
+    <section id="section-current-job" class="view-section active" role="tabpanel" aria-labelledby="nav-current-job">
       <h2 class="section-title">Current Job</h2>
 
       <div class="panel-box">
