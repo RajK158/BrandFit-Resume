@@ -8,6 +8,13 @@ from openai import OpenAI
 
 app = FastAPI(title="BrandResume Core AI Engine")
 
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "BrandResume Core AI Engine"
+    }
 # Configure CORS to accept extension requests seamlessly
 app.add_middleware(
     CORSMiddleware,
