@@ -1,0 +1,239 @@
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --border: #d8dee6;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --success: #16a34a;
+  --success-hover: #15803d;
+  --secondary: #4b5563;
+  --secondary-hover: #374151;
+  --optimize: #6d28d9;
+  --optimize-hover: #5b21b6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.app-header {
+  padding: 12px 12px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.app-header p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.side-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.side-nav button {
+  width: auto;
+  margin: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.side-nav button:hover {
+  background: #e5e7eb;
+}
+
+.side-nav button[aria-selected="true"],
+.side-nav button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.side-nav button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.panel-content {
+  padding: 12px;
+}
+
+.view-section {
+  display: none;
+}
+
+.view-section.active {
+  display: block;
+}
+
+.section-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 4px;
+}
+
+label {
+  font-size: 11px;
+  font-weight: 700;
+  display: block;
+  margin: 10px 0 3px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+input {
+  width: 100%;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.row > div {
+  flex: 1;
+}
+
+.panel-box {
+  background: #f8f9fa;
+  border: 1px solid var(--border);
+  padding: 10px;
+  margin-top: 12px;
+  border-radius: 6px;
+}
+
+.panel-box strong {
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.jd-box {
+  max-height: 100px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 6px;
+  font-size: 11px;
+  color: #444;
+  white-space: pre-wrap;
+  margin-top: 5px;
+}
+
+button.action {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+button.action:hover {
+  background: var(--accent-hover);
+}
+
+button.action.btn-success {
+  background: var(--success);
+}
+
+button.action.btn-success:hover {
+  background: var(--success-hover);
+}
+
+button.action.btn-secondary {
+  background: var(--secondary);
+}
+
+button.action.btn-secondary:hover {
+  background: var(--secondary-hover);
+}
+
+button.action.btn-optimize {
+  background: var(--optimize);
+}
+
+button.action.btn-optimize:hover {
+  background: var(--optimize-hover);
+}
+
+.status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.status-list li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 8px;
+}
+
+.status-list .label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.status-list .value {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.placeholder-note {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
