@@ -9,8 +9,11 @@ from openai import OpenAI
 from .base import (
     AIProvider,
     build_job_analysis_prompts,
+    build_resume_parse_prompts,
+    empty_profile_draft,
     error_result,
     normalize_ai_response,
+    normalize_resume_parse_response,
 )
 
 
@@ -46,3 +49,38 @@ class OpenAIProvider(AIProvider):
             raw_text = None
 
         return normalize_ai_response(raw_text or "", "OpenAI")
+
+    def parse_resume(self, resume_text: str) -> Dict[str, Any]:
+        system_instructions, user_submission = build_resume_parse_prompts(resume_text)
+
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_instructions},
+                    {"role": "user", "content": user_submission},
+                ],
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+        except Exception as exc:
+            message = str(exc)
+            lowered = message.lower()
+            if "timeout" in lowered or "timed out" in lowered:
+                return {
+                    "status": "error",
+                    "profile_draft": empty_profile_draft(),
+                    "message": "OpenAI request timed out. Please try again.",
+                }
+            return {
+                "status": "error",
+                "profile_draft": empty_profile_draft(),
+                "message": f"OpenAI provider error: {message}",
+            }
+
+        try:
+            raw_text = completion.choices[0].message.content if completion.choices else None
+        except Exception:
+            raw_text = None
+
+        return normalize_resume_parse_response(raw_text or "", "OpenAI")

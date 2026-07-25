@@ -1,13 +1,13 @@
-import os
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 
 from ai import get_ai_provider
-from ai.base import AIProvider, AIProviderError
+from ai.base import AIProvider, AIProviderError, empty_profile_draft
+from resume_parser import ResumeExtractionError, extract_resume_text
 
 load_dotenv()
 
@@ -109,10 +109,6 @@ async def optimize_resume(payload: OptimizeRequest):
     if not payload.job_description or not payload.job_description.strip():
         raise HTTPException(status_code=400, detail="Job description text is completely empty.")
 
-    print(
-        f"Received data for applicant: "
-        f"{payload.user_profile.first_name} {payload.user_profile.last_name}"
-    )
     print(f"Job description length: {len(payload.job_description)} characters")
 
     try:
@@ -141,6 +137,88 @@ async def optimize_resume(payload: OptimizeRequest):
             "optimized_data": "",
             "message": str(error_context),
         }
+
+
+@app.post("/api/v1/parse-resume")
+async def parse_resume(file: UploadFile = File(...)):
+    file_bytes = await file.read()
+    print(
+        "Resume parse request received "
+        f"(bytes={len(file_bytes)}, content_type={file.content_type or 'unknown'})"
+    )
+
+    try:
+        extracted = extract_resume_text(file.filename, file.content_type, file_bytes)
+    except ResumeExtractionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        print(f"Resume extraction failure: {type(exc).__name__}")
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to extract text from the uploaded resume.",
+        ) from exc
+
+    warnings = list(extracted.warnings)
+    print(f"Resume text extracted (characters={extracted.character_count})")
+
+    try:
+        provider_or_status, provider_name = get_ai_provider()
+    except AIProviderError as exc:
+        print(f"AI provider initialization error: {exc}")
+        return {
+            "status": "error",
+            "file_name": extracted.file_name,
+            "character_count": extracted.character_count,
+            "profile_draft": empty_profile_draft(),
+            "warnings": warnings,
+            "message": str(exc),
+        }
+
+    if not isinstance(provider_or_status, AIProvider):
+        status = provider_or_status.get("status", "error")
+        message = provider_or_status.get("message", "AI provider unavailable.")
+        print(f"AI provider unavailable ({provider_name}): configuration issue")
+        return {
+            "status": status,
+            "file_name": extracted.file_name,
+            "character_count": extracted.character_count,
+            "profile_draft": {},
+            "warnings": warnings,
+            "message": message,
+        }
+
+    try:
+        parse_result = provider_or_status.parse_resume(extracted.ai_text)
+    except Exception as error_context:
+        print(f"CRITICAL RESUME PARSE ERROR: {type(error_context).__name__}")
+        return {
+            "status": "error",
+            "file_name": extracted.file_name,
+            "character_count": extracted.character_count,
+            "profile_draft": empty_profile_draft(),
+            "warnings": warnings,
+            "message": "Resume parsing failed due to an unexpected provider error.",
+        }
+
+    status = parse_result.get("status", "error")
+    if status != "success":
+        return {
+            "status": status,
+            "file_name": extracted.file_name,
+            "character_count": extracted.character_count,
+            "profile_draft": parse_result.get("profile_draft") or empty_profile_draft(),
+            "warnings": warnings,
+            "message": parse_result.get("message") or "Resume parsing failed.",
+        }
+
+    return {
+        "status": "success",
+        "file_name": extracted.file_name,
+        "character_count": extracted.character_count,
+        "profile_draft": parse_result.get("profile_draft") or empty_profile_draft(),
+        "warnings": warnings,
+        "message": parse_result.get("message") or "Resume parsed successfully.",
+    }
 
 
 if __name__ == "__main__":

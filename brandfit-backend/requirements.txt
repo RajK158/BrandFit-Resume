@@ -4,3 +4,6 @@ openai
 google-genai
 pydantic[email]
 python-dotenv
+python-multipart
+pypdf
+python-docx
