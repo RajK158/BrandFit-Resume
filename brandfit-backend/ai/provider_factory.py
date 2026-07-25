@@ -42,7 +42,7 @@ def get_ai_provider() -> Tuple[ProviderResult, str]:
 
     if provider_name == "gemini":
         api_key = _clean_env("GEMINI_API_KEY")
-        model = _clean_env("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+        model = _clean_env("GEMINI_MODEL", "gemini-flash-latest") or "gemini-flash-latest"
         if not api_key:
             return (
                 dev_mode_result("GEMINI_API_KEY is not configured."),

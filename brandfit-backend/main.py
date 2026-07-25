@@ -159,7 +159,11 @@ async def parse_resume(file: UploadFile = File(...)):
         ) from exc
 
     warnings = list(extracted.warnings)
-    print(f"Resume text extracted (characters={extracted.character_count})")
+    detected_links = extracted.detected_link_dicts
+    print(
+        f"Resume text extracted (characters={extracted.character_count}, "
+        f"links={len(detected_links)})"
+    )
 
     try:
         provider_or_status, provider_name = get_ai_provider()
@@ -170,6 +174,7 @@ async def parse_resume(file: UploadFile = File(...)):
             "file_name": extracted.file_name,
             "character_count": extracted.character_count,
             "profile_draft": empty_profile_draft(),
+            "detected_links": detected_links,
             "warnings": warnings,
             "message": str(exc),
         }
@@ -183,12 +188,16 @@ async def parse_resume(file: UploadFile = File(...)):
             "file_name": extracted.file_name,
             "character_count": extracted.character_count,
             "profile_draft": {},
+            "detected_links": detected_links,
             "warnings": warnings,
             "message": message,
         }
 
     try:
-        parse_result = provider_or_status.parse_resume(extracted.ai_text)
+        parse_result = provider_or_status.parse_resume(
+            extracted.ai_text,
+            detected_links=detected_links,
+        )
     except Exception as error_context:
         print(f"CRITICAL RESUME PARSE ERROR: {type(error_context).__name__}")
         return {
@@ -196,9 +205,12 @@ async def parse_resume(file: UploadFile = File(...)):
             "file_name": extracted.file_name,
             "character_count": extracted.character_count,
             "profile_draft": empty_profile_draft(),
+            "detected_links": detected_links,
             "warnings": warnings,
             "message": "Resume parsing failed due to an unexpected provider error.",
         }
+
+    warnings.extend(parse_result.get("warnings") or [])
 
     status = parse_result.get("status", "error")
     if status != "success":
@@ -207,6 +219,7 @@ async def parse_resume(file: UploadFile = File(...)):
             "file_name": extracted.file_name,
             "character_count": extracted.character_count,
             "profile_draft": parse_result.get("profile_draft") or empty_profile_draft(),
+            "detected_links": detected_links,
             "warnings": warnings,
             "message": parse_result.get("message") or "Resume parsing failed.",
         }
@@ -216,6 +229,7 @@ async def parse_resume(file: UploadFile = File(...)):
         "file_name": extracted.file_name,
         "character_count": extracted.character_count,
         "profile_draft": parse_result.get("profile_draft") or empty_profile_draft(),
+        "detected_links": detected_links,
         "warnings": warnings,
         "message": parse_result.get("message") or "Resume parsed successfully.",
     }

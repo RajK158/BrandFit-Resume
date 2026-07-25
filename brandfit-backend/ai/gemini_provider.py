@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from google import genai
 from google.genai import types
@@ -21,7 +21,7 @@ from .base import (
 
 
 class GeminiProvider(AIProvider):
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash", timeout_seconds: float = 60.0):
+    def __init__(self, api_key: str, model: str = "gemini-flash-latest", timeout_seconds: float = 60.0):
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
@@ -48,7 +48,7 @@ class GeminiProvider(AIProvider):
                 contents=user_submission,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instructions,
-                    temperature=0.2,
+                    temperature=0.15,
                     response_mime_type="application/json",
                 ),
             )
@@ -73,8 +73,15 @@ class GeminiProvider(AIProvider):
 
         return normalize_ai_response(self._extract_text(response), "Gemini")
 
-    def parse_resume(self, resume_text: str) -> Dict[str, Any]:
-        system_instructions, user_submission = build_resume_parse_prompts(resume_text)
+    def parse_resume(
+        self,
+        resume_text: str,
+        detected_links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        system_instructions, user_submission = build_resume_parse_prompts(
+            resume_text,
+            detected_links=detected_links,
+        )
 
         try:
             response = self._generate_json(system_instructions, user_submission)
@@ -82,6 +89,7 @@ class GeminiProvider(AIProvider):
             return {
                 "status": "error",
                 "profile_draft": empty_profile_draft(),
+                "warnings": [],
                 "message": "Gemini request timed out. Please try again.",
             }
         except Exception as exc:
@@ -91,12 +99,19 @@ class GeminiProvider(AIProvider):
                 return {
                     "status": "error",
                     "profile_draft": empty_profile_draft(),
+                    "warnings": [],
                     "message": "Gemini request timed out. Please try again.",
                 }
             return {
                 "status": "error",
                 "profile_draft": empty_profile_draft(),
+                "warnings": [],
                 "message": f"Gemini provider error: {message}",
             }
 
-        return normalize_resume_parse_response(self._extract_text(response), "Gemini")
+        return normalize_resume_parse_response(
+            self._extract_text(response),
+            "Gemini",
+            detected_links=detected_links,
+            resume_text=resume_text,
+        )

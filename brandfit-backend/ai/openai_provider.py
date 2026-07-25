@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
@@ -50,8 +50,15 @@ class OpenAIProvider(AIProvider):
 
         return normalize_ai_response(raw_text or "", "OpenAI")
 
-    def parse_resume(self, resume_text: str) -> Dict[str, Any]:
-        system_instructions, user_submission = build_resume_parse_prompts(resume_text)
+    def parse_resume(
+        self,
+        resume_text: str,
+        detected_links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        system_instructions, user_submission = build_resume_parse_prompts(
+            resume_text,
+            detected_links=detected_links,
+        )
 
         try:
             completion = self.client.chat.completions.create(
@@ -60,7 +67,7 @@ class OpenAIProvider(AIProvider):
                     {"role": "system", "content": system_instructions},
                     {"role": "user", "content": user_submission},
                 ],
-                temperature=0.2,
+                temperature=0.15,
                 response_format={"type": "json_object"},
             )
         except Exception as exc:
@@ -70,11 +77,13 @@ class OpenAIProvider(AIProvider):
                 return {
                     "status": "error",
                     "profile_draft": empty_profile_draft(),
+                    "warnings": [],
                     "message": "OpenAI request timed out. Please try again.",
                 }
             return {
                 "status": "error",
                 "profile_draft": empty_profile_draft(),
+                "warnings": [],
                 "message": f"OpenAI provider error: {message}",
             }
 
@@ -83,4 +92,9 @@ class OpenAIProvider(AIProvider):
         except Exception:
             raw_text = None
 
-        return normalize_resume_parse_response(raw_text or "", "OpenAI")
+        return normalize_resume_parse_response(
+            raw_text or "",
+            "OpenAI",
+            detected_links=detected_links,
+            resume_text=resume_text,
+        )
