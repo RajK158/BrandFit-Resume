@@ -380,12 +380,98 @@
     return settings;
   }
 
+  async function syncLegacyResume(documentRecord) {
+    if (!documentRecord) {
+      return chromeStorageSet({
+        resumeBase64: "",
+        resumeName: ""
+      });
+    }
+
+    return chromeStorageSet({
+      resumeBase64: documentRecord.fileData || "",
+      resumeName: documentRecord.name || ""
+    });
+  }
+
+  async function getDocument(id) {
+    if (!id) return null;
+    try {
+      return await withStore(STORE_DOCUMENTS, "readonly", (store) => idbRequest(store.get(id)));
+    } catch (error) {
+      throw new Error("Failed to read document from IndexedDB: " + error.message);
+    }
+  }
+
+  async function listDocuments() {
+    try {
+      const docs = await withStore(STORE_DOCUMENTS, "readonly", (store) => idbRequest(store.getAll()));
+      return Array.isArray(docs) ? docs : [];
+    } catch (error) {
+      throw new Error("Failed to list documents from IndexedDB: " + error.message);
+    }
+  }
+
+  async function saveDocument(documentRecord) {
+    if (!documentRecord || typeof documentRecord !== "object" || !documentRecord.id) {
+      throw new Error("saveDocument requires a document object with an id");
+    }
+
+    const timestamp = nowIso();
+    const toSave = {
+      id: String(documentRecord.id),
+      name: documentRecord.name || "",
+      type: documentRecord.type || "",
+      size: Number(documentRecord.size) || 0,
+      fileData: documentRecord.fileData || "",
+      isDefault: Boolean(documentRecord.isDefault),
+      createdAt: documentRecord.createdAt || timestamp,
+      updatedAt: timestamp
+    };
+
+    try {
+      await withStore(STORE_DOCUMENTS, "readwrite", (store) => idbRequest(store.put(toSave)));
+    } catch (error) {
+      throw new Error("Failed to save document to IndexedDB: " + error.message);
+    }
+
+    return toSave;
+  }
+
+  async function deleteDocument(id) {
+    if (!id) return false;
+    try {
+      await withStore(STORE_DOCUMENTS, "readwrite", (store) => idbRequest(store.delete(id)));
+      return true;
+    } catch (error) {
+      throw new Error("Failed to delete document from IndexedDB: " + error.message);
+    }
+  }
+
+  async function getDefaultResume() {
+    const profile = await getMasterProfile();
+    if (profile && profile.defaultResumeId) {
+      const byId = await getDocument(profile.defaultResumeId);
+      if (byId) return byId;
+    }
+
+    const docs = await listDocuments();
+    const flagged = docs.find((doc) => doc && doc.isDefault);
+    return flagged || null;
+  }
+
   global.ImpulsoStorage = {
     init: init,
     getMasterProfile: getMasterProfile,
     saveMasterProfile: saveMasterProfile,
     getSettings: getSettings,
     saveSettings: saveSettings,
-    createDefaultMasterProfile: createDefaultMasterProfile
+    createDefaultMasterProfile: createDefaultMasterProfile,
+    getDocument: getDocument,
+    listDocuments: listDocuments,
+    saveDocument: saveDocument,
+    deleteDocument: deleteDocument,
+    getDefaultResume: getDefaultResume,
+    syncLegacyResume: syncLegacyResume
   };
 })(typeof window !== "undefined" ? window : self);

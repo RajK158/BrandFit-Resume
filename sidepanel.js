@@ -37,6 +37,10 @@ function showSection(sectionId) {
   if (sectionId === "home") {
     refreshHomeStatus();
   }
+
+  if (sectionId === "profile" && window.ImpulsoResume) {
+    window.ImpulsoResume.refresh();
+  }
 }
 
 function refreshHomeStatus() {
@@ -125,6 +129,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (personal.firstName) document.getElementById("firstName").value = personal.firstName;
     if (personal.lastName) document.getElementById("lastName").value = personal.lastName;
     if (personal.email) document.getElementById("email").value = personal.email;
+
+    if (window.ImpulsoResume) {
+      await window.ImpulsoResume.init();
+    }
   } catch (error) {
     console.error("ImpulsoStorage init/load failed:", error);
     alert("Failed to load profile storage: " + (error.message || error));
