@@ -56,9 +56,28 @@
 
       <button id="saveBtn" class="action btn-secondary" type="button">Save Core Profile</button>
 
+      <div id="masterProfilePanel" class="master-profile-panel">
+        <details id="masterProfileDetails" class="resume-review-details master-profile-details">
+          <summary class="resume-review-summary">
+            <span class="resume-review-title">View / Edit Master Profile</span>
+          </summary>
+          <div class="resume-review-body master-profile-body">
+            <p class="resume-hint">Edit your saved master profile. Changes are written only when you click Save Changes.</p>
+            <div id="masterProfileEditor" class="resume-review-editor"></div>
+          </div>
+        </details>
+        <div class="resume-review-footer master-profile-footer" id="masterProfileFooter" hidden>
+          <div id="masterProfileStatus" class="resume-status" aria-live="polite"></div>
+          <div class="resume-review-actions" id="masterProfileActions">
+            <button id="masterProfileSaveBtn" class="action" type="button">Save Changes</button>
+            <button id="masterProfileCancelBtn" class="action btn-secondary" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <div class="panel-box resume-panel">
         <strong>Resume</strong>
-        <p class="resume-hint">Upload a PDF or DOCX resume (maximum 5 MB). Parsing comes later.</p>
+        <p class="resume-hint">Upload a PDF or DOCX resume (maximum 5 MB). Parse to review extracted profile data before saving.</p>
 
         <div id="resumeEmptyState">
           <input
@@ -90,9 +109,30 @@
           >
           <button id="resumeReplaceBtn" class="action btn-secondary" type="button">Replace Resume</button>
           <button id="resumeRemoveBtn" class="action btn-danger" type="button">Remove Resume</button>
+          <button id="resumeParseBtn" class="action" type="button">Parse Resume</button>
         </div>
 
         <div id="resumeStatus" class="resume-status" aria-live="polite"></div>
+      </div>
+
+      <div id="resumeReviewPanel" class="resume-review" hidden>
+        <details id="resumeReviewDetails" class="resume-review-details">
+          <summary class="resume-review-summary">
+            <span class="resume-review-title">Review Parsed Profile</span>
+          </summary>
+          <div class="resume-review-body">
+            <p class="resume-hint">Edit the draft below. Nothing is saved to your master profile until you approve.</p>
+            <div id="resumeParseSummary" class="resume-parse-summary" aria-live="polite"></div>
+            <div id="resumeReviewEditor" class="resume-review-editor"></div>
+          </div>
+        </details>
+        <div class="resume-review-footer" id="resumeReviewFooter">
+          <div id="resumeReviewStatus" class="resume-status" aria-live="polite"></div>
+          <div class="resume-review-actions" id="resumeReviewActions">
+            <button id="resumeApproveBtn" class="action" type="button">Approve &amp; Save</button>
+            <button id="resumeCancelReviewBtn" class="action btn-secondary" type="button">Cancel</button>
+          </div>
+        </div>
       </div>
     </section>
 

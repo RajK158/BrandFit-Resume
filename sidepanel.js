@@ -81,6 +81,8 @@ function refreshHomeStatus() {
   });
 }
 
+window.refreshHomeStatus = refreshHomeStatus;
+
 function initNavigation() {
   const navButtons = document.querySelectorAll(".side-nav [role='tab']");
 
@@ -161,6 +163,14 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
 
     await window.ImpulsoStorage.saveMasterProfile(updated);
     refreshHomeStatus();
+    if (
+      window.ImpulsoResume &&
+      typeof window.ImpulsoResume.loadMasterProfileEditor === "function" &&
+      document.getElementById("masterProfileDetails") &&
+      document.getElementById("masterProfileDetails").open
+    ) {
+      await window.ImpulsoResume.loadMasterProfileEditor();
+    }
     alert("Profile cached!");
   } catch (error) {
     console.error("ImpulsoStorage save failed:", error);

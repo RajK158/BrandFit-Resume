@@ -460,6 +460,173 @@
     return flagged || null;
   }
 
+  function _isNonEmptyValue(value) {
+    if (value == null) return false;
+    if (typeof value === "string") return Boolean(value.trim());
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "object") return Object.keys(value).length > 0;
+    return true;
+  }
+
+  function _valuesConflict(existingValue, parsedValue) {
+    if (!_isNonEmptyValue(existingValue) || !_isNonEmptyValue(parsedValue)) {
+      return false;
+    }
+    try {
+      return JSON.stringify(existingValue) !== JSON.stringify(parsedValue);
+    } catch (_) {
+      return String(existingValue) !== String(parsedValue);
+    }
+  }
+
+  function detectProfileConflicts(masterProfile, parsedDraft) {
+    const master = masterProfile || createDefaultMasterProfile();
+    const draft = parsedDraft || {};
+    const conflicts = [];
+
+    const personalFields = ["firstName", "lastName", "email", "phone", "location"];
+    personalFields.forEach((field) => {
+      const existingValue = (master.personal && master.personal[field]) || "";
+      const parsedValue = (draft.personal && draft.personal[field]) || "";
+      if (_valuesConflict(existingValue, parsedValue)) {
+        conflicts.push({
+          id: "personal." + field,
+          path: "personal." + field,
+          label: "Personal · " + field,
+          existingValue: existingValue,
+          parsedValue: parsedValue
+        });
+      }
+    });
+
+    const linkFields = ["linkedin", "github", "portfolio"];
+    linkFields.forEach((field) => {
+      const existingValue = (master.links && master.links[field]) || "";
+      const parsedValue = (draft.links && draft.links[field]) || "";
+      if (_valuesConflict(existingValue, parsedValue)) {
+        conflicts.push({
+          id: "links." + field,
+          path: "links." + field,
+          label: "Links · " + field,
+          existingValue: existingValue,
+          parsedValue: parsedValue
+        });
+      }
+    });
+
+    [
+      { key: "experience", label: "Experience" },
+      { key: "education", label: "Education" },
+      { key: "projects", label: "Projects" },
+      { key: "skills", label: "Skills" },
+      { key: "certifications", label: "Certifications" }
+    ].forEach((section) => {
+      const existingValue = Array.isArray(master[section.key]) ? master[section.key] : [];
+      const parsedValue = Array.isArray(draft[section.key]) ? draft[section.key] : [];
+      if (_valuesConflict(existingValue, parsedValue)) {
+        conflicts.push({
+          id: section.key,
+          path: section.key,
+          label: section.label,
+          existingValue: existingValue,
+          parsedValue: parsedValue,
+          isSection: true
+        });
+      }
+    });
+
+    return conflicts;
+  }
+
+  function _pickScalar(existingValue, parsedValue, choice) {
+    if (!_isNonEmptyValue(existingValue)) return parsedValue || "";
+    if (!_isNonEmptyValue(parsedValue)) return existingValue || "";
+    if (!_valuesConflict(existingValue, parsedValue)) return parsedValue || existingValue || "";
+    return choice === "existing" ? existingValue : parsedValue;
+  }
+
+  function _pickSection(existingValue, parsedValue, choice) {
+    const existing = Array.isArray(existingValue) ? existingValue : [];
+    const parsed = Array.isArray(parsedValue) ? parsedValue : [];
+    if (!_isNonEmptyValue(existing)) return parsed;
+    if (!_isNonEmptyValue(parsed)) return existing;
+    if (!_valuesConflict(existing, parsed)) return parsed;
+    return choice === "existing" ? existing : parsed;
+  }
+
+  function mergeApprovedProfileDraft(masterProfile, reviewedDraft, resolutions) {
+    const master = masterProfile || createDefaultMasterProfile();
+    const draft = reviewedDraft || {};
+    const choices = resolutions || {};
+    const timestamp = nowIso();
+
+    const merged = {
+      ...master,
+      id: MASTER_PROFILE_ID,
+      schemaVersion: master.schemaVersion || 1,
+      personal: {
+        firstName: _pickScalar(
+          master.personal && master.personal.firstName,
+          draft.personal && draft.personal.firstName,
+          choices["personal.firstName"]
+        ),
+        lastName: _pickScalar(
+          master.personal && master.personal.lastName,
+          draft.personal && draft.personal.lastName,
+          choices["personal.lastName"]
+        ),
+        email: _pickScalar(
+          master.personal && master.personal.email,
+          draft.personal && draft.personal.email,
+          choices["personal.email"]
+        ),
+        phone: _pickScalar(
+          master.personal && master.personal.phone,
+          draft.personal && draft.personal.phone,
+          choices["personal.phone"]
+        ),
+        location: _pickScalar(
+          master.personal && master.personal.location,
+          draft.personal && draft.personal.location,
+          choices["personal.location"]
+        )
+      },
+      links: {
+        linkedin: _pickScalar(
+          master.links && master.links.linkedin,
+          draft.links && draft.links.linkedin,
+          choices["links.linkedin"]
+        ),
+        github: _pickScalar(
+          master.links && master.links.github,
+          draft.links && draft.links.github,
+          choices["links.github"]
+        ),
+        portfolio: _pickScalar(
+          master.links && master.links.portfolio,
+          draft.links && draft.links.portfolio,
+          choices["links.portfolio"]
+        )
+      },
+      experience: _pickSection(master.experience, draft.experience, choices.experience),
+      education: _pickSection(master.education, draft.education, choices.education),
+      projects: _pickSection(master.projects, draft.projects, choices.projects),
+      skills: _pickSection(master.skills, draft.skills, choices.skills),
+      certifications: _pickSection(
+        master.certifications,
+        draft.certifications,
+        choices.certifications
+      ),
+      workAuthorization: master.workAuthorization || {},
+      commonAnswers: master.commonAnswers || {},
+      defaultResumeId: master.defaultResumeId == null ? null : master.defaultResumeId,
+      createdAt: master.createdAt || timestamp,
+      updatedAt: timestamp
+    };
+
+    return merged;
+  }
+
   global.ImpulsoStorage = {
     init: init,
     getMasterProfile: getMasterProfile,
@@ -472,6 +639,8 @@
     saveDocument: saveDocument,
     deleteDocument: deleteDocument,
     getDefaultResume: getDefaultResume,
-    syncLegacyResume: syncLegacyResume
+    syncLegacyResume: syncLegacyResume,
+    detectProfileConflicts: detectProfileConflicts,
+    mergeApprovedProfileDraft: mergeApprovedProfileDraft
   };
 })(typeof window !== "undefined" ? window : self);
