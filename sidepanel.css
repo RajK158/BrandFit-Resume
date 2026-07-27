@@ -676,8 +676,86 @@ button.action.btn-danger:hover {
   max-height: min(52vh, 480px);
 }
 
-.master-profile-footer {
+.section-save-status {
+  margin-top: 6px;
+  min-height: 1.2em;
+}
+
+.application-info-panel {
+  margin: 14px 0;
+}
+
+.application-info-body {
+  max-height: min(56vh, 520px);
+}
+
+.application-info-footer {
   margin-top: 8px;
+}
+
+.application-info-footer[hidden] {
+  display: none !important;
+}
+
+.app-info-fieldset {
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.app-info-fieldset legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.app-info-field {
+  display: block;
+  margin: 8px 0 3px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.app-info-fieldset input,
+.app-info-fieldset select,
+.app-info-fieldset textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--text);
+}
+
+.app-info-fieldset textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+
+.optional-tag {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.demographics-notice {
+  margin: 4px 0 8px;
+  padding: 8px;
+  border-radius: 4px;
+  background: #f8fafc;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.app-info-demographics {
+  border-style: dashed;
 }
 
 .resume-review-actions {

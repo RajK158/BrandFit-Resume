@@ -1321,13 +1321,16 @@
     if (footer) footer.hidden = !visible;
   }
 
-  function clearMasterEditor() {
+  function clearMasterEditor(options) {
+    const opts = options || {};
     masterEditDraft = null;
     masterEditBaseline = null;
     masterEditLoaded = false;
     const editor = document.getElementById("masterProfileEditor");
     if (editor) editor.innerHTML = "";
-    setMasterProfileStatus("", false);
+    if (!opts.keepStatus) {
+      setMasterProfileStatus("", false);
+    }
     setMasterProfileFooterVisible(false);
   }
 
@@ -1533,8 +1536,17 @@
       if (typeof global.refreshHomeStatus === "function") {
         global.refreshHomeStatus();
       }
-      renderMasterEditor();
-      setMasterProfileStatus("Master profile saved.", false);
+
+      const details = document.getElementById("masterProfileDetails");
+      const summary = details && details.querySelector("summary");
+      if (details) {
+        details.open = false;
+      }
+      clearMasterEditor({ keepStatus: true });
+      setMasterProfileStatus("Master profile updated.", false);
+      if (summary && typeof summary.scrollIntoView === "function") {
+        summary.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     } catch (error) {
       setMasterProfileStatus(error.message || "Failed to save master profile.", true);
     }

@@ -28,6 +28,52 @@
     return new Date().toISOString();
   }
 
+  function createDefaultWorkAuthorization(overrides) {
+    const base = {
+      countryApplyingIn: "",
+      legallyAuthorizedToWork: "",
+      requireSponsorshipNow: "",
+      requireSponsorshipFuture: "",
+      currentVisaStatus: "",
+      visaExpirationDate: ""
+    };
+    return { ...base, ...(overrides || {}) };
+  }
+
+  function createDefaultApplicationPreferences(overrides) {
+    const base = {
+      availableStartDate: "",
+      noticePeriod: "",
+      employmentTypePreference: "",
+      willingToRelocate: "",
+      preferredLocations: "",
+      workLocationPreference: ""
+    };
+    return { ...base, ...(overrides || {}) };
+  }
+
+  function createDefaultCommonAnswers(overrides) {
+    const base = {
+      salaryExpectation: "",
+      referralSource: "",
+      linkedinMessageOrAdditionalInfo: "",
+      defaultCoverLetter: "",
+      whyInterestedInRole: "",
+      anythingElseToKnow: ""
+    };
+    return { ...base, ...(overrides || {}) };
+  }
+
+  function createDefaultDemographics(overrides) {
+    const base = {
+      gender: "",
+      raceEthnicity: "",
+      veteranStatus: "",
+      disabilityStatus: ""
+    };
+    return { ...base, ...(overrides || {}) };
+  }
+
   function createDefaultMasterProfile(overrides) {
     const timestamp = nowIso();
     const base = {
@@ -50,8 +96,10 @@
       projects: [],
       skills: [],
       certifications: [],
-      workAuthorization: {},
-      commonAnswers: {},
+      workAuthorization: createDefaultWorkAuthorization(),
+      applicationPreferences: createDefaultApplicationPreferences(),
+      commonAnswers: createDefaultCommonAnswers(),
+      demographics: createDefaultDemographics(),
       defaultResumeId: null,
       createdAt: timestamp,
       updatedAt: timestamp
@@ -69,8 +117,10 @@
       projects: overrides.projects || base.projects,
       skills: overrides.skills || base.skills,
       certifications: overrides.certifications || base.certifications,
-      workAuthorization: overrides.workAuthorization || base.workAuthorization,
-      commonAnswers: overrides.commonAnswers || base.commonAnswers
+      workAuthorization: createDefaultWorkAuthorization(overrides.workAuthorization),
+      applicationPreferences: createDefaultApplicationPreferences(overrides.applicationPreferences),
+      commonAnswers: createDefaultCommonAnswers(overrides.commonAnswers),
+      demographics: createDefaultDemographics(overrides.demographics)
     };
   }
 
@@ -320,7 +370,7 @@
       await syncLegacyKeysFromProfile(profile);
     }
 
-    return profile;
+    return createDefaultMasterProfile(profile);
   }
 
   async function saveMasterProfile(profile) {
@@ -345,7 +395,9 @@
       skills: Array.isArray(profile.skills) ? profile.skills : [],
       certifications: Array.isArray(profile.certifications) ? profile.certifications : [],
       workAuthorization: profile.workAuthorization || {},
+      applicationPreferences: profile.applicationPreferences || {},
       commonAnswers: profile.commonAnswers || {},
+      demographics: profile.demographics || {},
       defaultResumeId: profile.defaultResumeId == null ? null : profile.defaultResumeId
     });
 
@@ -617,8 +669,10 @@
         draft.certifications,
         choices.certifications
       ),
-      workAuthorization: master.workAuthorization || {},
-      commonAnswers: master.commonAnswers || {},
+      workAuthorization: createDefaultWorkAuthorization(master.workAuthorization),
+      applicationPreferences: createDefaultApplicationPreferences(master.applicationPreferences),
+      commonAnswers: createDefaultCommonAnswers(master.commonAnswers),
+      demographics: createDefaultDemographics(master.demographics),
       defaultResumeId: master.defaultResumeId == null ? null : master.defaultResumeId,
       createdAt: master.createdAt || timestamp,
       updatedAt: timestamp
@@ -634,6 +688,10 @@
     getSettings: getSettings,
     saveSettings: saveSettings,
     createDefaultMasterProfile: createDefaultMasterProfile,
+    createDefaultWorkAuthorization: createDefaultWorkAuthorization,
+    createDefaultApplicationPreferences: createDefaultApplicationPreferences,
+    createDefaultCommonAnswers: createDefaultCommonAnswers,
+    createDefaultDemographics: createDefaultDemographics,
     getDocument: getDocument,
     listDocuments: listDocuments,
     saveDocument: saveDocument,

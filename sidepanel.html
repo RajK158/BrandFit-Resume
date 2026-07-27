@@ -66,11 +66,170 @@
             <div id="masterProfileEditor" class="resume-review-editor"></div>
           </div>
         </details>
+        <div id="masterProfileStatus" class="resume-status section-save-status" aria-live="polite"></div>
         <div class="resume-review-footer master-profile-footer" id="masterProfileFooter" hidden>
-          <div id="masterProfileStatus" class="resume-status" aria-live="polite"></div>
           <div class="resume-review-actions" id="masterProfileActions">
             <button id="masterProfileSaveBtn" class="action" type="button">Save Changes</button>
             <button id="masterProfileCancelBtn" class="action btn-secondary" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="applicationInfoPanel" class="application-info-panel">
+        <details id="applicationInfoDetails" class="resume-review-details">
+          <summary class="resume-review-summary">
+            <span class="resume-review-title">Application Information</span>
+          </summary>
+          <div class="resume-review-body application-info-body">
+            <p class="resume-hint">Answers used for job applications. Saved only when you click Save Application Information.</p>
+
+            <fieldset class="app-info-fieldset">
+              <legend>Work Authorization</legend>
+              <label class="app-info-field" for="appCountryApplyingIn">Country applying in</label>
+              <input type="text" id="appCountryApplyingIn" data-app-section="workAuthorization" data-app-field="countryApplyingIn" placeholder="United States">
+
+              <label class="app-info-field" for="appLegallyAuthorized">Legally authorized to work</label>
+              <select id="appLegallyAuthorized" data-app-section="workAuthorization" data-app-field="legallyAuthorizedToWork">
+                <option value="">Select…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+
+              <label class="app-info-field" for="appSponsorshipNow">Require sponsorship now</label>
+              <select id="appSponsorshipNow" data-app-section="workAuthorization" data-app-field="requireSponsorshipNow">
+                <option value="">Select…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+
+              <label class="app-info-field" for="appSponsorshipFuture">Require sponsorship in the future</label>
+              <select id="appSponsorshipFuture" data-app-section="workAuthorization" data-app-field="requireSponsorshipFuture">
+                <option value="">Select…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+
+              <label class="app-info-field" for="appVisaStatus">Current visa/status</label>
+              <input type="text" id="appVisaStatus" data-app-section="workAuthorization" data-app-field="currentVisaStatus" placeholder="Citizen, Green Card, H-1B, OPT…">
+
+              <label class="app-info-field" for="appVisaExpiration">Visa expiration date <span class="optional-tag">optional</span></label>
+              <input type="date" id="appVisaExpiration" data-app-section="workAuthorization" data-app-field="visaExpirationDate">
+            </fieldset>
+
+            <fieldset class="app-info-fieldset">
+              <legend>Availability</legend>
+              <label class="app-info-field" for="appStartDate">Available start date</label>
+              <input type="date" id="appStartDate" data-app-section="applicationPreferences" data-app-field="availableStartDate">
+
+              <label class="app-info-field" for="appNoticePeriod">Notice period</label>
+              <input type="text" id="appNoticePeriod" data-app-section="applicationPreferences" data-app-field="noticePeriod" placeholder="2 weeks, immediate…">
+
+              <label class="app-info-field" for="appEmploymentType">Employment type preference</label>
+              <select id="appEmploymentType" data-app-section="applicationPreferences" data-app-field="employmentTypePreference">
+                <option value="">Select…</option>
+                <option value="full_time">Full-time</option>
+                <option value="part_time">Part-time</option>
+                <option value="contract">Contract</option>
+                <option value="internship">Internship</option>
+                <option value="any">Any</option>
+              </select>
+
+              <label class="app-info-field" for="appWillingRelocate">Willing to relocate</label>
+              <select id="appWillingRelocate" data-app-section="applicationPreferences" data-app-field="willingToRelocate">
+                <option value="">Select…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+                <option value="open">Open to discussion</option>
+              </select>
+
+              <label class="app-info-field" for="appPreferredLocations">Preferred locations</label>
+              <input type="text" id="appPreferredLocations" data-app-section="applicationPreferences" data-app-field="preferredLocations" placeholder="San Francisco, Remote, NYC…">
+
+              <label class="app-info-field" for="appWorkLocationPref">Remote, hybrid, or onsite preference</label>
+              <select id="appWorkLocationPref" data-app-section="applicationPreferences" data-app-field="workLocationPreference">
+                <option value="">Select…</option>
+                <option value="remote">Remote</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="onsite">Onsite</option>
+                <option value="flexible">Flexible</option>
+              </select>
+            </fieldset>
+
+            <fieldset class="app-info-fieldset">
+              <legend>Common Application Answers</legend>
+              <label class="app-info-field" for="appSalaryExpectation">Salary expectation <span class="optional-tag">optional</span></label>
+              <input type="text" id="appSalaryExpectation" data-app-section="commonAnswers" data-app-field="salaryExpectation" placeholder="$120,000 or negotiable">
+
+              <label class="app-info-field" for="appReferralSource">Referral source</label>
+              <input type="text" id="appReferralSource" data-app-section="commonAnswers" data-app-field="referralSource" placeholder="LinkedIn, company site, referral…">
+
+              <label class="app-info-field" for="appLinkedInMessage">LinkedIn message or additional information</label>
+              <textarea id="appLinkedInMessage" data-app-section="commonAnswers" data-app-field="linkedinMessageOrAdditionalInfo" rows="3" placeholder="Short note or outreach message"></textarea>
+
+              <label class="app-info-field" for="appDefaultCoverLetter">Default cover letter</label>
+              <textarea id="appDefaultCoverLetter" data-app-section="commonAnswers" data-app-field="defaultCoverLetter" rows="4" placeholder="Reusable cover letter text"></textarea>
+
+              <label class="app-info-field" for="appWhyInterested">Why are you interested in this role</label>
+              <textarea id="appWhyInterested" data-app-section="commonAnswers" data-app-field="whyInterestedInRole" rows="3"></textarea>
+
+              <label class="app-info-field" for="appAnythingElse">Anything else you want the employer to know</label>
+              <textarea id="appAnythingElse" data-app-section="commonAnswers" data-app-field="anythingElseToKnow" rows="3"></textarea>
+            </fieldset>
+
+            <fieldset class="app-info-fieldset app-info-demographics">
+              <legend>Optional Demographics</legend>
+              <p class="demographics-notice">
+                Optional demographic information is stored locally on this device, is never inferred from your resume, and can be left blank.
+              </p>
+
+              <label class="app-info-field" for="appGender">Gender</label>
+              <select id="appGender" data-app-section="demographics" data-app-field="gender">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="Woman">Woman</option>
+                <option value="Man">Man</option>
+                <option value="Non-binary">Non-binary</option>
+                <option value="Self-describe">Self-describe</option>
+              </select>
+
+              <label class="app-info-field" for="appRaceEthnicity">Race or ethnicity</label>
+              <select id="appRaceEthnicity" data-app-section="demographics" data-app-field="raceEthnicity">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="American Indian or Alaska Native">American Indian or Alaska Native</option>
+                <option value="Asian">Asian</option>
+                <option value="Black or African American">Black or African American</option>
+                <option value="Hispanic or Latino">Hispanic or Latino</option>
+                <option value="Middle Eastern or North African">Middle Eastern or North African</option>
+                <option value="Native Hawaiian or Pacific Islander">Native Hawaiian or Pacific Islander</option>
+                <option value="White">White</option>
+                <option value="Two or more races">Two or more races</option>
+                <option value="Self-describe">Self-describe</option>
+              </select>
+
+              <label class="app-info-field" for="appVeteranStatus">Veteran status</label>
+              <select id="appVeteranStatus" data-app-section="demographics" data-app-field="veteranStatus">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="I am not a protected veteran">I am not a protected veteran</option>
+                <option value="I identify as a protected veteran">I identify as a protected veteran</option>
+              </select>
+
+              <label class="app-info-field" for="appDisabilityStatus">Disability status</label>
+              <select id="appDisabilityStatus" data-app-section="demographics" data-app-field="disabilityStatus">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="Yes, I have a disability">Yes, I have a disability</option>
+                <option value="No, I do not have a disability">No, I do not have a disability</option>
+              </select>
+            </fieldset>
+          </div>
+        </details>
+        <div id="applicationInfoStatus" class="resume-status section-save-status" aria-live="polite"></div>
+        <div class="resume-review-footer application-info-footer" id="applicationInfoFooter" hidden>
+          <div class="resume-review-actions">
+            <button id="applicationInfoSaveBtn" class="action" type="button">Save Application Information</button>
+            <button id="applicationInfoCancelBtn" class="action btn-secondary" type="button">Cancel Changes</button>
           </div>
         </div>
       </div>

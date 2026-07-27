@@ -83,6 +83,179 @@ function refreshHomeStatus() {
 
 window.refreshHomeStatus = refreshHomeStatus;
 
+let applicationInfoBaseline = null;
+
+function setApplicationInfoStatus(message, isError) {
+  const statusEl = document.getElementById("applicationInfoStatus");
+  if (!statusEl) return;
+  statusEl.textContent = message || "";
+  statusEl.classList.toggle("error", Boolean(isError));
+}
+
+function setApplicationInfoFooterVisible(visible) {
+  const footer = document.getElementById("applicationInfoFooter");
+  if (footer) footer.hidden = !visible;
+}
+
+function readApplicationInfoFromForm() {
+  const storage = window.ImpulsoStorage;
+  const workAuthorization = storage.createDefaultWorkAuthorization();
+  const applicationPreferences = storage.createDefaultApplicationPreferences();
+  const commonAnswers = storage.createDefaultCommonAnswers();
+  const demographics = storage.createDefaultDemographics();
+
+  document.querySelectorAll("[data-app-section][data-app-field]").forEach((el) => {
+    const section = el.getAttribute("data-app-section");
+    const field = el.getAttribute("data-app-field");
+    const value = String(el.value || "");
+    if (section === "workAuthorization") workAuthorization[field] = value;
+    if (section === "applicationPreferences") applicationPreferences[field] = value;
+    if (section === "commonAnswers") commonAnswers[field] = value;
+    if (section === "demographics") demographics[field] = value;
+  });
+
+  return {
+    workAuthorization: workAuthorization,
+    applicationPreferences: applicationPreferences,
+    commonAnswers: commonAnswers,
+    demographics: demographics
+  };
+}
+
+function applyApplicationInfoToForm(data) {
+  const storage = window.ImpulsoStorage;
+  const payload = {
+    workAuthorization: storage.createDefaultWorkAuthorization(data && data.workAuthorization),
+    applicationPreferences: storage.createDefaultApplicationPreferences(
+      data && data.applicationPreferences
+    ),
+    commonAnswers: storage.createDefaultCommonAnswers(data && data.commonAnswers),
+    demographics: storage.createDefaultDemographics(data && data.demographics)
+  };
+
+  document.querySelectorAll("[data-app-section][data-app-field]").forEach((el) => {
+    const section = el.getAttribute("data-app-section");
+    const field = el.getAttribute("data-app-field");
+    const sectionData = payload[section] || {};
+    const value = sectionData[field];
+    el.value = value == null ? "" : String(value);
+
+    if (el.tagName === "SELECT" && value && !Array.from(el.options).some((opt) => opt.value === value)) {
+      const custom = document.createElement("option");
+      custom.value = String(value);
+      custom.textContent = String(value);
+      el.appendChild(custom);
+      el.value = String(value);
+    }
+  });
+
+  return payload;
+}
+
+function cloneApplicationInfo(data) {
+  return JSON.parse(JSON.stringify(data || {}));
+}
+
+async function loadApplicationInformation() {
+  setApplicationInfoStatus("Loading application information…", false);
+  setApplicationInfoFooterVisible(true);
+  try {
+    const profile = await window.ImpulsoStorage.getMasterProfile();
+    const loaded = applyApplicationInfoToForm(profile);
+    applicationInfoBaseline = cloneApplicationInfo(loaded);
+    setApplicationInfoStatus("Loaded from local storage.", false);
+  } catch (error) {
+    applicationInfoBaseline = null;
+    setApplicationInfoStatus(error.message || "Failed to load application information.", true);
+  }
+}
+
+function clearApplicationInformationForm(options) {
+  const opts = options || {};
+  applyApplicationInfoToForm({});
+  applicationInfoBaseline = null;
+  if (!opts.keepStatus) {
+    setApplicationInfoStatus("", false);
+  }
+  setApplicationInfoFooterVisible(false);
+}
+
+async function saveApplicationInformation() {
+  try {
+    const existing = await window.ImpulsoStorage.getMasterProfile();
+    const formData = readApplicationInfoFromForm();
+    const updated = {
+      ...existing,
+      workAuthorization: formData.workAuthorization,
+      applicationPreferences: formData.applicationPreferences,
+      commonAnswers: formData.commonAnswers,
+      demographics: formData.demographics,
+      defaultResumeId: existing.defaultResumeId == null ? null : existing.defaultResumeId,
+      createdAt: existing.createdAt
+    };
+
+    const saved = await window.ImpulsoStorage.saveMasterProfile(updated);
+    applicationInfoBaseline = cloneApplicationInfo({
+      workAuthorization: saved.workAuthorization,
+      applicationPreferences: saved.applicationPreferences,
+      commonAnswers: saved.commonAnswers,
+      demographics: saved.demographics
+    });
+
+    const details = document.getElementById("applicationInfoDetails");
+    const summary = details && details.querySelector("summary");
+    if (details) {
+      details.open = false;
+    }
+    clearApplicationInformationForm({ keepStatus: true });
+    setApplicationInfoStatus("Application information saved.", false);
+    if (summary && typeof summary.scrollIntoView === "function") {
+      summary.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  } catch (error) {
+    setApplicationInfoStatus(error.message || "Failed to save application information.", true);
+  }
+}
+
+function cancelApplicationInformationChanges() {
+  if (!applicationInfoBaseline) {
+    clearApplicationInformationForm();
+    const details = document.getElementById("applicationInfoDetails");
+    if (details) details.open = false;
+    return;
+  }
+  applyApplicationInfoToForm(applicationInfoBaseline);
+  setApplicationInfoStatus("Unsaved changes discarded.", false);
+}
+
+function initApplicationInformationUI() {
+  const details = document.getElementById("applicationInfoDetails");
+  const saveBtn = document.getElementById("applicationInfoSaveBtn");
+  const cancelBtn = document.getElementById("applicationInfoCancelBtn");
+
+  if (details) {
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        loadApplicationInformation();
+      } else {
+        clearApplicationInformationForm();
+      }
+    });
+  }
+
+  if (saveBtn) {
+    saveBtn.addEventListener("click", () => {
+      saveApplicationInformation();
+    });
+  }
+
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", () => {
+      cancelApplicationInformationChanges();
+    });
+  }
+}
+
 function initNavigation() {
   const navButtons = document.querySelectorAll(".side-nav [role='tab']");
 
@@ -122,6 +295,7 @@ function initNavigation() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   initNavigation();
+  initApplicationInformationUI();
 
   try {
     await window.ImpulsoStorage.init();
