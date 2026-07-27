@@ -38,10 +38,76 @@ function showSection(sectionId) {
     refreshHomeStatus();
   }
 
-  if (sectionId === "profile" && window.ImpulsoResume) {
-    window.ImpulsoResume.refresh();
+  if (sectionId === "profile") {
+    refreshProfileReadiness();
+    if (window.ImpulsoResume) {
+      window.ImpulsoResume.refresh();
+    }
   }
 }
+
+function renderReadinessBlock(prefix, readiness) {
+  const scoreEl = document.getElementById(prefix + "ReadinessScore");
+  const badgeEl = document.getElementById(prefix + "ReadinessBadge");
+  const missingEl = document.getElementById(prefix + "ReadinessMissing");
+  const cardEl = document.getElementById(prefix + "Readiness");
+  if (!scoreEl || !badgeEl || !missingEl) return;
+
+  const score = readiness && typeof readiness.score === "number" ? readiness.score : 0;
+  const ready = Boolean(readiness && readiness.ready);
+  const missing = (readiness && readiness.missing) || [];
+
+  scoreEl.textContent = "Profile readiness: " + score + "%";
+  badgeEl.textContent = ready ? "Ready to Apply" : "Profile Incomplete";
+  badgeEl.classList.toggle("ready", ready);
+  badgeEl.classList.toggle("incomplete", !ready);
+  if (cardEl) {
+    cardEl.classList.toggle("is-ready", ready);
+    cardEl.classList.toggle("is-incomplete", !ready);
+  }
+
+  missingEl.innerHTML = "";
+  if (!ready && missing.length) {
+    missing.slice(0, 8).forEach((item) => {
+      const li = document.createElement("li");
+      li.textContent = item;
+      missingEl.appendChild(li);
+    });
+    if (missing.length > 8) {
+      const more = document.createElement("li");
+      more.textContent = "+" + (missing.length - 8) + " more";
+      missingEl.appendChild(more);
+    }
+  } else if (ready) {
+    const li = document.createElement("li");
+    li.className = "readiness-ok";
+    li.textContent = "All required profile items are complete.";
+    missingEl.appendChild(li);
+  }
+}
+
+async function refreshProfileReadiness() {
+  if (!window.ImpulsoStorage || typeof window.ImpulsoStorage.getProfileReadiness !== "function") {
+    return;
+  }
+
+  try {
+    const readiness = await window.ImpulsoStorage.getProfileReadiness();
+    renderReadinessBlock("home", readiness);
+    renderReadinessBlock("profile", readiness);
+  } catch (error) {
+    const fallback = {
+      score: 0,
+      ready: false,
+      missing: ["Unable to calculate readiness"]
+    };
+    renderReadinessBlock("home", fallback);
+    renderReadinessBlock("profile", fallback);
+    console.error("Profile readiness refresh failed:", error);
+  }
+}
+
+window.refreshProfileReadiness = refreshProfileReadiness;
 
 function refreshHomeStatus() {
   const profileEl = document.getElementById("homeProfileStatus");
@@ -79,6 +145,8 @@ function refreshHomeStatus() {
       }
     }
   });
+
+  refreshProfileReadiness();
 }
 
 window.refreshHomeStatus = refreshHomeStatus;
@@ -194,12 +262,20 @@ async function saveApplicationInformation() {
       createdAt: existing.createdAt
     };
 
-    const saved = await window.ImpulsoStorage.saveMasterProfile(updated);
+    const validation = window.ImpulsoStorage.validateMasterProfile(updated);
+    if (!validation.ok) {
+      setApplicationInfoStatus(validation.errors.join(" "), true);
+      return;
+    }
+
+    await window.ImpulsoStorage.saveMasterProfile(updated);
+
+    const masterProfile = await window.ImpulsoStorage.getMasterProfile();
     applicationInfoBaseline = cloneApplicationInfo({
-      workAuthorization: saved.workAuthorization,
-      applicationPreferences: saved.applicationPreferences,
-      commonAnswers: saved.commonAnswers,
-      demographics: saved.demographics
+      workAuthorization: masterProfile.workAuthorization,
+      applicationPreferences: masterProfile.applicationPreferences,
+      commonAnswers: masterProfile.commonAnswers,
+      demographics: masterProfile.demographics
     });
 
     const details = document.getElementById("applicationInfoDetails");
@@ -212,6 +288,13 @@ async function saveApplicationInformation() {
     if (summary && typeof summary.scrollIntoView === "function") {
       summary.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
+
+    const resume = await window.ImpulsoStorage.getDefaultResume();
+    const readiness = window.ImpulsoStorage.assessProfileReadiness(masterProfile, {
+      hasDefaultResume: Boolean(resume && resume.id)
+    });
+    renderReadinessBlock("home", readiness);
+    renderReadinessBlock("profile", readiness);
   } catch (error) {
     setApplicationInfoStatus(error.message || "Failed to save application information.", true);
   }
@@ -293,9 +376,33 @@ function initNavigation() {
   });
 }
 
+function updateEmailTypoWarning(emailValue) {
+  const warningEl = document.getElementById("emailTypoWarning");
+  if (!warningEl || !window.ImpulsoStorage) return;
+
+  const suggestion = window.ImpulsoStorage.suggestEmailCorrection(emailValue);
+  if (suggestion && suggestion.toLowerCase() !== String(emailValue || "").trim().toLowerCase()) {
+    warningEl.hidden = false;
+    warningEl.textContent = "Did you mean " + suggestion + "?";
+  } else {
+    warningEl.hidden = true;
+    warningEl.textContent = "";
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   initNavigation();
   initApplicationInformationUI();
+
+  const emailInput = document.getElementById("email");
+  if (emailInput) {
+    emailInput.addEventListener("input", () => {
+      updateEmailTypoWarning(emailInput.value);
+    });
+    emailInput.addEventListener("blur", () => {
+      updateEmailTypoWarning(emailInput.value);
+    });
+  }
 
   try {
     await window.ImpulsoStorage.init();
@@ -304,7 +411,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (personal.firstName) document.getElementById("firstName").value = personal.firstName;
     if (personal.lastName) document.getElementById("lastName").value = personal.lastName;
-    if (personal.email) document.getElementById("email").value = personal.email;
+    if (personal.email) {
+      document.getElementById("email").value = personal.email;
+      updateEmailTypoWarning(personal.email);
+    }
 
     if (window.ImpulsoResume) {
       await window.ImpulsoResume.init();
@@ -324,6 +434,13 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
   const email = document.getElementById("email").value;
 
   try {
+    if (email.trim() && !window.ImpulsoStorage.isValidEmailFormat(email)) {
+      alert("Email format is invalid.");
+      return;
+    }
+
+    updateEmailTypoWarning(email);
+
     const existing = await window.ImpulsoStorage.getMasterProfile();
     const updated = {
       ...existing,
@@ -335,6 +452,12 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
       }
     };
 
+    const validation = window.ImpulsoStorage.validateMasterProfile(updated);
+    if (!validation.ok) {
+      alert(validation.errors.join("\n"));
+      return;
+    }
+
     await window.ImpulsoStorage.saveMasterProfile(updated);
     refreshHomeStatus();
     if (
@@ -345,7 +468,13 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
     ) {
       await window.ImpulsoResume.loadMasterProfileEditor();
     }
-    alert("Profile cached!");
+
+    const suggestion = window.ImpulsoStorage.suggestEmailCorrection(email);
+    if (suggestion && suggestion.toLowerCase() !== email.trim().toLowerCase()) {
+      alert("Profile cached!\n\nDid you mean " + suggestion + "?");
+    } else {
+      alert("Profile cached!");
+    }
   } catch (error) {
     console.error("ImpulsoStorage save failed:", error);
     alert("Failed to save profile: " + (error.message || error));

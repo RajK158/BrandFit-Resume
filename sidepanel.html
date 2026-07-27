@@ -22,6 +22,13 @@
   <main class="panel-content">
     <section id="section-home" class="view-section" role="tabpanel" aria-labelledby="nav-home" hidden>
       <h2 class="section-title">Welcome to Impulso</h2>
+      <div id="homeReadiness" class="readiness-card" aria-live="polite">
+        <div class="readiness-row">
+          <span class="readiness-score" id="homeReadinessScore">Profile readiness: —</span>
+          <span class="readiness-badge" id="homeReadinessBadge">—</span>
+        </div>
+        <ul class="readiness-missing" id="homeReadinessMissing"></ul>
+      </div>
       <ul class="status-list">
         <li>
           <span class="label">Profile status</span>
@@ -40,6 +47,13 @@
 
     <section id="section-profile" class="view-section" role="tabpanel" aria-labelledby="nav-profile" hidden>
       <h2 class="section-title">Profile</h2>
+      <div id="profileReadiness" class="readiness-card readiness-card-compact" aria-live="polite">
+        <div class="readiness-row">
+          <span class="readiness-score" id="profileReadinessScore">Profile readiness: —</span>
+          <span class="readiness-badge" id="profileReadinessBadge">—</span>
+        </div>
+        <ul class="readiness-missing" id="profileReadinessMissing"></ul>
+      </div>
       <div class="row">
         <div>
           <label for="firstName">First Name</label>
@@ -53,6 +67,7 @@
 
       <label for="email">Email</label>
       <input type="email" id="email" placeholder="raj@example.com">
+      <div id="emailTypoWarning" class="email-typo-warning" hidden role="status" aria-live="polite"></div>
 
       <button id="saveBtn" class="action btn-secondary" type="button">Save Core Profile</button>
 

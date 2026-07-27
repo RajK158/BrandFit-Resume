@@ -401,6 +401,14 @@
       defaultResumeId: profile.defaultResumeId == null ? null : profile.defaultResumeId
     });
 
+    const validation = validateMasterProfile(toSave);
+    if (!validation.ok) {
+      const error = new Error(validation.errors.join(" "));
+      error.code = "PROFILE_VALIDATION";
+      error.validationErrors = validation.errors;
+      throw error;
+    }
+
     try {
       await withStore(STORE_PROFILES, "readwrite", (store) => writeProfileToStore(store, toSave));
     } catch (error) {
@@ -416,6 +424,7 @@
       );
     }
 
+    notifyProfileDataChanged();
     return toSave;
   }
 
@@ -487,6 +496,7 @@
       throw new Error("Failed to save document to IndexedDB: " + error.message);
     }
 
+    notifyProfileDataChanged();
     return toSave;
   }
 
@@ -494,6 +504,7 @@
     if (!id) return false;
     try {
       await withStore(STORE_DOCUMENTS, "readwrite", (store) => idbRequest(store.delete(id)));
+      notifyProfileDataChanged();
       return true;
     } catch (error) {
       throw new Error("Failed to delete document from IndexedDB: " + error.message);
@@ -681,6 +692,256 @@
     return merged;
   }
 
+  function notifyProfileDataChanged() {
+    if (typeof global.refreshProfileReadiness === "function") {
+      try {
+        global.refreshProfileReadiness();
+      } catch (_) {
+        // Readiness UI refresh is best-effort.
+      }
+    }
+  }
+
+  function _trimText(value) {
+    return String(value == null ? "" : value).trim();
+  }
+
+  function _isFilled(value) {
+    return Boolean(_trimText(value));
+  }
+
+  function isValidEmailFormat(email) {
+    const value = _trimText(email);
+    if (!value) return true;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  }
+
+  const EMAIL_DOMAIN_TYPOS = {
+    "gnail.com": "gmail.com",
+    "gmal.com": "gmail.com",
+    "gmail.con": "gmail.com",
+    "hotnail.com": "hotmail.com",
+    "outlook.con": "outlook.com"
+  };
+
+  function suggestEmailCorrection(email) {
+    const value = _trimText(email);
+    if (!value || value.indexOf("@") < 0) return null;
+
+    const atIndex = value.lastIndexOf("@");
+    const local = value.slice(0, atIndex);
+    const domain = value.slice(atIndex + 1).toLowerCase();
+    if (!local || !domain) return null;
+
+    const correctedDomain = EMAIL_DOMAIN_TYPOS[domain];
+    if (!correctedDomain) return null;
+
+    return local + "@" + correctedDomain;
+  }
+
+  function isValidUrlFormat(url) {
+    const value = _trimText(url);
+    if (!value) return true;
+    try {
+      const withProtocol = /^https?:\/\//i.test(value) ? value : "https://" + value;
+      const parsed = new URL(withProtocol);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function _parseFlexibleDate(value) {
+    const text = _trimText(value);
+    if (!text) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      const date = new Date(text + "T00:00:00");
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function _dateRangeInvalid(startValue, endValue) {
+    const start = _parseFlexibleDate(startValue);
+    const end = _parseFlexibleDate(endValue);
+    if (!start || !end) return false;
+    return start.getTime() > end.getTime();
+  }
+
+  function findDuplicateSkills(skills) {
+    const seen = new Set();
+    const duplicates = [];
+    (Array.isArray(skills) ? skills : []).forEach((skill) => {
+      const label = _trimText(skill);
+      if (!label) return;
+      const key = label.toLowerCase();
+      if (seen.has(key)) {
+        if (!duplicates.includes(label)) duplicates.push(label);
+      } else {
+        seen.add(key);
+      }
+    });
+    return duplicates;
+  }
+
+  function validateMasterProfile(profile) {
+    const errors = [];
+    const data = createDefaultMasterProfile(profile || {});
+    const personal = data.personal || {};
+    const links = data.links || {};
+
+    if (_isFilled(personal.email) && !isValidEmailFormat(personal.email)) {
+      errors.push("Email format is invalid.");
+    }
+
+    if (_isFilled(links.linkedin) && !isValidUrlFormat(links.linkedin)) {
+      errors.push("LinkedIn URL format is invalid.");
+    }
+    if (_isFilled(links.github) && !isValidUrlFormat(links.github)) {
+      errors.push("GitHub URL format is invalid.");
+    }
+    if (_isFilled(links.portfolio) && !isValidUrlFormat(links.portfolio)) {
+      errors.push("Portfolio URL format is invalid.");
+    }
+
+    (data.projects || []).forEach((project, index) => {
+      if (project && _isFilled(project.url) && !isValidUrlFormat(project.url)) {
+        errors.push("Project " + (index + 1) + " URL format is invalid.");
+      }
+    });
+
+    const duplicates = findDuplicateSkills(data.skills);
+    if (duplicates.length) {
+      errors.push("Duplicate skills are not allowed (" + duplicates.join(", ") + ").");
+    }
+
+    (data.experience || []).forEach((item, index) => {
+      if (!item) return;
+      if (_dateRangeInvalid(item.startDate, item.endDate)) {
+        errors.push("Experience " + (index + 1) + ": start date cannot be after end date.");
+      }
+    });
+
+    (data.education || []).forEach((item, index) => {
+      if (!item) return;
+      if (_dateRangeInvalid(item.startDate, item.endDate)) {
+        errors.push("Education " + (index + 1) + ": start date cannot be after end date.");
+      }
+    });
+
+    return {
+      ok: errors.length === 0,
+      errors: errors
+    };
+  }
+
+  function assessProfileReadiness(profile, options) {
+    const opts = options || {};
+    const masterProfile = profile || {};
+    const data = createDefaultMasterProfile(masterProfile);
+    const personal = data.personal || {};
+    const work = createDefaultWorkAuthorization(
+      masterProfile.workAuthorization || data.workAuthorization
+    );
+    const prefs = data.applicationPreferences || {};
+    const hasDefaultResume =
+      opts.hasDefaultResume != null
+        ? Boolean(opts.hasDefaultResume)
+        : Boolean(data.defaultResumeId && String(data.defaultResumeId).trim());
+
+    const checks = [
+      {
+        id: "firstName",
+        label: "First name",
+        complete: _isFilled(personal.firstName)
+      },
+      {
+        id: "lastName",
+        label: "Last name",
+        complete: _isFilled(personal.lastName)
+      },
+      {
+        id: "email",
+        label: "Email",
+        complete: _isFilled(personal.email)
+      },
+      {
+        id: "phone",
+        label: "Phone",
+        complete: _isFilled(personal.phone)
+      },
+      {
+        id: "location",
+        label: "Location",
+        complete: _isFilled(personal.location)
+      },
+      {
+        id: "defaultResume",
+        label: "Default resume uploaded",
+        complete: hasDefaultResume
+      },
+      {
+        id: "experience",
+        label: "At least one experience entry",
+        complete: Array.isArray(data.experience) && data.experience.length > 0
+      },
+      {
+        id: "education",
+        label: "At least one education entry",
+        complete: Array.isArray(data.education) && data.education.length > 0
+      },
+      {
+        id: "skills",
+        label: "Skills",
+        complete: Array.isArray(data.skills) && data.skills.some((skill) => _isFilled(skill))
+      },
+      {
+        id: "workAuthorization",
+        label: "Work authorization",
+        complete:
+          _isFilled(work.countryApplyingIn) &&
+          _isFilled(work.legallyAuthorizedToWork) &&
+          _isFilled(work.requireSponsorshipNow) &&
+          _isFilled(work.requireSponsorshipFuture)
+      },
+      {
+        id: "availability",
+        label: "Availability",
+        complete:
+          _isFilled(prefs.availableStartDate) &&
+          _isFilled(prefs.noticePeriod) &&
+          _isFilled(prefs.employmentTypePreference) &&
+          _isFilled(prefs.willingToRelocate) &&
+          _isFilled(prefs.preferredLocations) &&
+          _isFilled(prefs.workLocationPreference)
+      }
+    ];
+
+    const completedCount = checks.filter((check) => check.complete).length;
+    const score = Math.round((completedCount / checks.length) * 100);
+    const missing = checks.filter((check) => !check.complete).map((check) => check.label);
+    const ready = missing.length === 0;
+
+    return {
+      score: score,
+      ready: ready,
+      statusLabel: ready ? "Ready to Apply" : "Profile Incomplete",
+      missing: missing,
+      checks: checks,
+      completedCount: completedCount,
+      totalCount: checks.length
+    };
+  }
+
+  async function getProfileReadiness() {
+    const masterProfile = await getMasterProfile();
+    const resume = await getDefaultResume();
+    return assessProfileReadiness(masterProfile, {
+      hasDefaultResume: Boolean(resume && resume.id)
+    });
+  }
+
   global.ImpulsoStorage = {
     init: init,
     getMasterProfile: getMasterProfile,
@@ -699,6 +960,12 @@
     getDefaultResume: getDefaultResume,
     syncLegacyResume: syncLegacyResume,
     detectProfileConflicts: detectProfileConflicts,
-    mergeApprovedProfileDraft: mergeApprovedProfileDraft
+    mergeApprovedProfileDraft: mergeApprovedProfileDraft,
+    validateMasterProfile: validateMasterProfile,
+    assessProfileReadiness: assessProfileReadiness,
+    getProfileReadiness: getProfileReadiness,
+    isValidEmailFormat: isValidEmailFormat,
+    isValidUrlFormat: isValidUrlFormat,
+    suggestEmailCorrection: suggestEmailCorrection
   };
 })(typeof window !== "undefined" ? window : self);
