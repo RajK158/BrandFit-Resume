@@ -38,6 +38,10 @@ function showSection(sectionId) {
     refreshHomeStatus();
   }
 
+  if (sectionId === "current-job" && window.ImpulsoJob) {
+    window.ImpulsoJob.refresh();
+  }
+
   if (sectionId === "profile") {
     refreshProfileReadiness();
     if (window.ImpulsoResume) {
@@ -118,7 +122,7 @@ function refreshHomeStatus() {
     appsEl.textContent = "0 applications tracked (coming soon)";
   }
 
-  chrome.storage.local.get(["currentJobDescription", "firstName", "lastName", "email"], (data) => {
+  chrome.storage.local.get(["firstName", "lastName", "email"], (data) => {
     const firstName = (data.firstName || "").trim();
     const lastName = (data.lastName || "").trim();
     const email = (data.email || "").trim();
@@ -134,19 +138,41 @@ function refreshHomeStatus() {
         profileEl.textContent = "Incomplete — add your name and email in Profile";
       }
     }
-
-    if (jobEl) {
-      const jd = (data.currentJobDescription || "").trim();
-      if (jd) {
-        const preview = jd.length > 80 ? jd.slice(0, 80) + "…" : jd;
-        jobEl.textContent = "Captured — " + preview;
-      } else {
-        jobEl.textContent = "No job description captured yet";
-      }
-    }
   });
 
+  refreshHomeJobStatus();
   refreshProfileReadiness();
+}
+
+async function refreshHomeJobStatus() {
+  const jobEl = document.getElementById("homeJobStatus");
+  if (!jobEl) return;
+
+  try {
+    if (window.ImpulsoJob && typeof window.ImpulsoJob.getCurrentJob === "function") {
+      const current = await window.ImpulsoJob.getCurrentJob();
+      if (current) {
+        const label = [current.title, current.company].filter(Boolean).join(" @ ");
+        const stale = await window.ImpulsoJob.getStaleState();
+        jobEl.textContent = stale.stale
+          ? "Saved (stale tab) — " + (label || "Current job")
+          : "Saved — " + (label || "Current job");
+        return;
+      }
+    }
+  } catch (_) {
+    // Fall through to legacy description preview.
+  }
+
+  chrome.storage.local.get(["currentJobDescription"], (data) => {
+    const jd = (data.currentJobDescription || "").trim();
+    if (jd) {
+      const preview = jd.length > 80 ? jd.slice(0, 80) + "…" : jd;
+      jobEl.textContent = "Captured — " + preview;
+    } else {
+      jobEl.textContent = "No current job saved yet";
+    }
+  });
 }
 
 window.refreshHomeStatus = refreshHomeStatus;
@@ -419,6 +445,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (window.ImpulsoResume) {
       await window.ImpulsoResume.init();
     }
+    if (window.ImpulsoJob) {
+      await window.ImpulsoJob.init();
+    }
   } catch (error) {
     console.error("ImpulsoStorage init/load failed:", error);
     alert("Failed to load profile storage: " + (error.message || error));
@@ -481,59 +510,7 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
   }
 });
 
-// 3. Bulletproof Job Description Extraction Engine (Forced Injection Protocol)
-document.getElementById("scrapeBtn").addEventListener("click", async () => {
-  const statusBox = document.getElementById("jdStatus");
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return;
-
-  statusBox.innerText = "🔍 Parsing webpage DOM...";
-
-  // Force execute script parameters directly on the active window frame context
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: () => {
-      const selectors = [
-        "#main",
-        "#content",
-        '[class*="description"]',
-        '[id*="description"]',
-        "#job-details",
-        ".job-body",
-        "article"
-      ];
-
-      let foundText = "";
-      for (const selector of selectors) {
-        const el = document.querySelector(selector);
-        if (el && el.innerText.trim().length > 200) {
-          foundText = el.innerText;
-          break;
-        }
-      }
-
-      // ATS Form Fallback optimization (Greenhouse / Lever scraper variant)
-      if (!foundText || foundText.length < 300) {
-        const bodyClone = document.body.cloneNode(true);
-        // Clean up interactive and structural nodes to shield raw description metrics
-        bodyClone.querySelectorAll("script, style, nav, footer, input, button, label").forEach((el) => el.remove());
-        foundText = bodyClone.innerText;
-      }
-
-      return foundText.replace(/\s+/g, " ").trim();
-    }
-  }, (results) => {
-    if (results && results[0] && results[0].result) {
-      const extractedJD = results[0].result;
-      statusBox.innerText = extractedJD.substring(0, 300) + "...";
-      chrome.storage.local.set({ currentJobDescription: extractedJD }, () => {
-        refreshHomeStatus();
-      });
-    } else {
-      statusBox.innerText = "❌ Extraction failed. Ensure you are on an active job page.";
-    }
-  });
-});
+// 3. Current job extraction is handled by window.ImpulsoJob (job.js).
 
 // 4. Form Filling Orchestration Call
 document.getElementById("fillBtn").addEventListener("click", async () => {
@@ -549,92 +526,104 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
 // 5. Keyword Tuning and Server Pipeline Exchange
 document.getElementById("optimizeBtn").addEventListener("click", async () => {
   const statusBox = document.getElementById("jdStatus");
+  if (statusBox) statusBox.hidden = false;
 
-  chrome.storage.local.get(["currentJobDescription", "firstName", "lastName", "email"], async (data) => {
-    const firstName = (data.firstName || "").trim();
-    const lastName = (data.lastName || "").trim();
-    const email = (data.email || "").trim();
-    const jobDescription = (data.currentJobDescription || "").trim();
-
-    const missing = [];
-    if (!firstName) missing.push("first name");
-    if (!lastName) missing.push("last name");
-    if (!email) missing.push("email");
-    if (!jobDescription) missing.push("job description");
-
-    if (missing.length > 0) {
-      statusBox.innerText =
-        "⚠️ Missing required data: " + missing.join(", ") +
-        ". Save your profile and extract a job description before optimizing.";
-      return;
+  try {
+    let currentJob = null;
+    if (window.ImpulsoJob && typeof window.ImpulsoJob.getCurrentJobForAnalysis === "function") {
+      currentJob = await window.ImpulsoJob.getCurrentJobForAnalysis();
     }
 
-    statusBox.innerText = "🔄 Connecting to BrandResume Web App to optimize keywords...";
+    chrome.storage.local.get(["firstName", "lastName", "email"], async (data) => {
+      const firstName = (data.firstName || "").trim();
+      const lastName = (data.lastName || "").trim();
+      const email = (data.email || "").trim();
+      const jobDescription = (currentJob && currentJob.description ? currentJob.description : "").trim();
 
-    const payload = {
-      user_profile: {
-        first_name: firstName,
-        last_name: lastName,
-        email: email
-      },
-      job_description: jobDescription
-    };
+      const missing = [];
+      if (!firstName) missing.push("first name");
+      if (!lastName) missing.push("last name");
+      if (!email) missing.push("email");
+      if (!jobDescription) missing.push("job description");
 
-    try {
-      const response = await fetch(CENTRAL_WEB_APP_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      });
-
-      let result;
-      try {
-        result = await response.json();
-      } catch (_) {
-        statusBox.innerText = "❌ Backend returned an invalid response.";
-        return;
-      }
-
-      if (!response.ok) {
-        const detail = result.detail || result.message || `HTTP ${response.status}`;
-        statusBox.innerText = `❌ Error: ${detail}`;
-        return;
-      }
-
-      if (result.status === "dev_mode") {
+      if (missing.length > 0) {
         statusBox.innerText =
-          "⚠️ OPENAI_API_KEY is not configured. " +
-          (result.message || "Set the key in brandfit-backend/.env and restart the server.");
+          "⚠️ Missing required data: " + missing.join(", ") +
+          ". Save your profile and extract a current job before optimizing.";
         return;
       }
 
-      if (result.status === "error") {
-        statusBox.innerText = `❌ Error: ${result.message || "Optimization failed."}`;
-        return;
-      }
+      statusBox.innerText = "🔄 Connecting to BrandResume Web App to optimize keywords...";
 
-      if (result.status === "success") {
-        const keywords = Array.isArray(result.keywords) ? result.keywords : [];
-        const optimizedData = result.optimized_data || "";
+      const payload = {
+        user_profile: {
+          first_name: firstName,
+          last_name: lastName,
+          email: email
+        },
+        job_description: jobDescription
+      };
 
-        chrome.storage.local.set({
-          optimizedResumeData: optimizedData,
-          tailoredKeywords: keywords
-        }, () => {
-          const advice = optimizedData ? ` ${optimizedData}` : "";
-          statusBox.innerText =
-            `✅ Success! Matched ${keywords.length} critical keywords.${advice}`;
-          console.log("BrandResume Match Engine Results:", result);
+      try {
+        const response = await fetch(CENTRAL_WEB_APP_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
         });
-        return;
-      }
 
-      statusBox.innerText = `❌ Unexpected backend status: ${result.status || "unknown"}`;
-    } catch (error) {
-      console.error("Backend request failed:", error);
-      statusBox.innerText = "Backend is unavailable. Start the FastAPI server and try again.";
+        let result;
+        try {
+          result = await response.json();
+        } catch (_) {
+          statusBox.innerText = "❌ Backend returned an invalid response.";
+          return;
+        }
+
+        if (!response.ok) {
+          const detail = result.detail || result.message || `HTTP ${response.status}`;
+          statusBox.innerText = `❌ Error: ${detail}`;
+          return;
+        }
+
+        if (result.status === "dev_mode") {
+          statusBox.innerText =
+            "⚠️ OPENAI_API_KEY is not configured. " +
+            (result.message || "Set the key in brandfit-backend/.env and restart the server.");
+          return;
+        }
+
+        if (result.status === "error") {
+          statusBox.innerText = `❌ Error: ${result.message || "Optimization failed."}`;
+          return;
+        }
+
+        if (result.status === "success") {
+          const keywords = Array.isArray(result.keywords) ? result.keywords : [];
+          const optimizedData = result.optimized_data || "";
+
+          chrome.storage.local.set({
+            optimizedResumeData: optimizedData,
+            tailoredKeywords: keywords
+          }, () => {
+            const advice = optimizedData ? ` ${optimizedData}` : "";
+            statusBox.innerText =
+              `✅ Success! Matched ${keywords.length} critical keywords.${advice}`;
+            console.log("BrandResume Match Engine Results:", result);
+          });
+          return;
+        }
+
+        statusBox.innerText = `❌ Unexpected backend status: ${result.status || "unknown"}`;
+      } catch (error) {
+        console.error("Backend request failed:", error);
+        statusBox.innerText = "Backend is unavailable. Start the FastAPI server and try again.";
+      }
+    });
+  } catch (error) {
+    if (statusBox) {
+      statusBox.innerText = "⚠️ " + (error.message || "Current job is unavailable for analysis.");
     }
-  });
+  }
 });

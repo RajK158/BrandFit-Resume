@@ -523,6 +523,158 @@
     return flagged || null;
   }
 
+  const CURRENT_JOB_ID_KEY = "currentJobId";
+
+  function normalizeJobUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""));
+      parsed.hash = "";
+      ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "trk", "refId"].forEach(
+        (param) => parsed.searchParams.delete(param)
+      );
+      let normalized = parsed.origin + parsed.pathname.replace(/\/+$/, "");
+      const query = parsed.searchParams.toString();
+      if (query) normalized += "?" + query;
+      return normalized.toLowerCase();
+    } catch (_) {
+      return String(url || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\/+$/, "");
+    }
+  }
+
+  function hashJobKey(input) {
+    const text = String(input || "");
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  function buildStableJobId(url, company, title) {
+    const key = [
+      normalizeJobUrl(url),
+      String(company || "")
+        .trim()
+        .toLowerCase(),
+      String(title || "")
+        .trim()
+        .toLowerCase()
+    ].join("|");
+    return "job-" + hashJobKey(key);
+  }
+
+  function createJobRecord(overrides) {
+    const timestamp = nowIso();
+    const source = overrides || {};
+    const title = String(source.title || "").trim();
+    const company = String(source.company || "").trim();
+    const url = String(source.url || "").trim();
+    const id = source.id || buildStableJobId(url, company, title);
+
+    return {
+      id: id,
+      title: title,
+      company: company,
+      location: String(source.location || "").trim(),
+      description: String(source.description || "").trim(),
+      url: url,
+      domain: String(source.domain || "").trim(),
+      atsPlatform: String(source.atsPlatform || "generic").trim() || "generic",
+      extractedAt: source.extractedAt || timestamp,
+      createdAt: source.createdAt || timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  async function getJob(id) {
+    if (!id) return null;
+    try {
+      return await withStore(STORE_JOBS, "readonly", (store) => idbRequest(store.get(id)));
+    } catch (error) {
+      throw new Error("Failed to read job from IndexedDB: " + error.message);
+    }
+  }
+
+  async function listJobs() {
+    try {
+      const jobs = await withStore(STORE_JOBS, "readonly", (store) => idbRequest(store.getAll()));
+      return Array.isArray(jobs) ? jobs : [];
+    } catch (error) {
+      throw new Error("Failed to list jobs from IndexedDB: " + error.message);
+    }
+  }
+
+  async function saveJob(jobRecord) {
+    if (!jobRecord || typeof jobRecord !== "object") {
+      throw new Error("saveJob requires a job object");
+    }
+
+    const existing = jobRecord.id ? await getJob(jobRecord.id) : null;
+    const toSave = createJobRecord({
+      ...jobRecord,
+      id: jobRecord.id || buildStableJobId(jobRecord.url, jobRecord.company, jobRecord.title),
+      createdAt: (existing && existing.createdAt) || jobRecord.createdAt,
+      updatedAt: nowIso()
+    });
+
+    try {
+      await withStore(STORE_JOBS, "readwrite", (store) => idbRequest(store.put(toSave)));
+    } catch (error) {
+      throw new Error("Failed to save job to IndexedDB: " + error.message);
+    }
+
+    return toSave;
+  }
+
+  async function deleteJob(id) {
+    if (!id) return false;
+    try {
+      await withStore(STORE_JOBS, "readwrite", (store) => idbRequest(store.delete(id)));
+      return true;
+    } catch (error) {
+      throw new Error("Failed to delete job from IndexedDB: " + error.message);
+    }
+  }
+
+  async function getCurrentJobId() {
+    const settings = await getSettings();
+    return settings[CURRENT_JOB_ID_KEY] || null;
+  }
+
+  async function setCurrentJobId(jobId) {
+    const settings = await getSettings();
+    const next = Object.assign({}, settings);
+    if (jobId) {
+      next[CURRENT_JOB_ID_KEY] = String(jobId);
+    } else {
+      delete next[CURRENT_JOB_ID_KEY];
+    }
+    await saveSettings(next);
+    return jobId || null;
+  }
+
+  async function getCurrentJob() {
+    const jobId = await getCurrentJobId();
+    if (!jobId) return null;
+    return getJob(jobId);
+  }
+
+  async function setCurrentJob(jobRecord) {
+    const saved = await saveJob(jobRecord);
+    await setCurrentJobId(saved.id);
+    return saved;
+  }
+
+  async function clearCurrentJob() {
+    const currentId = await getCurrentJobId();
+    await setCurrentJobId(null);
+    return currentId;
+  }
+
   function _isNonEmptyValue(value) {
     if (value == null) return false;
     if (typeof value === "string") return Boolean(value.trim());
@@ -958,6 +1110,18 @@
     saveDocument: saveDocument,
     deleteDocument: deleteDocument,
     getDefaultResume: getDefaultResume,
+    normalizeJobUrl: normalizeJobUrl,
+    buildStableJobId: buildStableJobId,
+    createJobRecord: createJobRecord,
+    getJob: getJob,
+    listJobs: listJobs,
+    saveJob: saveJob,
+    deleteJob: deleteJob,
+    getCurrentJob: getCurrentJob,
+    setCurrentJob: setCurrentJob,
+    clearCurrentJob: clearCurrentJob,
+    getCurrentJobId: getCurrentJobId,
+    setCurrentJobId: setCurrentJobId,
     syncLegacyResume: syncLegacyResume,
     detectProfileConflicts: detectProfileConflicts,
     mergeApprovedProfileDraft: mergeApprovedProfileDraft,

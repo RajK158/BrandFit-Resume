@@ -88,35 +88,3 @@
     }
   }
 })();
-
-
-// Add to the bottom of content.js
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "SCRAPE_JOB_DESCRIPTION") {
-    // Look for standard high-probability description blocks used across Greenhouse, Lever, Workday
-    const selectors = [
-      '[class*="description"]', 
-      '[id*="description"]', 
-      '#job-details', 
-      '.job-body',
-      'article'
-    ];
-    
-    let foundText = "";
-    for (const selector of selectors) {
-      const el = document.querySelector(selector);
-      if (el && el.innerText.trim().length > 200) {
-        foundText = el.innerText;
-        break;
-      }
-    }
-
-    // Fallback: If layout is non-standard, grab main text content body
-    if (!foundText) {
-      foundText = document.body.innerText;
-    }
-
-    sendResponse({ text: foundText });
-  }
-  return true;
-});
