@@ -334,9 +334,13 @@
 
       <div class="panel-box">
         <strong style="color: #16a34a;">Application Pipeline</strong>
-        <button id="optimizeBtn" class="action btn-optimize" type="button">Tailor Resume Keywords</button>
+        <button id="analyzeJobMatchBtn" class="action btn-optimize" type="button">Analyze Job Match</button>
         <button id="fillBtn" class="action btn-success" type="button">Trigger Auto-Apply</button>
         <div id="jdStatus" class="jd-box" hidden>Pipeline status will appear here.</div>
+        <div id="jobMatchStaleBanner" class="job-match-stale" hidden role="status" aria-live="polite">
+          Profile or job changed. Run analysis again.
+        </div>
+        <div id="jobMatchResults" class="job-match-results" hidden></div>
       </div>
     </section>
 

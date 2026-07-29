@@ -830,6 +830,13 @@
       if (replaceBtn) replaceBtn.disabled = true;
       if (clearBtn) clearBtn.disabled = true;
       setStaleWarning("");
+      if (typeof global.refreshJobMatchAnalysis === "function") {
+        try {
+          global.refreshJobMatchAnalysis();
+        } catch (_) {
+          // Match analysis restore is best-effort.
+        }
+      }
       return null;
     }
 
@@ -871,6 +878,14 @@
         '<div class="job-card-preview"><span class="label">Description preview</span><p>' +
         escapeHtml(previewDescription(current.description)) +
         "</p></div>";
+    }
+
+    if (typeof global.refreshJobMatchAnalysis === "function") {
+      try {
+        global.refreshJobMatchAnalysis();
+      } catch (_) {
+        // Match analysis restore is best-effort.
+      }
     }
 
     return current;

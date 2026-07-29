@@ -586,7 +586,8 @@
       atsPlatform: String(source.atsPlatform || "generic").trim() || "generic",
       extractedAt: source.extractedAt || timestamp,
       createdAt: source.createdAt || timestamp,
-      updatedAt: timestamp
+      updatedAt: timestamp,
+      matchAnalysis: source.matchAnalysis || null
     };
   }
 
@@ -614,11 +615,16 @@
     }
 
     const existing = jobRecord.id ? await getJob(jobRecord.id) : null;
+    const preservedAnalysis =
+      jobRecord.matchAnalysis !== undefined
+        ? jobRecord.matchAnalysis
+        : (existing && existing.matchAnalysis) || null;
     const toSave = createJobRecord({
       ...jobRecord,
       id: jobRecord.id || buildStableJobId(jobRecord.url, jobRecord.company, jobRecord.title),
       createdAt: (existing && existing.createdAt) || jobRecord.createdAt,
-      updatedAt: nowIso()
+      updatedAt: nowIso(),
+      matchAnalysis: preservedAnalysis
     });
 
     try {
@@ -627,6 +633,157 @@
       throw new Error("Failed to save job to IndexedDB: " + error.message);
     }
 
+    return toSave;
+  }
+
+  function _asStringList(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    value.forEach((item) => {
+      const text = String(item == null ? "" : item).trim();
+      if (text && out.indexOf(text) === -1) out.push(text);
+    });
+    return out;
+  }
+
+  function buildCareerRelevantProfile(profile) {
+    const source = profile || {};
+    const experience = Array.isArray(source.experience)
+      ? source.experience.map((item) => {
+          const row = item || {};
+          return {
+            company: String(row.company || row.company_name || "").trim(),
+            title: String(row.title || row.job_title || "").trim(),
+            location: String(row.location || "").trim(),
+            startDate: String(row.startDate || row.start_date || "").trim(),
+            endDate: String(row.endDate || row.end_date || "").trim(),
+            description: String(row.description || "").trim(),
+            bullets: _asStringList(row.bullets || row.bullet_points)
+          };
+        })
+      : [];
+    const education = Array.isArray(source.education)
+      ? source.education.map((item) => {
+          const row = item || {};
+          return {
+            institution: String(row.institution || row.school_name || "").trim(),
+            degree: String(row.degree || row.degree_type || "").trim(),
+            field: String(row.field || row.major || "").trim(),
+            startDate: String(row.startDate || "").trim(),
+            endDate: String(row.endDate || row.graduation_year || "").trim()
+          };
+        })
+      : [];
+    const projects = Array.isArray(source.projects)
+      ? source.projects.map((item) => {
+          const row = item || {};
+          return {
+            name: String(row.name || "").trim(),
+            description: String(row.description || "").trim(),
+            technologies: _asStringList(row.technologies)
+          };
+        })
+      : [];
+
+    return {
+      skills: _asStringList(source.skills || source.skills_inventory),
+      experience: experience,
+      education: education,
+      projects: projects,
+      certifications: _asStringList(source.certifications)
+    };
+  }
+
+  function profileHasCareerSignal(profileOrPayload) {
+    const payload = buildCareerRelevantProfile(profileOrPayload);
+    return Boolean(
+      (payload.skills && payload.skills.length) ||
+        (payload.experience && payload.experience.length) ||
+        (payload.education && payload.education.length) ||
+        (payload.projects && payload.projects.length) ||
+        (payload.certifications && payload.certifications.length)
+    );
+  }
+
+  function normalizeJobMatchAnalysis(backendResult, meta) {
+    const source = backendResult || {};
+    const context = meta || {};
+    return {
+      status: String(source.status || "success"),
+      matchScore: Math.max(0, Math.min(100, Number(source.matchScore) || 0)),
+      matchedSkills: _asStringList(source.matchedSkills),
+      missingSkills: _asStringList(source.missingSkills),
+      matchedKeywords: _asStringList(source.matchedKeywords),
+      missingKeywords: _asStringList(source.missingKeywords),
+      strengths: _asStringList(source.strengths),
+      gaps: _asStringList(source.gaps),
+      recommendations: _asStringList(source.recommendations),
+      summary: String(source.summary || "").trim(),
+      message: String(source.message || "").trim(),
+      analyzedAt: context.analyzedAt || nowIso(),
+      profileUpdatedAt: context.profileUpdatedAt || null,
+      jobUpdatedAt: context.jobUpdatedAt || null,
+      defaultResumeId:
+        context.defaultResumeId == null ? null : String(context.defaultResumeId)
+    };
+  }
+
+  function isJobMatchAnalysisStale(analysis, profile, job) {
+    if (!analysis || typeof analysis !== "object") return false;
+    if (!analysis.analyzedAt) return true;
+
+    const profileUpdatedAt = profile && profile.updatedAt ? String(profile.updatedAt) : "";
+    const jobUpdatedAt = job && job.updatedAt ? String(job.updatedAt) : "";
+    const currentResumeId =
+      profile && profile.defaultResumeId != null ? String(profile.defaultResumeId) : "";
+    const savedResumeId =
+      analysis.defaultResumeId != null ? String(analysis.defaultResumeId) : "";
+
+    if (String(analysis.profileUpdatedAt || "") !== profileUpdatedAt) return true;
+    if (String(analysis.jobUpdatedAt || "") !== jobUpdatedAt) return true;
+    if (savedResumeId !== currentResumeId) return true;
+    return false;
+  }
+
+  async function saveJobMatchAnalysis(jobId, backendResult, context) {
+    if (!jobId) {
+      throw new Error("saveJobMatchAnalysis requires a job id");
+    }
+    const existing = await getJob(jobId);
+    if (!existing) {
+      throw new Error("Cannot save match analysis: job not found.");
+    }
+
+    const matchAnalysis = normalizeJobMatchAnalysis(backendResult, {
+      analyzedAt: nowIso(),
+      profileUpdatedAt: context && context.profileUpdatedAt,
+      jobUpdatedAt: (context && context.jobUpdatedAt) || existing.updatedAt || null,
+      defaultResumeId: context && context.defaultResumeId
+    });
+
+    const toSave = {
+      ...existing,
+      matchAnalysis: matchAnalysis
+    };
+
+    try {
+      await withStore(STORE_JOBS, "readwrite", (store) => idbRequest(store.put(toSave)));
+    } catch (error) {
+      throw new Error("Failed to save job match analysis: " + error.message);
+    }
+
+    return toSave;
+  }
+
+  async function clearJobMatchAnalysis(jobId) {
+    if (!jobId) return null;
+    const existing = await getJob(jobId);
+    if (!existing) return null;
+    const toSave = {
+      ...existing,
+      matchAnalysis: null
+    };
+    await withStore(STORE_JOBS, "readwrite", (store) => idbRequest(store.put(toSave)));
     return toSave;
   }
 
@@ -850,6 +1007,13 @@
         global.refreshProfileReadiness();
       } catch (_) {
         // Readiness UI refresh is best-effort.
+      }
+    }
+    if (typeof global.refreshJobMatchAnalysis === "function") {
+      try {
+        global.refreshJobMatchAnalysis();
+      } catch (_) {
+        // Match analysis stale refresh is best-effort.
       }
     }
   }
@@ -1122,6 +1286,12 @@
     clearCurrentJob: clearCurrentJob,
     getCurrentJobId: getCurrentJobId,
     setCurrentJobId: setCurrentJobId,
+    buildCareerRelevantProfile: buildCareerRelevantProfile,
+    profileHasCareerSignal: profileHasCareerSignal,
+    normalizeJobMatchAnalysis: normalizeJobMatchAnalysis,
+    isJobMatchAnalysisStale: isJobMatchAnalysisStale,
+    saveJobMatchAnalysis: saveJobMatchAnalysis,
+    clearJobMatchAnalysis: clearJobMatchAnalysis,
     syncLegacyResume: syncLegacyResume,
     detectProfileConflicts: detectProfileConflicts,
     mergeApprovedProfileDraft: mergeApprovedProfileDraft,

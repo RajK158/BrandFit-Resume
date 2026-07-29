@@ -1,5 +1,5 @@
-// URL pointing to the local FastAPI optimize endpoint
-const CENTRAL_WEB_APP_URL = "http://127.0.0.1:8000/api/v1/optimize-resume";
+// URL pointing to the local FastAPI job-match endpoint
+const JOB_MATCH_API_URL = "http://127.0.0.1:8000/api/v1/analyze-job-match";
 const ACTIVE_SECTION_KEY = "impulsoActiveSection";
 const VALID_SECTIONS = [
   "home",
@@ -38,8 +38,11 @@ function showSection(sectionId) {
     refreshHomeStatus();
   }
 
-  if (sectionId === "current-job" && window.ImpulsoJob) {
-    window.ImpulsoJob.refresh();
+  if (sectionId === "current-job") {
+    if (window.ImpulsoJob) {
+      window.ImpulsoJob.refresh();
+    }
+    refreshJobMatchAnalysis();
   }
 
   if (sectionId === "profile") {
@@ -448,6 +451,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (window.ImpulsoJob) {
       await window.ImpulsoJob.init();
     }
+    await refreshJobMatchAnalysis();
   } catch (error) {
     console.error("ImpulsoStorage init/load failed:", error);
     alert("Failed to load profile storage: " + (error.message || error));
@@ -523,107 +527,318 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
   });
 });
 
-// 5. Keyword Tuning and Server Pipeline Exchange
-document.getElementById("optimizeBtn").addEventListener("click", async () => {
+function escapeMatchHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function setJobMatchStatus(message, isError) {
   const statusBox = document.getElementById("jdStatus");
-  if (statusBox) statusBox.hidden = false;
+  if (!statusBox) return;
+  statusBox.hidden = !message;
+  statusBox.innerText = message || "";
+  statusBox.classList.toggle("is-error", Boolean(isError));
+}
+
+function setJobMatchStaleVisible(visible) {
+  const banner = document.getElementById("jobMatchStaleBanner");
+  if (!banner) return;
+  banner.hidden = !visible;
+}
+
+function renderMatchChipList(items, chipClass) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    return '<p class="job-match-empty">None</p>';
+  }
+  return (
+    '<div class="job-match-chip-list">' +
+    list
+      .map(
+        (item) =>
+          '<span class="job-match-chip ' +
+          chipClass +
+          '">' +
+          escapeMatchHtml(item) +
+          "</span>"
+      )
+      .join("") +
+    "</div>"
+  );
+}
+
+function renderMatchTextList(items) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    return '<p class="job-match-empty">None</p>';
+  }
+  return (
+    '<ul class="job-match-list">' +
+    list.map((item) => "<li>" + escapeMatchHtml(item) + "</li>").join("") +
+    "</ul>"
+  );
+}
+
+function renderMatchSection(title, count, bodyHtml, openByDefault) {
+  return (
+    '<details class="job-match-section"' +
+    (openByDefault ? " open" : "") +
+    ">" +
+    "<summary><span>" +
+    escapeMatchHtml(title) +
+    '</span><span class="job-match-count">' +
+    escapeMatchHtml(String(count)) +
+    "</span></summary>" +
+    '<div class="job-match-section-body">' +
+    bodyHtml +
+    "</div></details>"
+  );
+}
+
+function scoreToneClass(score) {
+  if (score >= 70) return "";
+  if (score >= 40) return "is-mid";
+  return "is-low";
+}
+
+function renderJobMatchResults(analysis) {
+  const resultsEl = document.getElementById("jobMatchResults");
+  if (!resultsEl) return;
+
+  if (!analysis) {
+    resultsEl.hidden = true;
+    resultsEl.innerHTML = "";
+    return;
+  }
+
+  const score = Math.max(0, Math.min(100, Number(analysis.matchScore) || 0));
+  const summary = String(analysis.summary || "").trim();
+  const matchedSkills = analysis.matchedSkills || [];
+  const missingSkills = analysis.missingSkills || [];
+  const matchedKeywords = analysis.matchedKeywords || [];
+  const missingKeywords = analysis.missingKeywords || [];
+  const strengths = analysis.strengths || [];
+  const gaps = analysis.gaps || [];
+  const recommendations = analysis.recommendations || [];
+
+  resultsEl.hidden = false;
+  resultsEl.innerHTML =
+    '<div class="job-match-score-card">' +
+    '<div class="job-match-score-value ' +
+    scoreToneClass(score) +
+    '">' +
+    escapeMatchHtml(String(score)) +
+    "</div>" +
+    '<div class="job-match-score-meta">' +
+    '<div class="job-match-score-label">Match score</div>' +
+    (summary
+      ? '<div class="job-match-score-summary">' + escapeMatchHtml(summary) + "</div>"
+      : "") +
+    "</div></div>" +
+    renderMatchSection(
+      "Matched skills",
+      matchedSkills.length,
+      renderMatchChipList(matchedSkills, "is-matched"),
+      true
+    ) +
+    renderMatchSection(
+      "Missing skills",
+      missingSkills.length,
+      renderMatchChipList(missingSkills, "is-missing"),
+      true
+    ) +
+    renderMatchSection(
+      "Matched keywords",
+      matchedKeywords.length,
+      renderMatchChipList(matchedKeywords, "is-keyword"),
+      false
+    ) +
+    renderMatchSection(
+      "Missing keywords",
+      missingKeywords.length,
+      renderMatchChipList(missingKeywords, "is-keyword"),
+      false
+    ) +
+    renderMatchSection("Strengths", strengths.length, renderMatchTextList(strengths), false) +
+    renderMatchSection("Gaps", gaps.length, renderMatchTextList(gaps), false) +
+    renderMatchSection(
+      "Recommendations",
+      recommendations.length,
+      renderMatchTextList(recommendations),
+      true
+    );
+}
+
+async function refreshJobMatchAnalysis() {
+  const resultsEl = document.getElementById("jobMatchResults");
+  if (!window.ImpulsoStorage || !resultsEl) return;
 
   try {
-    let currentJob = null;
-    if (window.ImpulsoJob && typeof window.ImpulsoJob.getCurrentJobForAnalysis === "function") {
-      currentJob = await window.ImpulsoJob.getCurrentJobForAnalysis();
+    const currentJob = await window.ImpulsoStorage.getCurrentJob();
+    if (!currentJob || !currentJob.matchAnalysis) {
+      setJobMatchStaleVisible(false);
+      renderJobMatchResults(null);
+      return;
     }
 
-    chrome.storage.local.get(["firstName", "lastName", "email"], async (data) => {
-      const firstName = (data.firstName || "").trim();
-      const lastName = (data.lastName || "").trim();
-      const email = (data.email || "").trim();
-      const jobDescription = (currentJob && currentJob.description ? currentJob.description : "").trim();
+    const profile = await window.ImpulsoStorage.getMasterProfile();
+    const stale = window.ImpulsoStorage.isJobMatchAnalysisStale(
+      currentJob.matchAnalysis,
+      profile,
+      currentJob
+    );
+    setJobMatchStaleVisible(stale);
+    renderJobMatchResults(currentJob.matchAnalysis);
+  } catch (error) {
+    console.error("Failed to restore job match analysis:", error);
+  }
+}
 
-      const missing = [];
-      if (!firstName) missing.push("first name");
-      if (!lastName) missing.push("last name");
-      if (!email) missing.push("email");
-      if (!jobDescription) missing.push("job description");
+window.refreshJobMatchAnalysis = refreshJobMatchAnalysis;
 
-      if (missing.length > 0) {
-        statusBox.innerText =
-          "⚠️ Missing required data: " + missing.join(", ") +
-          ". Save your profile and extract a current job before optimizing.";
+function isValidJobMatchResponse(result) {
+  return Boolean(
+    result &&
+      typeof result === "object" &&
+      typeof result.status === "string" &&
+      ("matchScore" in result ||
+        result.status === "dev_mode" ||
+        result.status === "error")
+  );
+}
+
+// 5. Job Match Analysis
+const analyzeJobMatchBtn = document.getElementById("analyzeJobMatchBtn");
+if (analyzeJobMatchBtn) {
+  analyzeJobMatchBtn.addEventListener("click", async () => {
+    setJobMatchStatus("", false);
+
+    if (!window.ImpulsoStorage) {
+      setJobMatchStatus("Storage is unavailable. Reload the extension and try again.", true);
+      return;
+    }
+
+    let currentJob = null;
+    try {
+      if (window.ImpulsoJob && typeof window.ImpulsoJob.getCurrentJobForAnalysis === "function") {
+        currentJob = await window.ImpulsoJob.getCurrentJobForAnalysis();
+      } else {
+        currentJob = await window.ImpulsoStorage.getCurrentJob();
+      }
+    } catch (error) {
+      const code = error && error.code;
+      if (code === "NO_CURRENT_JOB") {
+        setJobMatchStatus("No current job saved. Extract a job posting first.", true);
+      } else if (code === "STALE_JOB") {
+        setJobMatchStatus(
+          "Active tab differs from the stored job. Extract or replace the current job first.",
+          true
+        );
+      } else {
+        setJobMatchStatus(error.message || "Current job is unavailable for analysis.", true);
+      }
+      return;
+    }
+
+    if (!currentJob || !(currentJob.description || "").trim()) {
+      setJobMatchStatus("No current job saved. Extract a job posting first.", true);
+      return;
+    }
+
+    let masterProfile;
+    try {
+      masterProfile = await window.ImpulsoStorage.getMasterProfile();
+    } catch (error) {
+      setJobMatchStatus("Failed to load master profile: " + (error.message || error), true);
+      return;
+    }
+
+    const careerProfile = window.ImpulsoStorage.buildCareerRelevantProfile(masterProfile);
+    if (!window.ImpulsoStorage.profileHasCareerSignal(careerProfile)) {
+      setJobMatchStatus(
+        "Profile is incomplete for match analysis. Add skills, experience, education, or projects first.",
+        true
+      );
+      return;
+    }
+
+    setJobMatchStatus("Analyzing job match...", false);
+    analyzeJobMatchBtn.disabled = true;
+
+    const payload = {
+      master_profile: careerProfile,
+      current_job: {
+        title: currentJob.title || "",
+        company: currentJob.company || "",
+        description: currentJob.description || ""
+      }
+    };
+
+    try {
+      const response = await fetch(JOB_MATCH_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      let result;
+      try {
+        result = await response.json();
+      } catch (_) {
+        setJobMatchStatus("Backend returned an invalid response.", true);
         return;
       }
 
-      statusBox.innerText = "🔄 Connecting to BrandResume Web App to optimize keywords...";
-
-      const payload = {
-        user_profile: {
-          first_name: firstName,
-          last_name: lastName,
-          email: email
-        },
-        job_description: jobDescription
-      };
-
-      try {
-        const response = await fetch(CENTRAL_WEB_APP_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payload)
-        });
-
-        let result;
-        try {
-          result = await response.json();
-        } catch (_) {
-          statusBox.innerText = "❌ Backend returned an invalid response.";
-          return;
-        }
-
-        if (!response.ok) {
-          const detail = result.detail || result.message || `HTTP ${response.status}`;
-          statusBox.innerText = `❌ Error: ${detail}`;
-          return;
-        }
-
-        if (result.status === "dev_mode") {
-          statusBox.innerText =
-            "⚠️ OPENAI_API_KEY is not configured. " +
-            (result.message || "Set the key in brandfit-backend/.env and restart the server.");
-          return;
-        }
-
-        if (result.status === "error") {
-          statusBox.innerText = `❌ Error: ${result.message || "Optimization failed."}`;
-          return;
-        }
-
-        if (result.status === "success") {
-          const keywords = Array.isArray(result.keywords) ? result.keywords : [];
-          const optimizedData = result.optimized_data || "";
-
-          chrome.storage.local.set({
-            optimizedResumeData: optimizedData,
-            tailoredKeywords: keywords
-          }, () => {
-            const advice = optimizedData ? ` ${optimizedData}` : "";
-            statusBox.innerText =
-              `✅ Success! Matched ${keywords.length} critical keywords.${advice}`;
-            console.log("BrandResume Match Engine Results:", result);
-          });
-          return;
-        }
-
-        statusBox.innerText = `❌ Unexpected backend status: ${result.status || "unknown"}`;
-      } catch (error) {
-        console.error("Backend request failed:", error);
-        statusBox.innerText = "Backend is unavailable. Start the FastAPI server and try again.";
+      if (!isValidJobMatchResponse(result)) {
+        setJobMatchStatus("Backend returned an invalid match response.", true);
+        return;
       }
-    });
-  } catch (error) {
-    if (statusBox) {
-      statusBox.innerText = "⚠️ " + (error.message || "Current job is unavailable for analysis.");
+
+      if (!response.ok) {
+        const detail = result.detail || result.message || "HTTP " + response.status;
+        setJobMatchStatus("Error: " + detail, true);
+        return;
+      }
+
+      if (result.status === "dev_mode") {
+        setJobMatchStatus(
+          "AI provider is in development mode. " +
+            (result.message || "Configure the API key in brandfit-backend/.env and restart the server."),
+          true
+        );
+        return;
+      }
+
+      if (result.status === "error") {
+        setJobMatchStatus("Error: " + (result.message || "Job match analysis failed."), true);
+        return;
+      }
+
+      if (result.status !== "success") {
+        setJobMatchStatus("Unexpected backend status: " + (result.status || "unknown"), true);
+        return;
+      }
+
+      const savedJob = await window.ImpulsoStorage.saveJobMatchAnalysis(currentJob.id, result, {
+        profileUpdatedAt: masterProfile.updatedAt || null,
+        jobUpdatedAt: currentJob.updatedAt || null,
+        defaultResumeId: masterProfile.defaultResumeId == null ? null : masterProfile.defaultResumeId
+      });
+
+      setJobMatchStaleVisible(false);
+      renderJobMatchResults(savedJob.matchAnalysis || result);
+      setJobMatchStatus(result.message || "Job match analyzed successfully.", false);
+    } catch (error) {
+      console.error("Job match request failed:", error);
+      setJobMatchStatus("Backend is unavailable. Start the FastAPI server and try again.", true);
+    } finally {
+      analyzeJobMatchBtn.disabled = false;
     }
-  }
-});
+  });
+}
