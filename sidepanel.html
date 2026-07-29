@@ -332,6 +332,53 @@
         <div id="jobCard" class="job-card" hidden></div>
       </div>
 
+      <div class="panel-box job-resume-panel">
+        <strong>Job-Specific Resume</strong>
+        <p class="resume-hint">
+          Upload a tailored PDF or DOCX for this job. Master profile and default resume stay unchanged until you approve career edits for this job only.
+        </p>
+
+        <div class="job-actions">
+          <button id="jobResumeUploadBtn" class="action" type="button">Upload Tailored Resume</button>
+          <button id="jobResumeReplaceBtn" class="action btn-secondary" type="button" hidden>Replace Tailored Resume</button>
+          <button id="jobResumeRemoveBtn" class="action btn-danger" type="button" hidden>Remove Tailored Resume</button>
+          <button id="jobResumeReviewBtn" class="action btn-secondary" type="button" hidden>Review Changes</button>
+        </div>
+        <input id="jobResumeFileInput" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
+        <input id="jobResumeReplaceInput" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
+
+        <div id="jobResumeStatus" class="resume-status" aria-live="polite"></div>
+
+        <div id="jobResumeEmptyState" class="job-empty-state">
+          No tailored resume uploaded for this job.
+        </div>
+        <div id="jobResumeCard" class="job-resume-card" hidden></div>
+
+        <div id="jobResumeSelector" class="job-resume-selector" hidden>
+          <div class="job-resume-selector-label">Resume for this job</div>
+          <label class="job-resume-option" id="jobResumeOptionDefault">
+            <input type="radio" name="jobResumeSelection" value="default" />
+            Default Resume
+          </label>
+          <label class="job-resume-option" id="jobResumeOptionTailored" hidden>
+            <input type="radio" name="jobResumeSelection" value="tailored" />
+            Tailored Resume
+          </label>
+        </div>
+
+        <div id="jobResumeReviewPanel" class="job-resume-review" hidden>
+          <div class="job-resume-review-header">
+            <strong>Review tailored resume changes</strong>
+            <p class="resume-hint">Master profile is not modified. Approve to save a job-only profile.</p>
+          </div>
+          <div id="jobResumeReviewBody" class="job-resume-review-body"></div>
+          <div class="job-actions job-resume-review-actions">
+            <button id="jobResumeApproveBtn" class="action" type="button">Approve for This Job</button>
+            <button id="jobResumeCancelBtn" class="action btn-secondary" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <div class="panel-box">
         <strong style="color: #16a34a;">Application Pipeline</strong>
         <button id="analyzeJobMatchBtn" class="action btn-optimize" type="button">Analyze Job Match</button>

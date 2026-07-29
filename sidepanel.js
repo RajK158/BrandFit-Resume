@@ -521,6 +521,20 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) return;
 
+  try {
+    if (window.ImpulsoStorage) {
+      const currentJob = await window.ImpulsoStorage.getCurrentJob();
+      if (currentJob && currentJob.id) {
+        await window.ImpulsoStorage.syncAutofillResumeForJob(currentJob.id);
+      } else {
+        const defaultResume = await window.ImpulsoStorage.getDefaultResume();
+        await window.ImpulsoStorage.syncLegacyResume(defaultResume || null);
+      }
+    }
+  } catch (error) {
+    console.error("Failed to sync selected resume before autofill:", error);
+  }
+
   chrome.scripting.executeScript({
     target: { tabId: tab.id },
     files: ["content.js"]
@@ -635,6 +649,11 @@ function renderJobMatchResults(analysis) {
     "</div>" +
     '<div class="job-match-score-meta">' +
     '<div class="job-match-score-label">Match score</div>' +
+    (analysis.analysisLabel
+      ? '<div class="job-match-analysis-label">' +
+        escapeMatchHtml(analysis.analysisLabel) +
+        "</div>"
+      : "") +
     (summary
       ? '<div class="job-match-score-summary">' + escapeMatchHtml(summary) + "</div>"
       : "") +
@@ -679,20 +698,27 @@ async function refreshJobMatchAnalysis() {
 
   try {
     const currentJob = await window.ImpulsoStorage.getCurrentJob();
-    if (!currentJob || !currentJob.matchAnalysis) {
+    if (!currentJob) {
       setJobMatchStaleVisible(false);
       renderJobMatchResults(null);
       return;
     }
 
-    const profile = await window.ImpulsoStorage.getMasterProfile();
-    const stale = window.ImpulsoStorage.isJobMatchAnalysisStale(
-      currentJob.matchAnalysis,
-      profile,
-      currentJob
-    );
-    setJobMatchStaleVisible(stale);
-    renderJobMatchResults(currentJob.matchAnalysis);
+    const lookup = await window.ImpulsoStorage.getJobMatchAnalysisForJob(currentJob.id);
+    if (!lookup.analysis) {
+      setJobMatchStaleVisible(false);
+      renderJobMatchResults(null);
+      return;
+    }
+
+    setJobMatchStaleVisible(Boolean(lookup.stale));
+    if (lookup.stale) {
+      const banner = document.getElementById("jobMatchStaleBanner");
+      if (banner) {
+        banner.textContent = "Profile or job changed. Run analysis again.";
+      }
+    }
+    renderJobMatchResults(lookup.analysis);
   } catch (error) {
     console.error("Failed to restore job match analysis:", error);
   }
@@ -711,24 +737,172 @@ function isValidJobMatchResponse(result) {
   );
 }
 
+async function runJobMatchAnalysis(options) {
+  const opts = options || {};
+  if (!window.ImpulsoStorage) {
+    throw new Error("Storage is unavailable. Reload the extension and try again.");
+  }
+
+  let currentJob = opts.currentJob || null;
+  if (!currentJob) {
+    if (window.ImpulsoJob && typeof window.ImpulsoJob.getCurrentJobForAnalysis === "function") {
+      currentJob = await window.ImpulsoJob.getCurrentJobForAnalysis();
+    } else {
+      currentJob = await window.ImpulsoStorage.getCurrentJob();
+    }
+  }
+
+  if (!currentJob || !(currentJob.description || "").trim()) {
+    throw new Error("No current job saved. Extract a job posting first.");
+  }
+
+  const context = await window.ImpulsoStorage.resolveJobMatchContext(currentJob.id, {
+    job: currentJob,
+    masterProfile: opts.masterProfile,
+    selection: opts.selection,
+    jobProfile: opts.jobProfile,
+    tailoredResume: opts.tailoredResume,
+    defaultResume: opts.defaultResume
+  });
+
+  // Explicit profile override (e.g. just-approved job profile) still uses job-specific source.
+  let analysisProfile = opts.profile || context.profile;
+  let profileSource = opts.profile
+    ? window.ImpulsoStorage.normalizeProfileSource(opts.analyzedWith || opts.profileSource || "job-specific")
+    : context.profileSource;
+  let resumeId = context.resumeId;
+  let profileUpdatedAt = context.profileUpdatedAt;
+  let analysisLabel = context.analysisLabel;
+  let analysisKey = context.analysisKey;
+  let jobProfile = context.jobProfile;
+
+  if (opts.profile && profileSource === "job-specific") {
+    jobProfile = opts.jobProfile || context.jobProfile;
+    resumeId =
+      (opts.tailoredResume && opts.tailoredResume.id) ||
+      (jobProfile && jobProfile.resumeId) ||
+      context.resumeId;
+    profileUpdatedAt =
+      (jobProfile && jobProfile.updatedAt) || context.profileUpdatedAt;
+    analysisLabel = window.ImpulsoStorage.analysisLabelForSource("job-specific");
+    analysisKey = window.ImpulsoStorage.buildJobMatchAnalysisKey({
+      jobId: currentJob.id,
+      resumeId: resumeId,
+      profileSource: "job-specific",
+      profileUpdatedAt: profileUpdatedAt,
+      jobUpdatedAt: currentJob.updatedAt || null
+    });
+  }
+
+  const careerProfile = window.ImpulsoStorage.buildCareerRelevantProfile(analysisProfile);
+  if (!window.ImpulsoStorage.profileHasCareerSignal(careerProfile)) {
+    throw new Error(
+      "Profile is incomplete for match analysis. Add skills, experience, education, or projects first."
+    );
+  }
+
+  setJobMatchStatus("Analyzing job match...", false);
+  const analyzeBtn = document.getElementById("analyzeJobMatchBtn");
+  if (analyzeBtn) analyzeBtn.disabled = true;
+
+  try {
+    const response = await fetch(JOB_MATCH_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        master_profile: careerProfile,
+        current_job: {
+          title: currentJob.title || "",
+          company: currentJob.company || "",
+          description: currentJob.description || ""
+        }
+      })
+    });
+
+    let result;
+    try {
+      result = await response.json();
+    } catch (_) {
+      throw new Error("Backend returned an invalid response.");
+    }
+
+    if (!isValidJobMatchResponse(result)) {
+      throw new Error("Backend returned an invalid match response.");
+    }
+
+    if (!response.ok) {
+      throw new Error(result.detail || result.message || "HTTP " + response.status);
+    }
+
+    if (result.status === "dev_mode") {
+      throw new Error(
+        "AI provider is in development mode. " +
+          (result.message || "Configure the API key in brandfit-backend/.env and restart the server.")
+      );
+    }
+
+    if (result.status === "error") {
+      throw new Error(result.message || "Job match analysis failed.");
+    }
+
+    if (result.status !== "success") {
+      throw new Error("Unexpected backend status: " + (result.status || "unknown"));
+    }
+
+    const savedJob = await window.ImpulsoStorage.saveJobMatchAnalysis(currentJob.id, result, {
+      analysisKey: analysisKey,
+      profileSource: profileSource,
+      resumeId: resumeId,
+      profileUpdatedAt: profileUpdatedAt,
+      jobUpdatedAt: currentJob.updatedAt || null,
+      defaultResumeId:
+        context.masterProfile && context.masterProfile.defaultResumeId != null
+          ? context.masterProfile.defaultResumeId
+          : null,
+      tailoredResumeId: profileSource === "job-specific" ? resumeId : null,
+      jobProfileUpdatedAt: jobProfile && jobProfile.updatedAt ? jobProfile.updatedAt : null,
+      analysisLabel: analysisLabel,
+      jobProfile: jobProfile,
+      tailoredResume: opts.tailoredResume,
+      selection: context.selection,
+      masterProfile: context.masterProfile
+    });
+
+    const savedAnalysis =
+      (savedJob.matchAnalyses && savedJob.matchAnalyses[analysisKey]) ||
+      savedJob.matchAnalysis ||
+      result;
+
+    setJobMatchStaleVisible(false);
+    renderJobMatchResults(savedAnalysis);
+    setJobMatchStatus(
+      savedAnalysis.analysisLabel
+        ? savedAnalysis.analysisLabel + " saved."
+        : result.message || "Job match analyzed successfully.",
+      false
+    );
+    return savedJob;
+  } catch (error) {
+    if (error && /unavailable|Failed to fetch|NetworkError/i.test(String(error.message || error))) {
+      throw new Error("Backend is unavailable. Start the FastAPI server and try again.");
+    }
+    throw error;
+  } finally {
+    if (analyzeBtn) analyzeBtn.disabled = false;
+  }
+}
+
+window.runJobMatchAnalysis = runJobMatchAnalysis;
+
 // 5. Job Match Analysis
 const analyzeJobMatchBtn = document.getElementById("analyzeJobMatchBtn");
 if (analyzeJobMatchBtn) {
   analyzeJobMatchBtn.addEventListener("click", async () => {
     setJobMatchStatus("", false);
-
-    if (!window.ImpulsoStorage) {
-      setJobMatchStatus("Storage is unavailable. Reload the extension and try again.", true);
-      return;
-    }
-
-    let currentJob = null;
     try {
-      if (window.ImpulsoJob && typeof window.ImpulsoJob.getCurrentJobForAnalysis === "function") {
-        currentJob = await window.ImpulsoJob.getCurrentJobForAnalysis();
-      } else {
-        currentJob = await window.ImpulsoStorage.getCurrentJob();
-      }
+      await runJobMatchAnalysis({});
     } catch (error) {
       const code = error && error.code;
       if (code === "NO_CURRENT_JOB") {
@@ -739,106 +913,9 @@ if (analyzeJobMatchBtn) {
           true
         );
       } else {
-        setJobMatchStatus(error.message || "Current job is unavailable for analysis.", true);
+        console.error("Job match request failed:", error);
+        setJobMatchStatus(error.message || "Job match analysis failed.", true);
       }
-      return;
-    }
-
-    if (!currentJob || !(currentJob.description || "").trim()) {
-      setJobMatchStatus("No current job saved. Extract a job posting first.", true);
-      return;
-    }
-
-    let masterProfile;
-    try {
-      masterProfile = await window.ImpulsoStorage.getMasterProfile();
-    } catch (error) {
-      setJobMatchStatus("Failed to load master profile: " + (error.message || error), true);
-      return;
-    }
-
-    const careerProfile = window.ImpulsoStorage.buildCareerRelevantProfile(masterProfile);
-    if (!window.ImpulsoStorage.profileHasCareerSignal(careerProfile)) {
-      setJobMatchStatus(
-        "Profile is incomplete for match analysis. Add skills, experience, education, or projects first.",
-        true
-      );
-      return;
-    }
-
-    setJobMatchStatus("Analyzing job match...", false);
-    analyzeJobMatchBtn.disabled = true;
-
-    const payload = {
-      master_profile: careerProfile,
-      current_job: {
-        title: currentJob.title || "",
-        company: currentJob.company || "",
-        description: currentJob.description || ""
-      }
-    };
-
-    try {
-      const response = await fetch(JOB_MATCH_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      });
-
-      let result;
-      try {
-        result = await response.json();
-      } catch (_) {
-        setJobMatchStatus("Backend returned an invalid response.", true);
-        return;
-      }
-
-      if (!isValidJobMatchResponse(result)) {
-        setJobMatchStatus("Backend returned an invalid match response.", true);
-        return;
-      }
-
-      if (!response.ok) {
-        const detail = result.detail || result.message || "HTTP " + response.status;
-        setJobMatchStatus("Error: " + detail, true);
-        return;
-      }
-
-      if (result.status === "dev_mode") {
-        setJobMatchStatus(
-          "AI provider is in development mode. " +
-            (result.message || "Configure the API key in brandfit-backend/.env and restart the server."),
-          true
-        );
-        return;
-      }
-
-      if (result.status === "error") {
-        setJobMatchStatus("Error: " + (result.message || "Job match analysis failed."), true);
-        return;
-      }
-
-      if (result.status !== "success") {
-        setJobMatchStatus("Unexpected backend status: " + (result.status || "unknown"), true);
-        return;
-      }
-
-      const savedJob = await window.ImpulsoStorage.saveJobMatchAnalysis(currentJob.id, result, {
-        profileUpdatedAt: masterProfile.updatedAt || null,
-        jobUpdatedAt: currentJob.updatedAt || null,
-        defaultResumeId: masterProfile.defaultResumeId == null ? null : masterProfile.defaultResumeId
-      });
-
-      setJobMatchStaleVisible(false);
-      renderJobMatchResults(savedJob.matchAnalysis || result);
-      setJobMatchStatus(result.message || "Job match analyzed successfully.", false);
-    } catch (error) {
-      console.error("Job match request failed:", error);
-      setJobMatchStatus("Backend is unavailable. Start the FastAPI server and try again.", true);
-    } finally {
-      analyzeJobMatchBtn.disabled = false;
     }
   });
 }

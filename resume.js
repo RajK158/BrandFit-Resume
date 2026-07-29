@@ -67,6 +67,9 @@
     if (!file) {
       return { ok: false, message: "No resume file selected." };
     }
+    if (!file.size) {
+      return { ok: false, message: "Resume file is empty. Choose a non-empty PDF or DOCX." };
+    }
     const extension = getExtension(file.name);
     if (!ALLOWED_EXTENSIONS.includes(extension)) {
       return {
@@ -1643,6 +1646,58 @@
     return "Backend returned an invalid response.";
   }
 
+  async function parseResumeDocument(resume) {
+    if (!resume || !resume.fileData) {
+      throw new Error("No resume file is available to parse.");
+    }
+
+    let blob;
+    try {
+      blob = dataUrlToBlob(resume.fileData);
+    } catch (error) {
+      throw new Error(error.message || "Stored resume data is unreadable.");
+    }
+
+    const fileName = resume.name || "resume.pdf";
+    const file = new File([blob], fileName, {
+      type: resume.type || blob.type || "application/octet-stream"
+    });
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    let response;
+    try {
+      response = await fetch(PARSE_RESUME_URL, {
+        method: "POST",
+        body: formData
+      });
+    } catch (_) {
+      throw new Error("Backend is unavailable. Start the FastAPI server and try again.");
+    }
+
+    let result;
+    try {
+      result = await response.json();
+    } catch (_) {
+      throw new Error("Backend returned an invalid response.");
+    }
+
+    if (!response.ok || !result || result.status !== "success") {
+      throw new Error(mapParseError(result, response));
+    }
+
+    if (!result.profile_draft || typeof result.profile_draft !== "object") {
+      throw new Error("Backend returned an invalid response.");
+    }
+
+    return {
+      profileDraft: normalizeDraft(result.profile_draft),
+      warnings: Array.isArray(result.warnings) ? result.warnings : [],
+      message: result.message || ""
+    };
+  }
+
   async function parseStoredResume() {
     if (parsingInProgress) return;
 
@@ -1660,48 +1715,9 @@
         throw new Error("No default resume is uploaded. Upload a resume before parsing.");
       }
 
-      let blob;
-      try {
-        blob = dataUrlToBlob(resume.fileData);
-      } catch (error) {
-        throw new Error(error.message || "Stored resume data is unreadable.");
-      }
-
-      const fileName = resume.name || "resume.pdf";
-      const file = new File([blob], fileName, {
-        type: resume.type || blob.type || "application/octet-stream"
-      });
-
-      const formData = new FormData();
-      formData.append("file", file);
-
-      let response;
-      try {
-        response = await fetch(PARSE_RESUME_URL, {
-          method: "POST",
-          body: formData
-        });
-      } catch (_) {
-        throw new Error("Backend is unavailable. Start the FastAPI server and try again.");
-      }
-
-      let result;
-      try {
-        result = await response.json();
-      } catch (_) {
-        throw new Error("Backend returned an invalid response.");
-      }
-
-      if (!response.ok || !result || result.status !== "success") {
-        throw new Error(mapParseError(result, response));
-      }
-
-      if (!result.profile_draft || typeof result.profile_draft !== "object") {
-        throw new Error("Backend returned an invalid response.");
-      }
-
+      const parsed = await parseResumeDocument(resume);
       const master = await storage.getMasterProfile();
-      openReview(result.profile_draft, master);
+      openReview(parsed.profileDraft, master);
       setStatus("Parse complete. Review the draft below — nothing is saved yet.", false);
     } catch (error) {
       hideReviewPanel();
@@ -1914,6 +1930,10 @@
     removeDefaultResume: removeDefaultResume,
     getDefaultResume: getDefaultResume,
     parseStoredResume: parseStoredResume,
+    parseResumeDocument: parseResumeDocument,
+    createResumeId: createResumeId,
+    readFileAsDataUrl: readFileAsDataUrl,
+    normalizeDraft: normalizeDraft,
     loadMasterProfileEditor: loadMasterProfileEditor,
     formatFileSize: formatFileSize,
     formatUploadDate: formatUploadDate,

@@ -837,6 +837,13 @@
           // Match analysis restore is best-effort.
         }
       }
+      if (typeof refreshJobResumeUI === "function") {
+        try {
+          await refreshJobResumeUI();
+        } catch (_) {
+          // Job resume UI restore is best-effort.
+        }
+      }
       return null;
     }
 
@@ -885,6 +892,14 @@
         global.refreshJobMatchAnalysis();
       } catch (_) {
         // Match analysis restore is best-effort.
+      }
+    }
+
+    if (typeof refreshJobResumeUI === "function") {
+      try {
+        await refreshJobResumeUI();
+      } catch (_) {
+        // Job resume UI restore is best-effort.
       }
     }
 
@@ -1004,6 +1019,653 @@
     return null;
   }
 
+  // --- Job-specific tailored resume ---
+
+  let pendingJobResumeReview = null;
+
+  function setJobResumeStatus(message, isError) {
+    const el = document.getElementById("jobResumeStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError && message));
+  }
+
+  function hideJobResumeReview() {
+    pendingJobResumeReview = null;
+    const panel = document.getElementById("jobResumeReviewPanel");
+    const body = document.getElementById("jobResumeReviewBody");
+    if (panel) panel.hidden = true;
+    if (body) body.innerHTML = "";
+  }
+
+  function previewValue(value) {
+    if (Array.isArray(value)) {
+      if (!value.length) return "—";
+      if (typeof value[0] === "string") {
+        return value.slice(0, 8).join(", ") + (value.length > 8 ? "…" : "");
+      }
+      return value.length + " entr" + (value.length === 1 ? "y" : "ies");
+    }
+    const text = String(value == null ? "" : value).trim();
+    if (!text) return "—";
+    return text.length > 120 ? text.slice(0, 120) + "…" : text;
+  }
+
+  function renderDiffChips(items, chipClass) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return '<p class="job-match-empty">None</p>';
+    return (
+      '<div class="job-match-chip-list">' +
+      list
+        .map(
+          (item) =>
+            '<span class="job-match-chip ' +
+            chipClass +
+            '">' +
+            escapeHtml(item) +
+            "</span>"
+        )
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderSectionChangeBlocks(changes) {
+    const list = Array.isArray(changes) ? changes : [];
+    if (!list.length) return '<p class="job-match-empty">No changes</p>';
+    return list
+      .map(function (change) {
+        return (
+          '<div class="job-resume-diff-block">' +
+          "<div><strong>" +
+          escapeHtml(change.label || change.section || "Section") +
+          "</strong>: master " +
+          escapeHtml(String(change.masterCount || 0)) +
+          " → tailored " +
+          escapeHtml(String(change.parsedCount || 0)) +
+          "</div>" +
+          '<div class="job-resume-diff-preview"><span class="label">Master</span> ' +
+          escapeHtml(previewValue(change.masterValue)) +
+          "</div>" +
+          '<div class="job-resume-diff-preview"><span class="label">Tailored</span> ' +
+          escapeHtml(previewValue(change.parsedValue)) +
+          "</div></div>"
+        );
+      })
+      .join("");
+  }
+
+  function renderPersonalLinkApprovals(changes, groupName) {
+    const list = Array.isArray(changes) ? changes : [];
+    if (!list.length) return '<p class="job-match-empty">No changes</p>';
+    return (
+      '<div class="job-resume-approval-list">' +
+      list
+        .map(function (change) {
+          const id = groupName + "-" + change.field;
+          return (
+            '<label class="job-resume-approval-row" for="' +
+            escapeHtml(id) +
+            '">' +
+            '<input type="checkbox" id="' +
+            escapeHtml(id) +
+            '" data-group="' +
+            escapeHtml(groupName) +
+            '" data-field="' +
+            escapeHtml(change.field) +
+            '" />' +
+            "<span><strong>" +
+            escapeHtml(change.field) +
+            "</strong><br /><span class=\"muted\">Master: " +
+            escapeHtml(previewValue(change.masterValue)) +
+            " → Tailored: " +
+            escapeHtml(previewValue(change.parsedValue)) +
+            "</span><br /><span class=\"muted\">Check to use the tailored value for this job only.</span></span></label>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function showJobResumeReview(reviewState) {
+    pendingJobResumeReview = reviewState;
+    const panel = document.getElementById("jobResumeReviewPanel");
+    const body = document.getElementById("jobResumeReviewBody");
+    if (!panel || !body) return;
+
+    const diff = reviewState.differences || {};
+    body.innerHTML =
+      '<details class="job-match-section" open><summary><span>Added skills</span><span class="job-match-count">' +
+      escapeHtml(String((diff.addedSkills || []).length)) +
+      '</span></summary><div class="job-match-section-body">' +
+      renderDiffChips(diff.addedSkills, "is-matched") +
+      "</div></details>" +
+      '<details class="job-match-section" open><summary><span>Removed skills</span><span class="job-match-count">' +
+      escapeHtml(String((diff.removedSkills || []).length)) +
+      '</span></summary><div class="job-match-section-body">' +
+      renderDiffChips(diff.removedSkills, "is-missing") +
+      "</div></details>" +
+      '<details class="job-match-section" open><summary><span>Changed experience</span></summary><div class="job-match-section-body">' +
+      renderSectionChangeBlocks(diff.changedExperience) +
+      "</div></details>" +
+      '<details class="job-match-section"><summary><span>Changed projects</span></summary><div class="job-match-section-body">' +
+      renderSectionChangeBlocks(diff.changedProjects) +
+      "</div></details>" +
+      '<details class="job-match-section"><summary><span>Changed education</span></summary><div class="job-match-section-body">' +
+      renderSectionChangeBlocks(diff.changedEducation) +
+      "</div></details>" +
+      '<details class="job-match-section" open><summary><span>Changed personal / links</span></summary><div class="job-match-section-body">' +
+      "<div class=\"job-resume-diff-block\"><strong>Personal</strong>" +
+      renderPersonalLinkApprovals(diff.changedPersonal, "personal") +
+      "</div>" +
+      "<div class=\"job-resume-diff-block\"><strong>Links</strong>" +
+      renderPersonalLinkApprovals(diff.changedLinks, "links") +
+      "</div></div></details>" +
+      '<details class="job-match-section"><summary><span>Unchanged sections</span></summary><div class="job-match-section-body">' +
+      (diff.unchangedSections && diff.unchangedSections.length
+        ? '<p class="job-match-empty">' +
+          escapeHtml(diff.unchangedSections.join(", ")) +
+          "</p>"
+        : '<p class="job-match-empty">None</p>') +
+      "</div></details>";
+
+    panel.hidden = false;
+  }
+
+  function collectJobResumeApprovals() {
+    const personal = {};
+    const links = {};
+    document.querySelectorAll("#jobResumeReviewBody input[type='checkbox']").forEach(function (input) {
+      if (!input.checked) return;
+      const group = input.getAttribute("data-group");
+      const field = input.getAttribute("data-field");
+      if (group === "personal" && field) personal[field] = true;
+      if (group === "links" && field) links[field] = true;
+    });
+    return { personal: personal, links: links };
+  }
+
+  async function refreshJobResumeUI() {
+    const storage = ensureStorage();
+    const emptyEl = document.getElementById("jobResumeEmptyState");
+    const cardEl = document.getElementById("jobResumeCard");
+    const selectorEl = document.getElementById("jobResumeSelector");
+    const tailoredOptionEl = document.getElementById("jobResumeOptionTailored");
+    const uploadBtn = document.getElementById("jobResumeUploadBtn");
+    const replaceBtn = document.getElementById("jobResumeReplaceBtn");
+    const removeBtn = document.getElementById("jobResumeRemoveBtn");
+    const reviewBtn = document.getElementById("jobResumeReviewBtn");
+
+    function setActionVisibility(hasTailored, canUpload) {
+      if (uploadBtn) {
+        uploadBtn.hidden = !canUpload || hasTailored;
+        uploadBtn.disabled = !canUpload;
+      }
+      if (replaceBtn) {
+        replaceBtn.hidden = !hasTailored;
+        replaceBtn.disabled = !hasTailored;
+      }
+      if (removeBtn) {
+        removeBtn.hidden = !hasTailored;
+        removeBtn.disabled = !hasTailored;
+      }
+      if (reviewBtn) {
+        reviewBtn.hidden = !hasTailored;
+        reviewBtn.disabled = !hasTailored;
+      }
+    }
+
+    const current = await storage.getCurrentJob();
+    if (!current) {
+      hideJobResumeReview();
+      if (emptyEl) {
+        emptyEl.hidden = false;
+        emptyEl.textContent = "Extract a current job before uploading a tailored resume.";
+      }
+      if (cardEl) {
+        cardEl.hidden = true;
+        cardEl.innerHTML = "";
+      }
+      if (selectorEl) selectorEl.hidden = true;
+      if (tailoredOptionEl) tailoredOptionEl.hidden = true;
+      setActionVisibility(false, false);
+      return null;
+    }
+
+    const tailored = await storage.getJobSpecificResume(current.id);
+    const jobProfile = await storage.getJobProfile(current.id);
+    let selection = await storage.getJobResumeSelection(current.id);
+    const hasApproved = Boolean(jobProfile && jobProfile.approvedProfile);
+    const hasTailored = Boolean(tailored);
+
+    if (!hasTailored && selection === "tailored") {
+      selection = await storage.setJobResumeSelection(current.id, "default");
+    }
+
+    setActionVisibility(hasTailored, true);
+
+    if (!hasTailored) {
+      if (
+        pendingJobResumeReview &&
+        pendingJobResumeReview.jobId &&
+        pendingJobResumeReview.jobId !== current.id
+      ) {
+        hideJobResumeReview();
+      }
+      if (emptyEl) {
+        emptyEl.hidden = false;
+        emptyEl.textContent = "No tailored resume uploaded for this job.";
+      }
+      if (cardEl) {
+        cardEl.hidden = true;
+        cardEl.innerHTML = "";
+      }
+    } else {
+      if (emptyEl) emptyEl.hidden = true;
+      if (cardEl) {
+        cardEl.hidden = false;
+        cardEl.innerHTML =
+          '<div class="job-card-title">' +
+          escapeHtml(tailored.name || "Tailored resume") +
+          "</div>" +
+          '<div class="job-card-meta">' +
+          "<div><span class=\"label\">Size</span> " +
+          escapeHtml(
+            global.ImpulsoResume && global.ImpulsoResume.formatFileSize
+              ? global.ImpulsoResume.formatFileSize(tailored.size)
+              : String(tailored.size || 0) + " B"
+          ) +
+          "</div>" +
+          "<div><span class=\"label\">Uploaded</span> " +
+          escapeHtml(
+            global.ImpulsoResume && global.ImpulsoResume.formatUploadDate
+              ? global.ImpulsoResume.formatUploadDate(tailored.updatedAt || tailored.createdAt)
+              : tailored.updatedAt || "—"
+          ) +
+          "</div>" +
+          "<div><span class=\"label\">Status</span> " +
+          escapeHtml(hasApproved ? "Approved for this job" : "Uploaded — review required") +
+          "</div></div>";
+      }
+    }
+
+    if (selectorEl) {
+      selectorEl.hidden = false;
+      const defaultRadio = selectorEl.querySelector('input[value="default"]');
+      const tailoredRadio = selectorEl.querySelector('input[value="tailored"]');
+      if (tailoredOptionEl) {
+        tailoredOptionEl.hidden = !hasTailored;
+      }
+      if (defaultRadio) {
+        defaultRadio.checked = !hasTailored || selection !== "tailored";
+      }
+      if (tailoredRadio) {
+        tailoredRadio.disabled = !hasTailored;
+        tailoredRadio.checked = hasTailored && selection === "tailored";
+      }
+    }
+
+    if (
+      pendingJobResumeReview &&
+      pendingJobResumeReview.jobId === current.id
+    ) {
+      const panel = document.getElementById("jobResumeReviewPanel");
+      if (panel) panel.hidden = false;
+    } else if (
+      pendingJobResumeReview &&
+      pendingJobResumeReview.jobId !== current.id
+    ) {
+      hideJobResumeReview();
+    }
+
+    return { current: current, tailored: tailored, jobProfile: jobProfile, selection: selection };
+  }
+
+  async function saveJobSpecificResumeFile(file, options) {
+    const opts = options || {};
+    const storage = ensureStorage();
+    const resumeApi = global.ImpulsoResume;
+    if (!resumeApi) {
+      throw new Error("Resume helpers are unavailable.");
+    }
+
+    const current = await storage.getCurrentJob();
+    if (!current) {
+      throw new Error("No current job saved. Extract a job posting first.");
+    }
+
+    const validation = resumeApi.validateFile(file);
+    if (!validation.ok) {
+      throw new Error(validation.message);
+    }
+
+    const existing = await storage.getJobSpecificResume(current.id);
+    if (existing && !opts.replaceConfirmed) {
+      const error = new Error("A tailored resume already exists for this job.");
+      error.code = "CONFIRM_REPLACE_JOB_RESUME";
+      error.existing = existing;
+      throw error;
+    }
+
+    const incomingHash = await storage.hashFile(file);
+    const defaultResume = await storage.getDefaultResume();
+    if (defaultResume) {
+      let defaultHash = defaultResume.fileHash || null;
+      if (!defaultHash && defaultResume.fileData) {
+        defaultHash = await storage.ensureDocumentFileHash(defaultResume);
+      }
+      if (defaultHash && defaultHash === incomingHash) {
+        window.alert("This file is identical to your default resume.");
+        await storage.setJobResumeSelection(current.id, "default");
+        const error = new Error(
+          "This file is identical to your default resume. Upload cancelled."
+        );
+        error.code = "IDENTICAL_DEFAULT_RESUME";
+        throw error;
+      }
+    }
+
+    const fileData = await resumeApi.readFileAsDataUrl(file);
+    const extension = String(file.name || "")
+      .toLowerCase()
+      .slice(String(file.name || "").toLowerCase().lastIndexOf("."));
+    const mimeType =
+      file.type ||
+      (extension === ".pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+
+    if (existing) {
+      await storage.deleteDocument(existing.id);
+    }
+
+    const documentRecord = {
+      id: resumeApi.createResumeId(),
+      jobId: current.id,
+      name: file.name,
+      type: mimeType,
+      size: file.size,
+      fileData: fileData,
+      fileHash: incomingHash,
+      isDefault: false,
+      documentType: storage.JOB_SPECIFIC_RESUME_TYPE || "job-specific-resume",
+      parentResumeId: defaultResume && defaultResume.id ? defaultResume.id : null
+    };
+
+    const saved = await storage.saveDocument(documentRecord);
+    await storage.deleteJobProfile(current.id);
+    await storage.setJobResumeSelection(current.id, "tailored");
+    return { current: current, document: saved };
+  }
+
+  async function parseAndOpenJobResumeReview(documentRecord, jobId) {
+    const storage = ensureStorage();
+    const resumeApi = global.ImpulsoResume;
+    if (!resumeApi || typeof resumeApi.parseResumeDocument !== "function") {
+      throw new Error("Resume parse helper is unavailable.");
+    }
+
+    setJobResumeStatus("Parsing tailored resume...", false);
+    const parsed = await resumeApi.parseResumeDocument(documentRecord);
+    const master = await storage.getMasterProfile();
+    const differences = storage.computeJobResumeDifferences(master, parsed.profileDraft);
+
+    showJobResumeReview({
+      jobId: jobId,
+      resumeId: documentRecord.id,
+      parsedProfile: parsed.profileDraft,
+      differences: differences,
+      masterProfile: master
+    });
+
+    setJobResumeStatus(
+      "Parse complete. Review changes below — nothing is approved for this job yet.",
+      false
+    );
+  }
+
+  async function handleJobResumeUpload(file, options) {
+    try {
+      const saved = await saveJobSpecificResumeFile(file, options || {});
+      await refreshJobResumeUI();
+      await parseAndOpenJobResumeReview(saved.document, saved.current.id);
+      if (typeof global.refreshJobMatchAnalysis === "function") {
+        global.refreshJobMatchAnalysis();
+      }
+      return saved.document;
+    } catch (error) {
+      if (error && error.code === "CONFIRM_REPLACE_JOB_RESUME") {
+        const accepted = window.confirm(
+          'Replace tailored resume "' +
+            ((error.existing && error.existing.name) || "current file") +
+            '" for this job?'
+        );
+        if (!accepted) {
+          setJobResumeStatus("Replace cancelled.", false);
+          return null;
+        }
+        return handleJobResumeUpload(file, { replaceConfirmed: true });
+      }
+      if (error && error.code === "IDENTICAL_DEFAULT_RESUME") {
+        hideJobResumeReview();
+        await refreshJobResumeUI();
+        if (typeof global.refreshJobMatchAnalysis === "function") {
+          global.refreshJobMatchAnalysis();
+        }
+        setJobResumeStatus(error.message, true);
+        return null;
+      }
+      setJobResumeStatus(error.message || "Failed to upload tailored resume.", true);
+      throw error;
+    }
+  }
+
+  async function handleJobResumeRemove() {
+    const storage = ensureStorage();
+    const current = await storage.getCurrentJob();
+    if (!current) {
+      setJobResumeStatus("No current job saved.", true);
+      return null;
+    }
+    const existing = await storage.getJobSpecificResume(current.id);
+    if (!existing) {
+      setJobResumeStatus("No tailored resume to remove.", false);
+      return null;
+    }
+
+    const accepted = window.confirm(
+      'Remove tailored resume "' + (existing.name || "file") + '" for this job?'
+    );
+    if (!accepted) {
+      setJobResumeStatus("Remove cancelled.", false);
+      return null;
+    }
+
+    await storage.deleteJobSpecificResumesForJob(current.id);
+    await storage.deleteJobProfile(current.id);
+    await storage.setJobResumeSelection(current.id, "default");
+    hideJobResumeReview();
+    await refreshJobResumeUI();
+    if (typeof global.refreshJobMatchAnalysis === "function") {
+      global.refreshJobMatchAnalysis();
+    }
+    setJobResumeStatus("Tailored resume removed for this job.", false);
+    return true;
+  }
+
+  async function handleJobResumeReviewAgain() {
+    const storage = ensureStorage();
+    const current = await storage.getCurrentJob();
+    if (!current) {
+      setJobResumeStatus("No current job saved.", true);
+      return;
+    }
+    const tailored = await storage.getJobSpecificResume(current.id);
+    if (!tailored) {
+      setJobResumeStatus("Upload a tailored resume before reviewing changes.", true);
+      return;
+    }
+    try {
+      await parseAndOpenJobResumeReview(tailored, current.id);
+    } catch (error) {
+      setJobResumeStatus(error.message || "Failed to review tailored resume.", true);
+    }
+  }
+
+  async function runJobMatchWithProfile(profile, currentJob, meta) {
+    if (typeof global.runJobMatchAnalysis !== "function") {
+      return null;
+    }
+    return global.runJobMatchAnalysis({
+      profile: profile,
+      currentJob: currentJob,
+      analyzedWith: meta && meta.analyzedWith,
+      jobProfile: meta && meta.jobProfile,
+      tailoredResume: meta && meta.tailoredResume
+    });
+  }
+
+  async function handleJobResumeApprove() {
+    const storage = ensureStorage();
+    if (!pendingJobResumeReview) {
+      setJobResumeStatus("Nothing to approve. Upload or review a tailored resume first.", true);
+      return;
+    }
+
+    const current = await storage.getCurrentJob();
+    if (!current || current.id !== pendingJobResumeReview.jobId) {
+      setJobResumeStatus("Current job changed. Re-open review for this job.", true);
+      hideJobResumeReview();
+      await refreshJobResumeUI();
+      return;
+    }
+
+    const master = await storage.getMasterProfile();
+    const approvals = collectJobResumeApprovals();
+    const approvedProfile = storage.buildApprovedJobProfile(
+      master,
+      pendingJobResumeReview.parsedProfile,
+      approvals
+    );
+
+    const savedProfile = await storage.saveJobProfile({
+      jobId: current.id,
+      resumeId: pendingJobResumeReview.resumeId,
+      baseProfileId: "master",
+      parsedProfile: pendingJobResumeReview.parsedProfile,
+      approvedProfile: approvedProfile,
+      differences: pendingJobResumeReview.differences
+    });
+
+    await storage.setJobResumeSelection(current.id, "tailored");
+    hideJobResumeReview();
+    await refreshJobResumeUI();
+    setJobResumeStatus("Approved for this job. Re-running job match analysis...", false);
+
+    const tailored = await storage.getJobSpecificResume(current.id);
+    try {
+      await runJobMatchWithProfile(approvedProfile, current, {
+        analyzedWith: "job-specific",
+        profileSource: "job-specific",
+        jobProfile: savedProfile,
+        tailoredResume: tailored
+      });
+      setJobResumeStatus("Approved for this job. Match analysis updated with tailored resume.", false);
+    } catch (error) {
+      setJobResumeStatus(
+        "Approved for this job, but match analysis failed: " + (error.message || error),
+        true
+      );
+    }
+  }
+
+  function bindJobResumeUI() {
+    const uploadBtn = document.getElementById("jobResumeUploadBtn");
+    const replaceBtn = document.getElementById("jobResumeReplaceBtn");
+    const removeBtn = document.getElementById("jobResumeRemoveBtn");
+    const reviewBtn = document.getElementById("jobResumeReviewBtn");
+    const approveBtn = document.getElementById("jobResumeApproveBtn");
+    const cancelBtn = document.getElementById("jobResumeCancelBtn");
+    const fileInput = document.getElementById("jobResumeFileInput");
+    const replaceInput = document.getElementById("jobResumeReplaceInput");
+    const selectorEl = document.getElementById("jobResumeSelector");
+
+    if (uploadBtn && fileInput) {
+      uploadBtn.addEventListener("click", function () {
+        fileInput.value = "";
+        fileInput.click();
+      });
+      fileInput.addEventListener("change", function () {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        handleJobResumeUpload(file, { replaceConfirmed: false }).catch(function () {});
+      });
+    }
+
+    if (replaceBtn && replaceInput) {
+      replaceBtn.addEventListener("click", function () {
+        replaceInput.value = "";
+        replaceInput.click();
+      });
+      replaceInput.addEventListener("change", function () {
+        const file = replaceInput.files && replaceInput.files[0];
+        if (!file) return;
+        handleJobResumeUpload(file, { replaceConfirmed: false }).catch(function () {});
+      });
+    }
+
+    if (removeBtn) {
+      removeBtn.addEventListener("click", function () {
+        handleJobResumeRemove().catch(function () {});
+      });
+    }
+
+    if (reviewBtn) {
+      reviewBtn.addEventListener("click", function () {
+        handleJobResumeReviewAgain().catch(function () {});
+      });
+    }
+
+    if (approveBtn) {
+      approveBtn.addEventListener("click", function () {
+        handleJobResumeApprove().catch(function () {});
+      });
+    }
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", function () {
+        hideJobResumeReview();
+        setJobResumeStatus("Review cancelled. Tailored file kept; job profile not approved.", false);
+      });
+    }
+
+    if (selectorEl) {
+      selectorEl.addEventListener("change", async function (event) {
+        const target = event.target;
+        if (!target || target.name !== "jobResumeSelection") return;
+        const storage = ensureStorage();
+        const current = await storage.getCurrentJob();
+        if (!current) return;
+        try {
+          await storage.setJobResumeSelection(current.id, target.value);
+          await storage.syncAutofillResumeForJob(current.id);
+          setJobResumeStatus(
+            target.value === "tailored"
+              ? "Using tailored resume for this job."
+              : "Using default resume for this job.",
+            false
+          );
+          if (typeof global.refreshJobMatchAnalysis === "function") {
+            global.refreshJobMatchAnalysis();
+          }
+        } catch (error) {
+          setJobResumeStatus(error.message || "Failed to update resume selection.", true);
+        }
+      });
+    }
+  }
+
   function bindJobUI() {
     const extractBtn = document.getElementById("jobExtractBtn");
     const replaceBtn = document.getElementById("jobReplaceBtn");
@@ -1024,16 +1686,20 @@
         handleClear();
       });
     }
+
+    bindJobResumeUI();
   }
 
   async function init() {
     bindJobUI();
-    return refreshJobUI();
+    await refreshJobUI();
+    return refreshJobResumeUI();
   }
 
   global.ImpulsoJob = {
     init: init,
     refresh: refreshJobUI,
+    refreshJobResumeUI: refreshJobResumeUI,
     extractJobFromPage: extractJobFromPage,
     extractFromActiveTab: extractFromActiveTab,
     extractCurrentJob: handleExtract,

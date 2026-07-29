@@ -479,13 +479,31 @@
     }
 
     const timestamp = nowIso();
+    let fileHash = documentRecord.fileHash ? String(documentRecord.fileHash) : "";
+    if (!fileHash && documentRecord.fileData) {
+      try {
+        fileHash = await hashFileData(documentRecord.fileData);
+      } catch (_) {
+        fileHash = "";
+      }
+    }
+
     const toSave = {
       id: String(documentRecord.id),
       name: documentRecord.name || "",
       type: documentRecord.type || "",
       size: Number(documentRecord.size) || 0,
       fileData: documentRecord.fileData || "",
+      fileHash: fileHash || null,
       isDefault: Boolean(documentRecord.isDefault),
+      jobId: documentRecord.jobId ? String(documentRecord.jobId) : null,
+      documentType: documentRecord.documentType
+        ? String(documentRecord.documentType)
+        : documentRecord.isDefault
+          ? "default-resume"
+          : null,
+      parentResumeId:
+        documentRecord.parentResumeId == null ? null : String(documentRecord.parentResumeId),
       createdAt: documentRecord.createdAt || timestamp,
       updatedAt: timestamp
     };
@@ -498,6 +516,66 @@
 
     notifyProfileDataChanged();
     return toSave;
+  }
+
+  async function hashFileData(fileDataOrBuffer) {
+    let bytes;
+    if (fileDataOrBuffer instanceof ArrayBuffer) {
+      bytes = new Uint8Array(fileDataOrBuffer);
+    } else if (ArrayBuffer.isView(fileDataOrBuffer)) {
+      bytes = new Uint8Array(
+        fileDataOrBuffer.buffer,
+        fileDataOrBuffer.byteOffset,
+        fileDataOrBuffer.byteLength
+      );
+    } else {
+      const dataUrl = String(fileDataOrBuffer || "");
+      const comma = dataUrl.indexOf(",");
+      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      if (!base64) {
+        throw new Error("Cannot hash empty file data.");
+      }
+      let binary;
+      try {
+        binary = atob(base64);
+      } catch (_) {
+        throw new Error("Cannot hash unreadable file data.");
+      }
+      bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+    }
+
+    if (!global.crypto || !global.crypto.subtle || typeof global.crypto.subtle.digest !== "function") {
+      throw new Error("SHA-256 hashing is unavailable in this browser context.");
+    }
+
+    const digest = await global.crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function hashFile(file) {
+    if (!file) {
+      throw new Error("No file provided for hashing.");
+    }
+    const buffer = await file.arrayBuffer();
+    return hashFileData(buffer);
+  }
+
+  async function ensureDocumentFileHash(documentRecord) {
+    if (!documentRecord) return null;
+    if (documentRecord.fileHash) return String(documentRecord.fileHash);
+    if (!documentRecord.fileData) return null;
+    const hash = await hashFileData(documentRecord.fileData);
+    const saved = await saveDocument({
+      ...documentRecord,
+      fileHash: hash,
+      updatedAt: documentRecord.updatedAt
+    });
+    return saved.fileHash || hash;
   }
 
   async function deleteDocument(id) {
@@ -521,6 +599,302 @@
     const docs = await listDocuments();
     const flagged = docs.find((doc) => doc && doc.isDefault);
     return flagged || null;
+  }
+
+  const JOB_SPECIFIC_RESUME_TYPE = "job-specific-resume";
+  const JOB_RESUME_SELECTION_KEY = "jobResumeSelection";
+
+  async function getJobSpecificResume(jobId) {
+    if (!jobId) return null;
+    const docs = await listDocuments();
+    const matches = docs.filter(
+      (doc) =>
+        doc &&
+        String(doc.jobId || "") === String(jobId) &&
+        String(doc.documentType || "") === JOB_SPECIFIC_RESUME_TYPE
+    );
+    if (!matches.length) return null;
+    matches.sort(function (a, b) {
+      return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+    });
+    return matches[0];
+  }
+
+  async function listJobSpecificResumes(jobId) {
+    const docs = await listDocuments();
+    return docs.filter(
+      (doc) =>
+        doc &&
+        (!jobId || String(doc.jobId || "") === String(jobId)) &&
+        String(doc.documentType || "") === JOB_SPECIFIC_RESUME_TYPE
+    );
+  }
+
+  async function deleteJobSpecificResumesForJob(jobId) {
+    if (!jobId) return [];
+    const matches = await listJobSpecificResumes(jobId);
+    for (let i = 0; i < matches.length; i += 1) {
+      await deleteDocument(matches[i].id);
+    }
+    return matches;
+  }
+
+  function jobProfileIdForJob(jobId) {
+    return "job-profile-" + String(jobId || "");
+  }
+
+  async function getJobProfile(jobId) {
+    if (!jobId) return null;
+    try {
+      const byComposite = await withStore(STORE_JOB_PROFILES, "readonly", (store) =>
+        idbRequest(store.get(jobProfileIdForJob(jobId)))
+      );
+      if (byComposite) return byComposite;
+      return await withStore(STORE_JOB_PROFILES, "readonly", (store) =>
+        idbRequest(store.get(String(jobId)))
+      );
+    } catch (error) {
+      throw new Error("Failed to read job profile from IndexedDB: " + error.message);
+    }
+  }
+
+  async function saveJobProfile(record) {
+    if (!record || typeof record !== "object" || !record.jobId) {
+      throw new Error("saveJobProfile requires a record with jobId");
+    }
+    const timestamp = nowIso();
+    const existing = await getJobProfile(record.jobId);
+    const toSave = {
+      id: jobProfileIdForJob(record.jobId),
+      jobId: String(record.jobId),
+      resumeId: record.resumeId == null ? null : String(record.resumeId),
+      baseProfileId: record.baseProfileId || MASTER_PROFILE_ID,
+      parsedProfile: record.parsedProfile || null,
+      approvedProfile: record.approvedProfile || null,
+      differences: record.differences || null,
+      createdAt: (existing && existing.createdAt) || record.createdAt || timestamp,
+      updatedAt: timestamp
+    };
+
+    try {
+      await withStore(STORE_JOB_PROFILES, "readwrite", (store) => idbRequest(store.put(toSave)));
+    } catch (error) {
+      throw new Error("Failed to save job profile to IndexedDB: " + error.message);
+    }
+
+    return toSave;
+  }
+
+  async function deleteJobProfile(jobId) {
+    if (!jobId) return false;
+    try {
+      await withStore(STORE_JOB_PROFILES, "readwrite", (store) =>
+        Promise.all([
+          idbRequest(store.delete(jobProfileIdForJob(jobId))),
+          idbRequest(store.delete(String(jobId)))
+        ])
+      );
+      return true;
+    } catch (error) {
+      throw new Error("Failed to delete job profile from IndexedDB: " + error.message);
+    }
+  }
+
+  async function getJobResumeSelectionMap() {
+    const settings = await getSettings();
+    const map = settings[JOB_RESUME_SELECTION_KEY];
+    return map && typeof map === "object" ? Object.assign({}, map) : {};
+  }
+
+  async function getJobResumeSelection(jobId) {
+    if (!jobId) return "default";
+    const map = await getJobResumeSelectionMap();
+    const value = map[String(jobId)];
+    return value === "tailored" ? "tailored" : "default";
+  }
+
+  async function setJobResumeSelection(jobId, selection) {
+    if (!jobId) return "default";
+    const nextValue = selection === "tailored" ? "tailored" : "default";
+    const settings = await getSettings();
+    const map = Object.assign({}, settings[JOB_RESUME_SELECTION_KEY] || {});
+    map[String(jobId)] = nextValue;
+    await saveSettings(Object.assign({}, settings, { [JOB_RESUME_SELECTION_KEY]: map }));
+    return nextValue;
+  }
+
+  async function getSelectedResumeDocumentForJob(jobId) {
+    const selection = await getJobResumeSelection(jobId);
+    if (selection === "tailored") {
+      const tailored = await getJobSpecificResume(jobId);
+      if (tailored) return { selection: "tailored", document: tailored };
+    }
+    const defaultResume = await getDefaultResume();
+    return { selection: "default", document: defaultResume };
+  }
+
+  async function syncAutofillResumeForJob(jobId) {
+    const selected = await getSelectedResumeDocumentForJob(jobId);
+    await syncLegacyResume(selected.document || null);
+    return selected;
+  }
+
+  function _stableJson(value) {
+    try {
+      return JSON.stringify(value == null ? null : value);
+    } catch (_) {
+      return String(value);
+    }
+  }
+
+  function _skillKey(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  function computeJobResumeDifferences(masterProfile, parsedProfile) {
+    const master = masterProfile || createDefaultMasterProfile();
+    const parsed = parsedProfile || {};
+    const masterSkills = _asStringList(master.skills);
+    const parsedSkills = _asStringList(parsed.skills);
+    const masterSkillKeys = new Set(masterSkills.map(_skillKey));
+    const parsedSkillKeys = new Set(parsedSkills.map(_skillKey));
+
+    const addedSkills = parsedSkills.filter((skill) => !masterSkillKeys.has(_skillKey(skill)));
+    const removedSkills = masterSkills.filter((skill) => !parsedSkillKeys.has(_skillKey(skill)));
+
+    function sectionDiff(key, label) {
+      const masterValue = Array.isArray(master[key]) ? master[key] : [];
+      const parsedValue = Array.isArray(parsed[key]) ? parsed[key] : [];
+      if (_stableJson(masterValue) === _stableJson(parsedValue)) {
+        return null;
+      }
+      return {
+        section: key,
+        label: label,
+        masterCount: masterValue.length,
+        parsedCount: parsedValue.length,
+        masterValue: masterValue,
+        parsedValue: parsedValue
+      };
+    }
+
+    const changedExperience = sectionDiff("experience", "Experience");
+    const changedProjects = sectionDiff("projects", "Projects");
+    const changedEducation = sectionDiff("education", "Education");
+    const changedCertifications = sectionDiff("certifications", "Certifications");
+
+    const changedPersonal = [];
+    ["firstName", "lastName", "email", "phone", "location"].forEach((field) => {
+      const masterValue = (master.personal && master.personal[field]) || "";
+      const parsedValue = (parsed.personal && parsed.personal[field]) || "";
+      if (_valuesConflict(masterValue, parsedValue)) {
+        changedPersonal.push({
+          field: field,
+          path: "personal." + field,
+          masterValue: masterValue,
+          parsedValue: parsedValue
+        });
+      }
+    });
+
+    const changedLinks = [];
+    ["linkedin", "github", "portfolio"].forEach((field) => {
+      const masterValue = (master.links && master.links[field]) || "";
+      const parsedValue = (parsed.links && parsed.links[field]) || "";
+      if (_valuesConflict(masterValue, parsedValue)) {
+        changedLinks.push({
+          field: field,
+          path: "links." + field,
+          masterValue: masterValue,
+          parsedValue: parsedValue
+        });
+      }
+    });
+
+    const unchangedSections = [];
+    if (!addedSkills.length && !removedSkills.length) unchangedSections.push("skills");
+    if (!changedExperience) unchangedSections.push("experience");
+    if (!changedProjects) unchangedSections.push("projects");
+    if (!changedEducation) unchangedSections.push("education");
+    if (!changedCertifications) unchangedSections.push("certifications");
+    if (!changedPersonal.length) unchangedSections.push("personal");
+    if (!changedLinks.length) unchangedSections.push("links");
+
+    return {
+      addedSkills: addedSkills,
+      removedSkills: removedSkills,
+      changedExperience: changedExperience ? [changedExperience] : [],
+      changedProjects: changedProjects ? [changedProjects] : [],
+      changedEducation: changedEducation ? [changedEducation] : [],
+      changedCertifications: changedCertifications ? [changedCertifications] : [],
+      changedPersonal: changedPersonal,
+      changedLinks: changedLinks,
+      unchangedSections: unchangedSections
+    };
+  }
+
+  function buildApprovedJobProfile(masterProfile, parsedProfile, approvals) {
+    const master = createDefaultMasterProfile(masterProfile || {});
+    const parsed = parsedProfile || {};
+    const choices = approvals || {};
+    const personalApprovals = choices.personal || {};
+    const linkApprovals = choices.links || {};
+
+    const personal = Object.assign({}, master.personal);
+    Object.keys(personal).forEach((field) => {
+      if (personalApprovals[field] && parsed.personal && parsed.personal[field] != null) {
+        personal[field] = parsed.personal[field];
+      }
+    });
+
+    const links = Object.assign({}, master.links);
+    Object.keys(links).forEach((field) => {
+      if (linkApprovals[field] && parsed.links && parsed.links[field] != null) {
+        links[field] = parsed.links[field];
+      }
+    });
+
+    return createDefaultMasterProfile({
+      ...master,
+      personal: personal,
+      links: links,
+      experience: Array.isArray(parsed.experience) ? parsed.experience : master.experience,
+      education: Array.isArray(parsed.education) ? parsed.education : master.education,
+      projects: Array.isArray(parsed.projects) ? parsed.projects : master.projects,
+      skills: Array.isArray(parsed.skills) ? parsed.skills : master.skills,
+      certifications: Array.isArray(parsed.certifications)
+        ? parsed.certifications
+        : master.certifications,
+      workAuthorization: master.workAuthorization,
+      applicationPreferences: master.applicationPreferences,
+      commonAnswers: master.commonAnswers,
+      demographics: master.demographics,
+      defaultResumeId: master.defaultResumeId
+    });
+  }
+
+  async function getProfileForJobMatch(jobId) {
+    const master = await getMasterProfile();
+    if (!jobId) {
+      return { profile: master, source: "master", jobProfile: null };
+    }
+    const selection = await getJobResumeSelection(jobId);
+    const jobProfile = await getJobProfile(jobId);
+    if (
+      selection === "tailored" &&
+      jobProfile &&
+      jobProfile.approvedProfile &&
+      typeof jobProfile.approvedProfile === "object"
+    ) {
+      return {
+        profile: createDefaultMasterProfile(jobProfile.approvedProfile),
+        source: "tailored",
+        jobProfile: jobProfile
+      };
+    }
+    return { profile: master, source: "master", jobProfile: jobProfile };
   }
 
   const CURRENT_JOB_ID_KEY = "currentJobId";
@@ -587,7 +961,11 @@
       extractedAt: source.extractedAt || timestamp,
       createdAt: source.createdAt || timestamp,
       updatedAt: timestamp,
-      matchAnalysis: source.matchAnalysis || null
+      matchAnalysis: source.matchAnalysis || null,
+      matchAnalyses:
+        source.matchAnalyses && typeof source.matchAnalyses === "object"
+          ? source.matchAnalyses
+          : {}
     };
   }
 
@@ -619,12 +997,17 @@
       jobRecord.matchAnalysis !== undefined
         ? jobRecord.matchAnalysis
         : (existing && existing.matchAnalysis) || null;
+    const preservedAnalyses =
+      jobRecord.matchAnalyses !== undefined
+        ? jobRecord.matchAnalyses
+        : (existing && existing.matchAnalyses) || {};
     const toSave = createJobRecord({
       ...jobRecord,
       id: jobRecord.id || buildStableJobId(jobRecord.url, jobRecord.company, jobRecord.title),
       createdAt: (existing && existing.createdAt) || jobRecord.createdAt,
       updatedAt: nowIso(),
-      matchAnalysis: preservedAnalysis
+      matchAnalysis: preservedAnalysis,
+      matchAnalyses: preservedAnalyses
     });
 
     try {
@@ -705,9 +1088,152 @@
     );
   }
 
+  function normalizeProfileSource(source) {
+    if (source === "tailored" || source === "job-specific") return "job-specific";
+    return "master";
+  }
+
+  function analysisLabelForSource(profileSource) {
+    return normalizeProfileSource(profileSource) === "job-specific"
+      ? "Tailored resume analysis"
+      : "Default resume analysis";
+  }
+
+  function buildJobMatchAnalysisKey(parts) {
+    const source = parts || {};
+    return [
+      String(source.jobId || ""),
+      String(source.resumeId || "none"),
+      normalizeProfileSource(source.profileSource),
+      String(source.profileUpdatedAt || ""),
+      String(source.jobUpdatedAt || "")
+    ].join("::");
+  }
+
+  function migrateJobMatchAnalyses(job) {
+    const analyses =
+      job && job.matchAnalyses && typeof job.matchAnalyses === "object"
+        ? Object.assign({}, job.matchAnalyses)
+        : {};
+    if (job && job.matchAnalysis && job.matchAnalysis.analysisKey) {
+      const key = String(job.matchAnalysis.analysisKey);
+      if (!analyses[key]) analyses[key] = job.matchAnalysis;
+    } else if (job && job.matchAnalysis && job.matchAnalysis.analyzedAt) {
+      const legacy = job.matchAnalysis;
+      const key = buildJobMatchAnalysisKey({
+        jobId: job.id,
+        resumeId:
+          legacy.tailoredResumeId ||
+          legacy.resumeId ||
+          legacy.defaultResumeId ||
+          "none",
+        profileSource:
+          legacy.profileSource ||
+          (legacy.analyzedWith === "tailored" ? "job-specific" : "master"),
+        profileUpdatedAt: legacy.profileUpdatedAt,
+        jobUpdatedAt: legacy.jobUpdatedAt
+      });
+      if (!analyses[key]) {
+        analyses[key] = Object.assign({}, legacy, {
+          analysisKey: key,
+          jobId: job.id,
+          resumeId: legacy.tailoredResumeId || legacy.resumeId || legacy.defaultResumeId || null,
+          profileSource: normalizeProfileSource(
+            legacy.profileSource ||
+              (legacy.analyzedWith === "tailored" ? "job-specific" : "master")
+          )
+        });
+      }
+    }
+    return analyses;
+  }
+
+  async function resolveJobMatchContext(jobId, options) {
+    const opts = options || {};
+    const job = opts.job || (await getJob(jobId));
+    if (!job) {
+      throw new Error("Job not found for match analysis context.");
+    }
+
+    const master = opts.masterProfile || (await getMasterProfile());
+    const selection =
+      opts.selection || (await getJobResumeSelection(jobId));
+    const defaultResume = opts.defaultResume || (await getDefaultResume());
+    const tailoredResume =
+      opts.tailoredResume || (await getJobSpecificResume(jobId));
+    const jobProfile = opts.jobProfile || (await getJobProfile(jobId));
+
+    const useTailored =
+      selection === "tailored" &&
+      tailoredResume &&
+      jobProfile &&
+      jobProfile.approvedProfile &&
+      typeof jobProfile.approvedProfile === "object";
+
+    if (useTailored) {
+      return {
+        job: job,
+        masterProfile: master,
+        selection: "tailored",
+        profileSource: "job-specific",
+        resumeId: tailoredResume.id,
+        resume: tailoredResume,
+        profile: createDefaultMasterProfile(jobProfile.approvedProfile),
+        profileUpdatedAt: jobProfile.updatedAt || null,
+        jobUpdatedAt: job.updatedAt || null,
+        jobProfile: jobProfile,
+        defaultResume: defaultResume,
+        analysisLabel: analysisLabelForSource("job-specific"),
+        analysisKey: buildJobMatchAnalysisKey({
+          jobId: job.id,
+          resumeId: tailoredResume.id,
+          profileSource: "job-specific",
+          profileUpdatedAt: jobProfile.updatedAt || null,
+          jobUpdatedAt: job.updatedAt || null
+        })
+      };
+    }
+
+    return {
+      job: job,
+      masterProfile: master,
+      selection: "default",
+      profileSource: "master",
+      resumeId: defaultResume && defaultResume.id ? defaultResume.id : null,
+      resume: defaultResume,
+      profile: master,
+      profileUpdatedAt: master.updatedAt || null,
+      jobUpdatedAt: job.updatedAt || null,
+      jobProfile: jobProfile,
+      defaultResume: defaultResume,
+      tailoredResume: tailoredResume,
+      analysisLabel: analysisLabelForSource("master"),
+      analysisKey: buildJobMatchAnalysisKey({
+        jobId: job.id,
+        resumeId: defaultResume && defaultResume.id ? defaultResume.id : null,
+        profileSource: "master",
+        profileUpdatedAt: master.updatedAt || null,
+        jobUpdatedAt: job.updatedAt || null
+      })
+    };
+  }
+
   function normalizeJobMatchAnalysis(backendResult, meta) {
     const source = backendResult || {};
     const context = meta || {};
+    const profileSource = normalizeProfileSource(
+      context.profileSource || context.analyzedWith || "master"
+    );
+    const analysisKey =
+      context.analysisKey ||
+      buildJobMatchAnalysisKey({
+        jobId: context.jobId,
+        resumeId: context.resumeId,
+        profileSource: profileSource,
+        profileUpdatedAt: context.profileUpdatedAt,
+        jobUpdatedAt: context.jobUpdatedAt
+      });
+
     return {
       status: String(source.status || "success"),
       matchScore: Math.max(0, Math.min(100, Number(source.matchScore) || 0)),
@@ -720,29 +1246,102 @@
       recommendations: _asStringList(source.recommendations),
       summary: String(source.summary || "").trim(),
       message: String(source.message || "").trim(),
+      scoreComponents:
+        source.scoreComponents && typeof source.scoreComponents === "object"
+          ? source.scoreComponents
+          : null,
       analyzedAt: context.analyzedAt || nowIso(),
       profileUpdatedAt: context.profileUpdatedAt || null,
       jobUpdatedAt: context.jobUpdatedAt || null,
+      resumeId: context.resumeId == null ? null : String(context.resumeId),
       defaultResumeId:
-        context.defaultResumeId == null ? null : String(context.defaultResumeId)
+        context.defaultResumeId == null ? null : String(context.defaultResumeId),
+      tailoredResumeId:
+        context.tailoredResumeId == null ? null : String(context.tailoredResumeId),
+      jobProfileUpdatedAt: context.jobProfileUpdatedAt || null,
+      profileSource: profileSource,
+      analyzedWith: profileSource === "job-specific" ? "tailored" : "master",
+      analysisKey: analysisKey,
+      jobId: context.jobId == null ? null : String(context.jobId),
+      analysisLabel: context.analysisLabel || analysisLabelForSource(profileSource)
     };
   }
 
-  function isJobMatchAnalysisStale(analysis, profile, job) {
-    if (!analysis || typeof analysis !== "object") return false;
+  function findRelatedJobMatchAnalysis(analyses, identity) {
+    const jobId = String((identity && identity.jobId) || "");
+    const resumeId = String((identity && identity.resumeId) || "none");
+    const profileSource = normalizeProfileSource(identity && identity.profileSource);
+    const entries = Object.keys(analyses || {}).map(function (key) {
+      return analyses[key];
+    });
+    const matches = entries.filter(function (entry) {
+      if (!entry || typeof entry !== "object") return false;
+      const entryResume = String(entry.resumeId || "none");
+      const entrySource = normalizeProfileSource(entry.profileSource || entry.analyzedWith);
+      const entryJob = String(entry.jobId || jobId);
+      return entryJob === jobId && entryResume === resumeId && entrySource === profileSource;
+    });
+    matches.sort(function (a, b) {
+      return String(b.analyzedAt || "").localeCompare(String(a.analyzedAt || ""));
+    });
+    return matches[0] || null;
+  }
+
+  function isJobMatchAnalysisStale(analysis, context) {
+    if (!analysis || typeof analysis !== "object") return true;
     if (!analysis.analyzedAt) return true;
-
-    const profileUpdatedAt = profile && profile.updatedAt ? String(profile.updatedAt) : "";
-    const jobUpdatedAt = job && job.updatedAt ? String(job.updatedAt) : "";
-    const currentResumeId =
-      profile && profile.defaultResumeId != null ? String(profile.defaultResumeId) : "";
-    const savedResumeId =
-      analysis.defaultResumeId != null ? String(analysis.defaultResumeId) : "";
-
-    if (String(analysis.profileUpdatedAt || "") !== profileUpdatedAt) return true;
-    if (String(analysis.jobUpdatedAt || "") !== jobUpdatedAt) return true;
-    if (savedResumeId !== currentResumeId) return true;
+    const ctx = context || {};
+    if (String(analysis.profileUpdatedAt || "") !== String(ctx.profileUpdatedAt || "")) {
+      return true;
+    }
+    if (String(analysis.jobUpdatedAt || "") !== String(ctx.jobUpdatedAt || "")) {
+      return true;
+    }
+    if (String(analysis.resumeId || "none") !== String(ctx.resumeId || "none")) {
+      return true;
+    }
+    if (
+      normalizeProfileSource(analysis.profileSource || analysis.analyzedWith) !==
+      normalizeProfileSource(ctx.profileSource)
+    ) {
+      return true;
+    }
     return false;
+  }
+
+  async function getJobMatchAnalysisForJob(jobId, options) {
+    const context = await resolveJobMatchContext(jobId, options || {});
+    const analyses = migrateJobMatchAnalyses(context.job);
+    const exact = analyses[context.analysisKey] || null;
+    if (exact) {
+      return {
+        context: context,
+        analysis: exact,
+        stale: isJobMatchAnalysisStale(exact, context),
+        missing: false
+      };
+    }
+
+    const related = findRelatedJobMatchAnalysis(analyses, {
+      jobId: context.job.id,
+      resumeId: context.resumeId,
+      profileSource: context.profileSource
+    });
+    if (related) {
+      return {
+        context: context,
+        analysis: related,
+        stale: true,
+        missing: false
+      };
+    }
+
+    return {
+      context: context,
+      analysis: null,
+      stale: false,
+      missing: true
+    };
   }
 
   async function saveJobMatchAnalysis(jobId, backendResult, context) {
@@ -754,15 +1353,65 @@
       throw new Error("Cannot save match analysis: job not found.");
     }
 
+    const meta = context || {};
+    const resolved =
+      meta.analysisKey && meta.profileSource
+        ? meta
+        : await resolveJobMatchContext(jobId, {
+            job: existing,
+            masterProfile: meta.masterProfile,
+            selection: meta.selection,
+            jobProfile: meta.jobProfile,
+            tailoredResume: meta.tailoredResume,
+            defaultResume: meta.defaultResume
+          });
+
+    const profileSource = normalizeProfileSource(
+      meta.profileSource || resolved.profileSource || meta.analyzedWith || "master"
+    );
+    const resumeId =
+      meta.resumeId != null
+        ? meta.resumeId
+        : resolved.resumeId != null
+          ? resolved.resumeId
+          : null;
+    const profileUpdatedAt =
+      meta.profileUpdatedAt != null ? meta.profileUpdatedAt : resolved.profileUpdatedAt;
+    const jobUpdatedAt =
+      meta.jobUpdatedAt != null ? meta.jobUpdatedAt : existing.updatedAt || null;
+    const analysisKey =
+      meta.analysisKey ||
+      resolved.analysisKey ||
+      buildJobMatchAnalysisKey({
+        jobId: jobId,
+        resumeId: resumeId,
+        profileSource: profileSource,
+        profileUpdatedAt: profileUpdatedAt,
+        jobUpdatedAt: jobUpdatedAt
+      });
+
     const matchAnalysis = normalizeJobMatchAnalysis(backendResult, {
       analyzedAt: nowIso(),
-      profileUpdatedAt: context && context.profileUpdatedAt,
-      jobUpdatedAt: (context && context.jobUpdatedAt) || existing.updatedAt || null,
-      defaultResumeId: context && context.defaultResumeId
+      jobId: jobId,
+      resumeId: resumeId,
+      profileSource: profileSource,
+      profileUpdatedAt: profileUpdatedAt,
+      jobUpdatedAt: jobUpdatedAt,
+      defaultResumeId: meta.defaultResumeId,
+      tailoredResumeId:
+        profileSource === "job-specific" ? resumeId : meta.tailoredResumeId || null,
+      jobProfileUpdatedAt: meta.jobProfileUpdatedAt || null,
+      analysisKey: analysisKey,
+      analysisLabel: meta.analysisLabel || analysisLabelForSource(profileSource),
+      analyzedWith: profileSource === "job-specific" ? "tailored" : "master"
     });
+
+    const analyses = migrateJobMatchAnalyses(existing);
+    analyses[analysisKey] = matchAnalysis;
 
     const toSave = {
       ...existing,
+      matchAnalyses: analyses,
       matchAnalysis: matchAnalysis
     };
 
@@ -775,12 +1424,37 @@
     return toSave;
   }
 
-  async function clearJobMatchAnalysis(jobId) {
+  async function clearJobMatchAnalysis(jobId, options) {
     if (!jobId) return null;
     const existing = await getJob(jobId);
     if (!existing) return null;
+    const opts = options || {};
+    const analyses = migrateJobMatchAnalyses(existing);
+
+    if (opts.analysisKey) {
+      delete analyses[opts.analysisKey];
+    } else if (opts.profileSource || opts.resumeId) {
+      Object.keys(analyses).forEach(function (key) {
+        const entry = analyses[key];
+        if (!entry) return;
+        const sourceMatch =
+          !opts.profileSource ||
+          normalizeProfileSource(entry.profileSource) ===
+            normalizeProfileSource(opts.profileSource);
+        const resumeMatch =
+          opts.resumeId == null ||
+          String(entry.resumeId || "none") === String(opts.resumeId || "none");
+        if (sourceMatch && resumeMatch) delete analyses[key];
+      });
+    } else {
+      Object.keys(analyses).forEach(function (key) {
+        delete analyses[key];
+      });
+    }
+
     const toSave = {
       ...existing,
+      matchAnalyses: analyses,
       matchAnalysis: null
     };
     await withStore(STORE_JOBS, "readwrite", (store) => idbRequest(store.put(toSave)));
@@ -1274,6 +1948,20 @@
     saveDocument: saveDocument,
     deleteDocument: deleteDocument,
     getDefaultResume: getDefaultResume,
+    getJobSpecificResume: getJobSpecificResume,
+    listJobSpecificResumes: listJobSpecificResumes,
+    deleteJobSpecificResumesForJob: deleteJobSpecificResumesForJob,
+    getJobProfile: getJobProfile,
+    saveJobProfile: saveJobProfile,
+    deleteJobProfile: deleteJobProfile,
+    getJobResumeSelection: getJobResumeSelection,
+    setJobResumeSelection: setJobResumeSelection,
+    getSelectedResumeDocumentForJob: getSelectedResumeDocumentForJob,
+    syncAutofillResumeForJob: syncAutofillResumeForJob,
+    computeJobResumeDifferences: computeJobResumeDifferences,
+    buildApprovedJobProfile: buildApprovedJobProfile,
+    getProfileForJobMatch: getProfileForJobMatch,
+    JOB_SPECIFIC_RESUME_TYPE: JOB_SPECIFIC_RESUME_TYPE,
     normalizeJobUrl: normalizeJobUrl,
     buildStableJobId: buildStableJobId,
     createJobRecord: createJobRecord,
@@ -1288,10 +1976,18 @@
     setCurrentJobId: setCurrentJobId,
     buildCareerRelevantProfile: buildCareerRelevantProfile,
     profileHasCareerSignal: profileHasCareerSignal,
+    normalizeProfileSource: normalizeProfileSource,
+    analysisLabelForSource: analysisLabelForSource,
+    buildJobMatchAnalysisKey: buildJobMatchAnalysisKey,
+    resolveJobMatchContext: resolveJobMatchContext,
     normalizeJobMatchAnalysis: normalizeJobMatchAnalysis,
     isJobMatchAnalysisStale: isJobMatchAnalysisStale,
+    getJobMatchAnalysisForJob: getJobMatchAnalysisForJob,
     saveJobMatchAnalysis: saveJobMatchAnalysis,
     clearJobMatchAnalysis: clearJobMatchAnalysis,
+    hashFileData: hashFileData,
+    hashFile: hashFile,
+    ensureDocumentFileHash: ensureDocumentFileHash,
     syncLegacyResume: syncLegacyResume,
     detectProfileConflicts: detectProfileConflicts,
     mergeApprovedProfileDraft: mergeApprovedProfileDraft,
