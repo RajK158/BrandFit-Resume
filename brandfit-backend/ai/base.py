@@ -1214,6 +1214,10 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         """Parse resume text into a structured profile draft."""
 
+    @abstractmethod
+    def analyze_job_match(self, profile: Any, job: Any) -> Dict[str, Any]:
+        """Compare a career profile to a structured job and return a match analysis."""
+
 
 class AIProviderError(Exception):
     """Raised for provider configuration or runtime failures."""

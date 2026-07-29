@@ -18,6 +18,15 @@ from .base import (
     normalize_ai_response,
     normalize_resume_parse_response,
 )
+from job_matcher import (
+    build_career_relevant_job,
+    build_career_relevant_profile,
+    build_job_match_prompts,
+    empty_job_match_result,
+    incomplete_profile_match_result,
+    normalize_job_match_response,
+    profile_has_career_signal,
+)
 
 
 class GeminiProvider(AIProvider):
@@ -114,4 +123,49 @@ class GeminiProvider(AIProvider):
             "Gemini",
             detected_links=detected_links,
             resume_text=resume_text,
+        )
+
+    def analyze_job_match(self, profile: Any, job: Any) -> Dict[str, Any]:
+        profile_payload = build_career_relevant_profile(profile)
+        job_payload = build_career_relevant_job(job)
+
+        if not job_payload.get("description"):
+            return empty_job_match_result(
+                status="error",
+                message="Job description is empty. Extract a current job before analyzing match.",
+            )
+
+        if not profile_has_career_signal(profile_payload):
+            return incomplete_profile_match_result(job_payload)
+
+        system_instructions, user_submission = build_job_match_prompts(
+            profile_payload,
+            job_payload,
+        )
+
+        try:
+            response = self._generate_json(system_instructions, user_submission)
+        except FuturesTimeoutError:
+            return empty_job_match_result(
+                status="error",
+                message="Gemini request timed out. Please try again.",
+            )
+        except Exception as exc:
+            message = str(exc)
+            lowered = message.lower()
+            if "timeout" in lowered or "timed out" in lowered:
+                return empty_job_match_result(
+                    status="error",
+                    message="Gemini request timed out. Please try again.",
+                )
+            return empty_job_match_result(
+                status="error",
+                message=f"Gemini provider error: {message}",
+            )
+
+        return normalize_job_match_response(
+            self._extract_text(response),
+            "Gemini",
+            profile_payload,
+            job_payload,
         )

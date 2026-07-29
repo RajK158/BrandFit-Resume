@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Tuple, Union
 
+from job_matcher import empty_job_match_result
+
 from .base import AIProvider, AIProviderError, dev_mode_result, error_result
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
@@ -17,6 +19,19 @@ def _clean_env(name: str, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip()
+
+
+def unavailable_job_match_result(status_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map a provider status dict (dev_mode / error) into the job-match response shape.
+
+    Never invent fake match scores when the API key is missing.
+    """
+    return empty_job_match_result(
+        status=str(status_payload.get("status") or "error"),
+        message=str(status_payload.get("message") or "AI provider unavailable."),
+        match_score=0,
+    )
 
 
 def get_ai_provider() -> Tuple[ProviderResult, str]:

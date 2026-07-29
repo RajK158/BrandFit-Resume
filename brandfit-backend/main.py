@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -7,6 +7,14 @@ from pydantic import BaseModel, EmailStr
 
 from ai import get_ai_provider
 from ai.base import AIProvider, AIProviderError, empty_profile_draft
+from ai.provider_factory import unavailable_job_match_result
+from job_matcher import (
+    build_career_relevant_job,
+    build_career_relevant_profile,
+    empty_job_match_result,
+    incomplete_profile_match_result,
+    profile_has_career_signal,
+)
 from resume_parser import ResumeExtractionError, extract_resume_text
 
 load_dotenv()
@@ -102,6 +110,13 @@ class LightweightUserProfile(BaseModel):
 class OptimizeRequest(BaseModel):
     user_profile: LightweightUserProfile
     job_description: str
+
+
+class AnalyzeJobMatchRequest(BaseModel):
+    """Master profile + structured current job for resume-to-job match analysis."""
+
+    master_profile: Dict[str, Any]
+    current_job: Dict[str, Any]
 
 
 @app.post("/api/v1/optimize-resume")
@@ -233,6 +248,40 @@ async def parse_resume(file: UploadFile = File(...)):
         "warnings": warnings,
         "message": parse_result.get("message") or "Resume parsed successfully.",
     }
+
+
+@app.post("/api/v1/analyze-job-match")
+async def analyze_job_match(payload: AnalyzeJobMatchRequest):
+    profile_payload = build_career_relevant_profile(payload.master_profile)
+    job_payload = build_career_relevant_job(payload.current_job)
+
+    if not job_payload.get("description"):
+        return empty_job_match_result(
+            status="error",
+            message="Job description is empty. Extract a current job before analyzing match.",
+        )
+
+    if not profile_has_career_signal(profile_payload):
+        return incomplete_profile_match_result(job_payload)
+
+    try:
+        provider_or_status, provider_name = get_ai_provider()
+    except AIProviderError as exc:
+        print(f"AI provider initialization error: {exc}")
+        return empty_job_match_result(status="error", message=str(exc))
+
+    if not isinstance(provider_or_status, AIProvider):
+        print(f"AI provider unavailable ({provider_name}): {provider_or_status.get('message')}")
+        return unavailable_job_match_result(provider_or_status)
+
+    try:
+        return provider_or_status.analyze_job_match(profile_payload, job_payload)
+    except Exception as error_context:
+        print(f"CRITICAL JOB MATCH ERROR: {type(error_context).__name__}")
+        return empty_job_match_result(
+            status="error",
+            message="Job match analysis failed due to an unexpected provider error.",
+        )
 
 
 if __name__ == "__main__":
