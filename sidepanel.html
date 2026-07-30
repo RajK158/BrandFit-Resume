@@ -65,6 +65,9 @@
         </div>
       </div>
 
+      <label for="preferredName">Preferred Name <span class="optional-tag">optional</span></label>
+      <input type="text" id="preferredName" placeholder="Name you prefer to go by">
+
       <label for="email">Email</label>
       <input type="email" id="email" placeholder="raj@example.com">
       <div id="emailTypoWarning" class="email-typo-warning" hidden role="status" aria-live="polite"></div>
@@ -186,6 +189,10 @@
 
               <label class="app-info-field" for="appWhyInterested">Why are you interested in this role</label>
               <textarea id="appWhyInterested" data-app-section="commonAnswers" data-app-field="whyInterestedInRole" rows="3"></textarea>
+
+              <label class="app-info-field" for="appProjectHighlight">Project you are proud of <span class="optional-tag">optional</span></label>
+              <p class="app-info-helper">Describe one project, your contribution, technologies used, and its impact.</p>
+              <textarea id="appProjectHighlight" data-app-section="commonAnswers" data-app-field="projectHighlight" rows="4" placeholder="Project, your role, technologies, and impact"></textarea>
 
               <label class="app-info-field" for="appAnythingElse">Anything else you want the employer to know</label>
               <textarea id="appAnythingElse" data-app-section="commonAnswers" data-app-field="anythingElseToKnow" rows="3"></textarea>
@@ -382,8 +389,12 @@
       <div class="panel-box">
         <strong style="color: #16a34a;">Application Pipeline</strong>
         <button id="analyzeJobMatchBtn" class="action btn-optimize" type="button">Analyze Job Match</button>
+        <button id="scanFormBtn" class="action btn-secondary" type="button">Scan Application Form</button>
         <button id="fillBtn" class="action btn-success" type="button">Trigger Auto-Apply</button>
         <div id="jdStatus" class="jd-box" hidden>Pipeline status will appear here.</div>
+        <div id="formScanStatus" class="resume-status" aria-live="polite"></div>
+        <div id="formScanSummary" class="form-scan-summary" hidden></div>
+        <div id="formScanResults" class="form-scan-results" hidden></div>
         <div id="jobMatchStaleBanner" class="job-match-stale" hidden role="status" aria-live="polite">
           Profile or job changed. Run analysis again.
         </div>
@@ -408,6 +419,7 @@
   </main>
 
   <script src="storage.js"></script>
+  <script src="autofill.js"></script>
   <script src="resume.js"></script>
   <script src="job.js"></script>
   <script src="sidepanel.js"></script>

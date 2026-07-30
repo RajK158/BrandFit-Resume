@@ -24,6 +24,237 @@
 
   let dbPromise = null;
 
+  const PROJECTS_DEDUPED_FLAG = "projectsDedupedV1";
+  const PROJECTS_DEDUPED_NOTICE_KEY = "projectsDedupedNoticePending";
+
+  let projectsMergedNoticePending = false;
+
+  function normalizeProjectNameKey(value) {
+    return String(value == null ? "" : value)
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      // Hyphen / dash variants (ASCII, en/em dash, unicode hyphens)
+      .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D\-–—]/g, "")
+      // Punctuation + whitespace insensitive
+      .replace(/[^a-z0-9]+/g, "");
+  }
+
+  function normalizeProjectUrlKey(value) {
+    let url = String(value == null ? "" : value).trim().toLowerCase();
+    if (!url) return "";
+    url = url.replace(/\/+$/, "");
+    url = url.replace(/^https?:\/\//, "");
+    url = url.replace(/^www\./, "");
+    return url.replace(/\/+$/, "");
+  }
+
+  function normalizeProjectRecord(item) {
+    const source = item && typeof item === "object" ? item : {};
+    const technologies = Array.isArray(source.technologies)
+      ? source.technologies.map((t) => String(t || "").trim()).filter(Boolean)
+      : [];
+    return {
+      name: String(source.name || "").trim(),
+      description: String(source.description || "").trim(),
+      technologies: technologies,
+      url: String(source.url || "").trim()
+    };
+  }
+
+  function tokenizeForSimilarity(text) {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(function (token) {
+        return token.length > 2;
+      });
+  }
+
+  function descriptionSimilarity(a, b) {
+    const tokensA = tokenizeForSimilarity(a);
+    const tokensB = tokenizeForSimilarity(b);
+    if (!tokensA.length || !tokensB.length) return 0;
+    const setA = {};
+    const setB = {};
+    tokensA.forEach(function (t) {
+      setA[t] = true;
+    });
+    tokensB.forEach(function (t) {
+      setB[t] = true;
+    });
+    let intersection = 0;
+    Object.keys(setA).forEach(function (t) {
+      if (setB[t]) intersection += 1;
+    });
+    const union = Object.keys(setA).length + Object.keys(setB).length - intersection;
+    return union ? intersection / union : 0;
+  }
+
+  function projectNamesLooselyMatch(nameA, nameB) {
+    if (!nameA || !nameB) return false;
+    if (nameA === nameB) return true;
+    if (nameA.length >= 4 && nameB.length >= 4 && (nameA.indexOf(nameB) !== -1 || nameB.indexOf(nameA) !== -1)) {
+      return true;
+    }
+    return false;
+  }
+
+  function projectsAreDuplicates(left, right) {
+    const a = normalizeProjectRecord(left);
+    const b = normalizeProjectRecord(right);
+    const nameA = normalizeProjectNameKey(a.name);
+    const nameB = normalizeProjectNameKey(b.name);
+    const urlA = normalizeProjectUrlKey(a.url);
+    const urlB = normalizeProjectUrlKey(b.url);
+
+    if (nameA && nameB && nameA === nameB) return true;
+    if (urlA && urlB && urlA === urlB) return true;
+
+    // Secondary: similar names + similar descriptions (avoid merging unrelated projects)
+    if (!projectNamesLooselyMatch(nameA, nameB)) return false;
+    if (!a.description || !b.description) return false;
+    if (a.description.length < 24 || b.description.length < 24) return false;
+    return descriptionSimilarity(a.description, b.description) >= 0.55;
+  }
+
+  function preferValidProjectUrl(urlA, urlB) {
+    const a = String(urlA || "").trim();
+    const b = String(urlB || "").trim();
+    if (a && isValidUrlFormat(a)) return a;
+    if (b && isValidUrlFormat(b)) return b;
+    return a || b || "";
+  }
+
+  function mergeProjectTechnologies(listA, listB) {
+    const out = [];
+    const seen = {};
+    []
+      .concat(Array.isArray(listA) ? listA : [], Array.isArray(listB) ? listB : [])
+      .forEach(function (raw) {
+        const value = String(raw || "").trim();
+        if (!value) return;
+        const key = value.toLowerCase();
+        if (seen[key]) return;
+        seen[key] = true;
+        out.push(value);
+      });
+    return out;
+  }
+
+  function mergeTwoProjects(left, right) {
+    const a = normalizeProjectRecord(left);
+    const b = normalizeProjectRecord(right);
+    const name =
+      a.name.length >= b.name.length ? a.name || b.name : b.name || a.name;
+    const description =
+      a.description.length >= b.description.length
+        ? a.description || b.description
+        : b.description || a.description;
+    return {
+      name: name,
+      description: description,
+      technologies: mergeProjectTechnologies(a.technologies, b.technologies),
+      url: preferValidProjectUrl(a.url, b.url)
+    };
+  }
+
+  function dedupeProjects(projects) {
+    const list = Array.isArray(projects) ? projects : [];
+    const result = [];
+    let mergedCount = 0;
+
+    list.forEach(function (raw) {
+      const item = normalizeProjectRecord(raw);
+      // Skip completely empty shells
+      if (!item.name && !item.description && !item.url && !item.technologies.length) {
+        return;
+      }
+
+      let matchIndex = -1;
+      for (let i = 0; i < result.length; i += 1) {
+        if (projectsAreDuplicates(result[i], item)) {
+          matchIndex = i;
+          break;
+        }
+      }
+
+      if (matchIndex >= 0) {
+        result[matchIndex] = mergeTwoProjects(result[matchIndex], item);
+        mergedCount += 1;
+      } else {
+        result.push(item);
+      }
+    });
+
+    return {
+      projects: result,
+      merged: mergedCount > 0,
+      mergedCount: mergedCount,
+      inputCount: list.length,
+      outputCount: result.length
+    };
+  }
+
+  function noteProjectsMerged(merged) {
+    if (merged) projectsMergedNoticePending = true;
+  }
+
+  function consumeProjectsMergedNotice() {
+    const pending = projectsMergedNoticePending;
+    projectsMergedNoticePending = false;
+    return pending;
+  }
+
+  async function consumePersistedProjectsMergedNotice() {
+    const settings = await getSettings();
+    if (!settings[PROJECTS_DEDUPED_NOTICE_KEY]) return false;
+    const next = Object.assign({}, settings);
+    next[PROJECTS_DEDUPED_NOTICE_KEY] = false;
+    await saveSettings(next);
+    return true;
+  }
+
+  async function ensureProjectsDedupedOnce() {
+    const settings = await getSettings();
+    if (settings[PROJECTS_DEDUPED_FLAG]) {
+      return { ran: false, merged: false };
+    }
+
+    await getDb();
+    let profile = await withStore(STORE_PROFILES, "readonly", (store) => readProfileFromStore(store));
+    let merged = false;
+
+    if (profile) {
+      const deduped = dedupeProjects(profile.projects);
+      merged = deduped.merged;
+      if (merged) {
+        const updated = createDefaultMasterProfile({
+          ...profile,
+          projects: deduped.projects
+        });
+        updated.updatedAt = nowIso();
+        await withStore(STORE_PROFILES, "readwrite", (store) => writeProfileToStore(store, updated));
+        try {
+          await syncLegacyKeysFromProfile(updated);
+        } catch (_) {
+          // Legacy sync is best-effort during cleanup.
+        }
+        noteProjectsMerged(true);
+      }
+    }
+
+    await saveSettings(
+      Object.assign({}, settings, {
+        [PROJECTS_DEDUPED_FLAG]: true,
+        [PROJECTS_DEDUPED_NOTICE_KEY]: Boolean(merged)
+      })
+    );
+
+    return { ran: true, merged: merged };
+  }
+
   function nowIso() {
     return new Date().toISOString();
   }
@@ -59,7 +290,8 @@
       linkedinMessageOrAdditionalInfo: "",
       defaultCoverLetter: "",
       whyInterestedInRole: "",
-      anythingElseToKnow: ""
+      anythingElseToKnow: "",
+      projectHighlight: ""
     };
     return { ...base, ...(overrides || {}) };
   }
@@ -84,7 +316,8 @@
         lastName: "",
         email: "",
         phone: "",
-        location: ""
+        location: "",
+        preferredName: ""
       },
       links: {
         linkedin: "",
@@ -353,6 +586,11 @@
   async function init() {
     await getDb();
     await migrateLegacyProfileIfNeeded();
+    try {
+      await ensureProjectsDedupedOnce();
+    } catch (error) {
+      console.warn("Project dedupe cleanup failed:", error);
+    }
     return true;
   }
 
@@ -370,7 +608,28 @@
       await syncLegacyKeysFromProfile(profile);
     }
 
-    return createDefaultMasterProfile(profile);
+    const normalized = createDefaultMasterProfile(profile);
+    const deduped = dedupeProjects(normalized.projects);
+    normalized.projects = deduped.projects;
+
+    // Keep stored profile aligned when load-time dedupe finds duplicates.
+    if (deduped.merged) {
+      noteProjectsMerged(true);
+      const timestamp = nowIso();
+      const toPersist = createDefaultMasterProfile({
+        ...normalized,
+        updatedAt: timestamp
+      });
+      try {
+        await withStore(STORE_PROFILES, "readwrite", (store) => writeProfileToStore(store, toPersist));
+        await syncLegacyKeysFromProfile(toPersist);
+      } catch (error) {
+        console.warn("Failed to persist deduped projects on load:", error);
+      }
+      return toPersist;
+    }
+
+    return normalized;
   }
 
   async function saveMasterProfile(profile) {
@@ -380,6 +639,10 @@
 
     const existing = await withStore(STORE_PROFILES, "readonly", (store) => readProfileFromStore(store));
     const timestamp = nowIso();
+    const dedupedProjects = dedupeProjects(
+      Array.isArray(profile.projects) ? profile.projects : []
+    );
+    noteProjectsMerged(dedupedProjects.merged);
 
     const toSave = createDefaultMasterProfile({
       ...profile,
@@ -391,7 +654,7 @@
       links: profile.links || {},
       experience: Array.isArray(profile.experience) ? profile.experience : [],
       education: Array.isArray(profile.education) ? profile.education : [],
-      projects: Array.isArray(profile.projects) ? profile.projects : [],
+      projects: dedupedProjects.projects,
       skills: Array.isArray(profile.skills) ? profile.skills : [],
       certifications: Array.isArray(profile.certifications) ? profile.certifications : [],
       workAuthorization: profile.workAuthorization || {},
@@ -1656,7 +1919,9 @@
       },
       experience: _pickSection(master.experience, draft.experience, choices.experience),
       education: _pickSection(master.education, draft.education, choices.education),
-      projects: _pickSection(master.projects, draft.projects, choices.projects),
+      projects: dedupeProjects(
+        _pickSection(master.projects, draft.projects, choices.projects)
+      ).projects,
       skills: _pickSection(master.skills, draft.skills, choices.skills),
       certifications: _pickSection(
         master.certifications,
@@ -1939,6 +2204,12 @@
     getSettings: getSettings,
     saveSettings: saveSettings,
     createDefaultMasterProfile: createDefaultMasterProfile,
+    dedupeProjects: dedupeProjects,
+    projectsAreDuplicates: projectsAreDuplicates,
+    normalizeProjectNameKey: normalizeProjectNameKey,
+    consumeProjectsMergedNotice: consumeProjectsMergedNotice,
+    consumePersistedProjectsMergedNotice: consumePersistedProjectsMergedNotice,
+    ensureProjectsDedupedOnce: ensureProjectsDedupedOnce,
     createDefaultWorkAuthorization: createDefaultWorkAuthorization,
     createDefaultApplicationPreferences: createDefaultApplicationPreferences,
     createDefaultCommonAnswers: createDefaultCommonAnswers,

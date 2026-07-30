@@ -208,6 +208,10 @@
         }))
       : [];
 
+    if (global.ImpulsoStorage && typeof global.ImpulsoStorage.dedupeProjects === "function") {
+      base.projects = global.ImpulsoStorage.dedupeProjects(base.projects).projects;
+    }
+
     base.skills = Array.isArray(source.skills)
       ? source.skills.map((s) => String(s || "")).filter(Boolean)
       : [];
@@ -478,6 +482,12 @@
     if (mode === "both") {
       if (section === "skills" || section === "certifications") {
         return dedupeStrings([].concat(existing, parsed));
+      }
+      if (section === "projects") {
+        const storage = ensureStorage();
+        if (typeof storage.dedupeProjects === "function") {
+          return storage.dedupeProjects([].concat(existing, parsed)).projects;
+        }
       }
       return dedupeEntries([].concat(existing, parsed));
     }
@@ -1302,7 +1312,11 @@
     draft.skills = dedupeStrings(draft.skills);
     draft.experience = dedupeEntries(draft.experience);
     draft.education = dedupeEntries(draft.education);
-    draft.projects = dedupeEntries(draft.projects);
+    if (ensureStorage().dedupeProjects) {
+      draft.projects = ensureStorage().dedupeProjects(draft.projects).projects;
+    } else {
+      draft.projects = dedupeEntries(draft.projects);
+    }
     return normalizeDraft(draft);
   }
 
@@ -1495,7 +1509,16 @@
       masterEditBaseline = cloneDraft(masterEditDraft);
       masterEditLoaded = true;
       renderMasterEditor();
-      setMasterProfileStatus("Loaded from local storage. Edit and save when ready.", false);
+      const mergedNotice =
+        (typeof storage.consumeProjectsMergedNotice === "function" &&
+          storage.consumeProjectsMergedNotice()) ||
+        (typeof storage.consumePersistedProjectsMergedNotice === "function" &&
+          (await storage.consumePersistedProjectsMergedNotice()));
+      if (mergedNotice) {
+        setMasterProfileStatus("Duplicate projects were merged.", false);
+      } else {
+        setMasterProfileStatus("Loaded from local storage. Edit and save when ready.", false);
+      }
     } catch (error) {
       clearMasterEditor();
       setMasterProfileStatus(error.message || "Failed to load master profile.", true);
@@ -1546,7 +1569,13 @@
         details.open = false;
       }
       clearMasterEditor({ keepStatus: true });
-      setMasterProfileStatus("Master profile updated.", false);
+      const mergedNotice =
+        typeof storage.consumeProjectsMergedNotice === "function" &&
+        storage.consumeProjectsMergedNotice();
+      setMasterProfileStatus(
+        mergedNotice ? "Duplicate projects were merged." : "Master profile updated.",
+        false
+      );
       if (summary && typeof summary.scrollIntoView === "function") {
         summary.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
@@ -1767,7 +1796,15 @@
         global.refreshHomeStatus();
       }
       hideReviewPanel();
-      setStatus("Parsed profile approved and saved to master profile.", false);
+      const mergedNotice =
+        typeof storage.consumeProjectsMergedNotice === "function" &&
+        storage.consumeProjectsMergedNotice();
+      setStatus(
+        mergedNotice
+          ? "Parsed profile approved and saved to master profile. Duplicate projects were merged."
+          : "Parsed profile approved and saved to master profile.",
+        false
+      );
       refreshMasterProfileEditorIfOpen();
     } catch (error) {
       setReviewStatus(error.message || "Failed to save approved profile.", true);
@@ -1919,7 +1956,20 @@
     bindResumeUI();
     clearMasterEditor();
     hideReviewPanel();
-    return refreshResumeUI();
+    return refreshResumeUI().then(async function () {
+      try {
+        const storage = ensureStorage();
+        if (typeof storage.consumePersistedProjectsMergedNotice === "function") {
+          const cleaned = await storage.consumePersistedProjectsMergedNotice();
+          if (cleaned) {
+            setStatus("Duplicate projects were merged.", false);
+            setMasterProfileStatus("Duplicate projects were merged.", false);
+          }
+        }
+      } catch (_) {
+        // Notice display is best-effort.
+      }
+    });
   }
 
   global.ImpulsoResume = {

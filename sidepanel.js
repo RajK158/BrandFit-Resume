@@ -440,6 +440,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (personal.firstName) document.getElementById("firstName").value = personal.firstName;
     if (personal.lastName) document.getElementById("lastName").value = personal.lastName;
+    if (personal.preferredName) {
+      const preferredNameEl = document.getElementById("preferredName");
+      if (preferredNameEl) preferredNameEl.value = personal.preferredName;
+    }
     if (personal.email) {
       document.getElementById("email").value = personal.email;
       updateEmailTypoWarning(personal.email);
@@ -464,6 +468,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 document.getElementById("saveBtn").addEventListener("click", async () => {
   const firstName = document.getElementById("firstName").value;
   const lastName = document.getElementById("lastName").value;
+  const preferredNameEl = document.getElementById("preferredName");
+  const preferredName = preferredNameEl ? preferredNameEl.value : "";
   const email = document.getElementById("email").value;
 
   try {
@@ -481,6 +487,7 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
         ...existing.personal,
         firstName: firstName,
         lastName: lastName,
+        preferredName: preferredName,
         email: email
       }
     };
@@ -537,9 +544,317 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
 
   chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ["content.js"]
+    files: ["autofill.js", "content.js"]
   });
 });
+
+function setFormScanStatus(message, isError) {
+  const el = document.getElementById("formScanStatus");
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("is-error", Boolean(isError && message));
+}
+
+function escapeScanHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+let latestFormScan = null;
+const skippedScanFieldIds = new Set();
+
+function applyScanSkipState(scan) {
+  if (!scan || !Array.isArray(scan.fields)) return scan;
+  const fields = scan.fields.map(function (field) {
+    const copy = Object.assign({}, field);
+    const skipped = skippedScanFieldIds.has(copy.fieldId);
+    copy.skipped = skipped;
+    if (skipped) {
+      copy.fillStatus = "skipped";
+    } else if (copy.fillStatus === "skipped") {
+      if (copy.currentValue) copy.fillStatus = "completed";
+      else if (copy.category === "unknown") copy.fillStatus = "unknown";
+      else if (copy.hasAnswer) copy.fillStatus = "ready";
+      else copy.fillStatus = "missing";
+    }
+    return copy;
+  });
+  const summary =
+    window.ImpulsoAutofill && typeof window.ImpulsoAutofill.summarizeFields === "function"
+      ? window.ImpulsoAutofill.summarizeFields(fields)
+      : scan.summary;
+  return Object.assign({}, scan, { fields: fields, summary: summary });
+}
+
+function renderFormScanSummary(summary) {
+  const el = document.getElementById("formScanSummary");
+  if (!el) return;
+  if (!summary) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML =
+    '<div class="form-scan-summary-grid">' +
+    '<div><span class="label">Total</span> ' +
+    escapeScanHtml(summary.totalFields) +
+    "</div>" +
+    '<div><span class="label">Recognized</span> ' +
+    escapeScanHtml(summary.recognizedFields) +
+    "</div>" +
+    '<div><span class="label">With answers</span> ' +
+    escapeScanHtml(summary.fieldsWithAnswers) +
+    "</div>" +
+    '<div><span class="label">Unanswered</span> ' +
+    escapeScanHtml(summary.unansweredFields) +
+    "</div>" +
+    '<div><span class="label">Unknown</span> ' +
+    escapeScanHtml(summary.unknownFields) +
+    "</div>" +
+    '<div class="is-required"><span class="label">Required unanswered</span> ' +
+    escapeScanHtml(summary.requiredUnansweredFields) +
+    "</div></div>";
+}
+
+function renderFormScanCard(field) {
+  const requiredLabel = field.required ? "Required" : "Optional";
+  const requiredClass = field.required ? " is-required" : "";
+  const highlight =
+    field.required &&
+    field.fillStatus !== "completed" &&
+    field.fillStatus !== "ready" &&
+    field.fillStatus !== "skipped"
+      ? " is-required-unanswered"
+      : "";
+  const skippedClass = field.skipped ? " is-skipped" : "";
+  const proposed =
+    field.proposedAnswer ||
+    (window.ImpulsoAutofill && window.ImpulsoAutofill.NO_SAVED_ANSWER) ||
+    "No saved answer";
+  const proposedClass =
+    proposed === "No saved answer" ||
+    (window.ImpulsoAutofill && proposed === window.ImpulsoAutofill.NO_SAVED_ANSWER)
+      ? " is-empty"
+      : "";
+  const question =
+    field.question || field.label || field.ariaLabel || field.name || field.id || field.inputType;
+
+  let actions = "";
+  if (field.skippable || field.isSensitive) {
+    if (field.skipped) {
+      actions =
+        '<button type="button" class="form-scan-skip-btn" data-scan-unskip="' +
+        escapeScanHtml(field.fieldId) +
+        '">Undo skip</button>';
+    } else {
+      actions =
+        '<button type="button" class="form-scan-skip-btn" data-scan-skip="' +
+        escapeScanHtml(field.fieldId) +
+        '">Skip</button>';
+    }
+  }
+
+  return (
+    '<li class="form-scan-item' +
+    highlight +
+    skippedClass +
+    '">' +
+    '<div class="form-scan-row"><span class="form-scan-k">Question</span><span class="form-scan-v">' +
+    escapeScanHtml(question) +
+    "</span></div>" +
+    '<div class="form-scan-row"><span class="form-scan-k">Proposed answer</span><span class="form-scan-v form-scan-answer' +
+    proposedClass +
+    '">' +
+    escapeScanHtml(proposed) +
+    "</span></div>" +
+    '<div class="form-scan-row"><span class="form-scan-k">Category</span><span class="form-scan-v">' +
+    escapeScanHtml(field.categoryLabel || field.category || "Unknown") +
+    "</span></div>" +
+    '<div class="form-scan-row"><span class="form-scan-k">Confidence</span><span class="form-scan-v">' +
+    escapeScanHtml(field.confidenceLabel || "Low") +
+    (field.confidence != null ? " (" + escapeScanHtml(field.confidence) + ")" : "") +
+    "</span></div>" +
+    '<div class="form-scan-row"><span class="form-scan-k">Required</span><span class="form-scan-v' +
+    requiredClass +
+    '">' +
+    escapeScanHtml(requiredLabel) +
+    "</span></div>" +
+    (field.isSensitive
+      ? '<div class="form-scan-sensitive-note">Sensitive — uses only your locally saved answer. Never inferred.</div>'
+      : "") +
+    (actions ? '<div class="form-scan-actions">' + actions + "</div>" : "") +
+    "</li>"
+  );
+}
+
+function renderFormScanGroup(title, fields, openByDefault) {
+  const list = Array.isArray(fields) ? fields : [];
+  const body =
+    list.length === 0
+      ? '<p class="job-match-empty">None</p>'
+      : '<ul class="form-scan-list">' + list.map(renderFormScanCard).join("") + "</ul>";
+
+  return (
+    '<details class="job-match-section form-scan-section"' +
+    (openByDefault ? " open" : "") +
+    ">" +
+    "<summary><span>" +
+    escapeScanHtml(title) +
+    '</span><span class="job-match-count">' +
+    escapeScanHtml(String(list.length)) +
+    "</span></summary>" +
+    '<div class="job-match-section-body">' +
+    body +
+    "</div></details>"
+  );
+}
+
+function renderFormScanResults(scan) {
+  const el = document.getElementById("formScanResults");
+  if (!el) return;
+  if (!scan || !Array.isArray(scan.fields)) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+
+  const ready = scan.fields.filter((f) => f.fillStatus === "ready");
+  const missing = scan.fields.filter((f) => f.fillStatus === "missing");
+  const unknown = scan.fields.filter((f) => f.fillStatus === "unknown");
+  const completed = scan.fields.filter((f) => f.fillStatus === "completed");
+  const skipped = scan.fields.filter((f) => f.fillStatus === "skipped");
+
+  el.hidden = false;
+  el.innerHTML =
+    renderFormScanGroup("Ready to fill", ready, true) +
+    renderFormScanGroup("Missing answer", missing, true) +
+    renderFormScanGroup("Unknown", unknown, false) +
+    renderFormScanGroup("Already completed", completed, false) +
+    renderFormScanGroup("Skipped", skipped, false);
+}
+
+function refreshFormScanView() {
+  if (!latestFormScan) return;
+  const view = applyScanSkipState(latestFormScan);
+  renderFormScanSummary(view.summary);
+  renderFormScanResults(view);
+}
+
+const formScanResultsEl = document.getElementById("formScanResults");
+if (formScanResultsEl) {
+  formScanResultsEl.addEventListener("click", function (event) {
+    const skipBtn = event.target.closest("[data-scan-skip]");
+    const unskipBtn = event.target.closest("[data-scan-unskip]");
+    if (skipBtn) {
+      skippedScanFieldIds.add(skipBtn.getAttribute("data-scan-skip"));
+      refreshFormScanView();
+    } else if (unskipBtn) {
+      skippedScanFieldIds.delete(unskipBtn.getAttribute("data-scan-unskip"));
+      refreshFormScanView();
+    }
+  });
+}
+
+async function buildScanAnswerInventory() {
+  if (!window.ImpulsoAutofill || !window.ImpulsoStorage) {
+    return {};
+  }
+  const profile = await window.ImpulsoStorage.getMasterProfile();
+  let hasResume = false;
+  let resumeName = "";
+  try {
+    const currentJob = await window.ImpulsoStorage.getCurrentJob();
+    if (currentJob && currentJob.id) {
+      const selected = await window.ImpulsoStorage.getSelectedResumeDocumentForJob(currentJob.id);
+      if (selected && selected.document && selected.document.fileData) {
+        hasResume = true;
+        resumeName = selected.document.name || "";
+      }
+    }
+    if (!hasResume) {
+      const fallback = await window.ImpulsoStorage.getDefaultResume();
+      if (fallback && fallback.fileData) {
+        hasResume = true;
+        resumeName = fallback.name || "";
+      }
+    }
+  } catch (_) {
+    hasResume = false;
+    resumeName = "";
+  }
+  return window.ImpulsoAutofill.buildAnswerInventory(profile, {
+    hasResume: hasResume,
+    resumeName: resumeName
+  });
+}
+
+const scanFormBtn = document.getElementById("scanFormBtn");
+if (scanFormBtn) {
+  scanFormBtn.addEventListener("click", async () => {
+    setFormScanStatus("Scanning application form...", false);
+    renderFormScanSummary(null);
+    renderFormScanResults(null);
+    latestFormScan = null;
+    skippedScanFieldIds.clear();
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.id) {
+        setFormScanStatus("No active tab available to scan.", true);
+        return;
+      }
+      if (!tab.url || !/^https?:/i.test(tab.url)) {
+        setFormScanStatus("Open an application page (http/https) before scanning.", true);
+        return;
+      }
+
+      const inventory = await buildScanAnswerInventory();
+
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["autofill.js"]
+      });
+
+      const injection = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: function (answers) {
+          if (!window.ImpulsoAutofill || typeof window.ImpulsoAutofill.scanPage !== "function") {
+            return { error: "Scanner failed to load on this page." };
+          }
+          return window.ImpulsoAutofill.scanPage(answers || {});
+        },
+        args: [inventory]
+      });
+
+      const payload = injection && injection[0] ? injection[0].result : null;
+      if (!payload || payload.error) {
+        setFormScanStatus((payload && payload.error) || "Scan returned no data.", true);
+        return;
+      }
+
+      latestFormScan = payload;
+      refreshFormScanView();
+      const view = applyScanSkipState(payload);
+      const required = view.summary ? view.summary.requiredUnansweredFields : 0;
+      setFormScanStatus(
+        "Scan complete. " +
+          (view.summary ? view.summary.totalFields : 0) +
+          " fields found" +
+          (required ? " (" + required + " required unanswered)." : ".") +
+          " Preview only — page was not filled.",
+        false
+      );
+    } catch (error) {
+      console.error("Form scan failed:", error);
+      setFormScanStatus(error.message || "Failed to scan the application form.", true);
+    }
+  });
+}
 
 function escapeMatchHtml(value) {
   return String(value == null ? "" : value)

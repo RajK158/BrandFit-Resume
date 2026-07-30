@@ -219,6 +219,163 @@ body {
   font-weight: 700;
 }
 
+.form-scan-summary {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.form-scan-summary[hidden] {
+  display: none !important;
+}
+
+.form-scan-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+.form-scan-summary-grid .label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.form-scan-summary-grid .is-required {
+  grid-column: 1 / -1;
+  color: #991b1b;
+}
+
+.form-scan-results {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.form-scan-results[hidden] {
+  display: none !important;
+}
+
+.form-scan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.form-scan-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  display: grid;
+  gap: 4px;
+}
+
+.form-scan-item.is-required-unanswered {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.form-scan-item.is-skipped {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
+.form-scan-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 6px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.form-scan-k {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding-top: 1px;
+}
+
+.form-scan-v {
+  color: var(--text, #111);
+  word-break: break-word;
+}
+
+.form-scan-v.is-required {
+  color: #991b1b;
+  font-weight: 700;
+}
+
+.form-scan-answer.is-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.form-scan-sensitive-note {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.form-scan-actions {
+  margin-top: 4px;
+}
+
+.form-scan-skip-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text, #111);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.form-scan-skip-btn:hover {
+  background: #f8fafc;
+}
+
+.form-scan-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.form-scan-item-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.form-scan-required {
+  font-size: 10px;
+  font-weight: 700;
+  color: #991b1b;
+  text-transform: uppercase;
+}
+
+.form-scan-confidence {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
 .job-match-score-summary {
   margin-top: 4px;
   font-size: 12px;
@@ -1181,6 +1338,13 @@ button.action.btn-danger:hover {
   margin: 8px 0 3px;
   font-size: 12px;
   font-weight: 600;
+}
+
+.app-info-helper {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .app-info-fieldset input,
