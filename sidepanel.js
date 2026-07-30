@@ -526,26 +526,104 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
 // 4. Form Filling Orchestration Call
 document.getElementById("fillBtn").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return;
+  if (!tab || !tab.id) return;
 
+  if (!tab.url || !/^https?:/i.test(tab.url)) {
+    setFormScanStatus("Open an application page (http/https) before autofill.", true);
+    return;
+  }
+
+  setFormScanStatus("Loading profile and filling saved answers...", false);
+
+  let resumeBase64 = "";
+  let resumeName = "";
   try {
     if (window.ImpulsoStorage) {
       const currentJob = await window.ImpulsoStorage.getCurrentJob();
       if (currentJob && currentJob.id) {
         await window.ImpulsoStorage.syncAutofillResumeForJob(currentJob.id);
+        const selected = await window.ImpulsoStorage.getSelectedResumeDocumentForJob(currentJob.id);
+        if (selected && selected.document && selected.document.fileData) {
+          resumeBase64 = selected.document.fileData;
+          resumeName = selected.document.name || "";
+        }
       } else {
         const defaultResume = await window.ImpulsoStorage.getDefaultResume();
         await window.ImpulsoStorage.syncLegacyResume(defaultResume || null);
+        if (defaultResume && defaultResume.fileData) {
+          resumeBase64 = defaultResume.fileData;
+          resumeName = defaultResume.name || "";
+        }
       }
     }
   } catch (error) {
     console.error("Failed to sync selected resume before autofill:", error);
   }
 
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ["autofill.js", "content.js"]
-  });
+  try {
+    if (!window.ImpulsoStorage || !window.ImpulsoAutofill) {
+      setFormScanStatus("Impulso storage/autofill is not available in the side panel.", true);
+      return;
+    }
+
+    const masterProfile = await window.ImpulsoStorage.getMasterProfile();
+    const profilePayload =
+      typeof window.ImpulsoAutofill.resolveAutofillProfilePayload === "function"
+        ? window.ImpulsoAutofill.resolveAutofillProfilePayload(masterProfile)
+        : masterProfile;
+
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["autofill.js", "content.js"]
+    });
+
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: "IMPULSO_TRIGGER_AUTOFILL",
+      profile: profilePayload,
+      resume: {
+        resumeBase64: resumeBase64,
+        resumeName: resumeName
+      }
+    });
+
+    if (!response || response.error) {
+      setFormScanStatus((response && response.error) || "Autofill returned no response.", true);
+      return;
+    }
+
+    const summary = (response.report && response.report.summary) || {};
+    const failed = Array.isArray(response.report && response.report.results)
+      ? response.report.results.filter(function (r) {
+          return r && r.status === "failed";
+        })
+      : [];
+    const failHint =
+      failed.length > 0
+        ? " Failures: " +
+          failed
+            .slice(0, 3)
+            .map(function (r) {
+              return (r.label || r.category || "field") + " (" + (r.reason || "unknown") + ")";
+            })
+            .join("; ") +
+          (failed.length > 3 ? "…" : "")
+        : "";
+
+    setFormScanStatus(
+      "Autofill complete. " +
+        (summary.filled || 0) +
+        " filled, " +
+        (summary.skipped || 0) +
+        " skipped, " +
+        (summary.failed || 0) +
+        " failed." +
+        failHint,
+      Boolean(summary.failed)
+    );
+  } catch (error) {
+    console.error("Trigger Auto-Apply failed:", error);
+    setFormScanStatus(error.message || "Failed to trigger autofill.", true);
+  }
 });
 
 function setFormScanStatus(message, isError) {
@@ -786,6 +864,12 @@ async function buildScanAnswerInventory() {
   } catch (_) {
     hasResume = false;
     resumeName = "";
+  }
+  if (typeof window.ImpulsoAutofill.resolveAnswerInventory === "function") {
+    return window.ImpulsoAutofill.resolveAnswerInventory(profile, {
+      hasResume: hasResume,
+      resumeName: resumeName
+    });
   }
   return window.ImpulsoAutofill.buildAnswerInventory(profile, {
     hasResume: hasResume,

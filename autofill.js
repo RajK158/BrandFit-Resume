@@ -33,6 +33,7 @@
     "experience",
     "skills",
     "project_highlight",
+    "referral_source",
     "additional_information",
     "unknown"
   ];
@@ -68,9 +69,26 @@
     race_ethnicity: "Race/ethnicity",
     cover_letter: "Cover letter",
     project_highlight: "Project highlight",
+    referral_source: "Referral source",
     additional_information: "Additional information",
     resume_upload: "Resume upload",
     unknown: "Unknown"
+  };
+
+  var BASIC_TEXT_CATEGORIES = {
+    first_name: true,
+    last_name: true,
+    full_name: true,
+    preferred_name: true,
+    email: true,
+    phone: true,
+    linkedin: true,
+    github: true,
+    portfolio: true,
+    project_highlight: true,
+    referral_source: true,
+    additional_information: true,
+    cover_letter: true
   };
 
   var SENSITIVE_CATEGORIES = {
@@ -166,6 +184,19 @@
       exclude: []
     },
     {
+      category: "referral_source",
+      confidence: 0.93,
+      include: [
+        /\bhow\s+did\s+you\s+hear\b/,
+        /\bwhere\s+did\s+you\s+hear\b/,
+        /\bhear\s+about\s+(this\s+)?(job|role|position|opportunity)\b/,
+        /\breferral\s+source\b/,
+        /\bsource\s+of\s+hire\b/,
+        /\bhow\s+did\s+you\s+find\b/
+      ],
+      exclude: [/\bcover\s*letter\b/, /\bproject\b/]
+    },
+    {
       category: "sponsorship_later",
       confidence: 0.9,
       include: [
@@ -248,8 +279,20 @@
     },
     {
       category: "availability",
-      confidence: 0.86,
-      include: [/\bstart\s+date\b/, /\bavailable\s+to\s+start\b/, /\bnotice\s+period\b/, /\bavailability\b/],
+      confidence: 0.9,
+      include: [
+        /\bearliest\s+date\b/,
+        /\bearliest\s+.*\b(start|begin)\b/,
+        /\bavailable\s+start\s+date\b/,
+        /\bavailable\s+to\s+start\b/,
+        /\bwhen\s+can\s+you\s+(begin|start)\b/,
+        /\bwhen\s+are\s+you\s+available\s+to\s+(start|begin)\b/,
+        /\bdate\s+you\s+can\s+start\b/,
+        /\bstart\s+date\b/,
+        /\bavailability\s+date\b/,
+        /\bnotice\s+period\b/,
+        /\bavailability\b/
+      ],
       exclude: []
     },
     {
@@ -561,6 +604,18 @@
     if (inputType === "tel") {
       return validateDetection({ category: "phone", confidence: 0.97 }, inputType);
     }
+    if (inputType === "date") {
+      if (
+        /\bearliest\b/.test(questionBlob) ||
+        /\bstart\s+date\b/.test(questionBlob) ||
+        /\bavailable\b/.test(questionBlob) ||
+        /\bwhen\s+can\s+you\b/.test(questionBlob) ||
+        /\bbegin\b/.test(questionBlob) ||
+        /\bavailability\b/.test(questionBlob)
+      ) {
+        return validateDetection({ category: "availability", confidence: 0.95 }, inputType);
+      }
+    }
 
     if (isFileInputType(inputType)) {
       if (/\bcover\s*letter\b/.test(questionBlob) || /\bcovering\s*letter\b/.test(questionBlob)) {
@@ -714,6 +769,14 @@
     // phone inputs cannot be file fields
     if (result.category === "phone" && isFileInputType(inputType)) {
       result = { category: "unknown", confidence: 0.3 };
+    }
+
+    // Never treat email-type controls as phone, or tel as email.
+    if (inputType === "email" && result.category === "phone") {
+      result = { category: "email", confidence: 0.98 };
+    }
+    if (inputType === "tel" && result.category === "email") {
+      result = { category: "phone", confidence: 0.97 };
     }
 
     return result;
@@ -1127,7 +1190,8 @@
     return {
       first_name: first,
       last_name: last,
-      full_name: trimText([first, last].filter(Boolean).join(" ")),
+      // Legal/full name requires both parts — never first name alone.
+      full_name: first && last ? trimText(first + " " + last) : "",
       preferred_name: trimText(personal.preferredName || personal.preferredFirstName || ""),
       email: trimText(personal.email || opts.email || ""),
       phone: trimText(personal.phone || ""),
@@ -1147,6 +1211,8 @@
       sponsorship_now: trimText(work.requireSponsorshipNow || ""),
       sponsorship_later: trimText(work.requireSponsorshipFuture || ""),
       availability: trimText(prefs.availableStartDate || prefs.noticePeriod || ""),
+      // Date autofill uses availableStartDate only (never notice-period text).
+      available_start_date: trimText(prefs.availableStartDate || ""),
       salary: trimText(common.salaryExpectation || ""),
       relocation: trimText(prefs.willingToRelocate || ""),
       // Sensitive demographics: only locally saved values — never inferred.
@@ -1157,8 +1223,10 @@
       cover_letter: trimText(common.defaultCoverLetter || ""),
       // Explicit saved answer only — never auto-generated from resume projects or portfolio URL.
       project_highlight: trimText(common.projectHighlight || ""),
+      referral_source: trimText(common.referralSource || ""),
       additional_information: trimText(
-        common.linkedinMessageOrAdditionalInfo ||
+        common.additionalInformation ||
+          common.linkedinMessageOrAdditionalInfo ||
           common.whyInterestedInRole ||
           common.anythingElseToKnow ||
           ""
@@ -1166,6 +1234,112 @@
       resume_upload: hasResume ? resumeName || "Resume on file" : "",
       resume_filename: resumeName
     };
+  }
+
+  function resolveAutofillProfilePayload(profile) {
+    var data = profile || {};
+    var personal = data.personal || {};
+    var links = data.links || {};
+    var common = data.commonAnswers || {};
+    var additional = trimText(
+      common.additionalInformation ||
+        common.linkedinMessageOrAdditionalInfo ||
+        common.whyInterestedInRole ||
+        common.anythingElseToKnow ||
+        ""
+    );
+    var prefs = data.applicationPreferences || {};
+    return {
+      personal: {
+        firstName: trimText(personal.firstName || ""),
+        lastName: trimText(personal.lastName || ""),
+        preferredName: trimText(personal.preferredName || personal.preferredFirstName || ""),
+        email: trimText(personal.email || ""),
+        phone: trimText(personal.phone || ""),
+        location: trimText(personal.location || "")
+      },
+      links: {
+        linkedin: trimText(links.linkedin || ""),
+        github: trimText(links.github || ""),
+        portfolio: trimText(links.portfolio || "")
+      },
+      commonAnswers: {
+        projectHighlight: trimText(common.projectHighlight || ""),
+        referralSource: trimText(common.referralSource || ""),
+        additionalInformation: additional,
+        defaultCoverLetter: trimText(common.defaultCoverLetter || "")
+      },
+      applicationPreferences: {
+        availableStartDate: trimText(prefs.availableStartDate || "")
+      }
+    };
+  }
+
+  function resolveAnswerInventory(profileOrPayload, options) {
+    var data = profileOrPayload || {};
+    var common = data.commonAnswers || {};
+    var normalized = {
+      personal: data.personal || {},
+      links: data.links || {},
+      commonAnswers: {
+        projectHighlight: common.projectHighlight || "",
+        referralSource: common.referralSource || "",
+        defaultCoverLetter: common.defaultCoverLetter || "",
+        additionalInformation: common.additionalInformation || "",
+        linkedinMessageOrAdditionalInfo:
+          common.additionalInformation || common.linkedinMessageOrAdditionalInfo || "",
+        whyInterestedInRole: common.whyInterestedInRole || "",
+        anythingElseToKnow: common.anythingElseToKnow || "",
+        salaryExpectation: common.salaryExpectation || ""
+      },
+      workAuthorization: data.workAuthorization || {},
+      applicationPreferences: data.applicationPreferences || {},
+      demographics: data.demographics || {},
+      education: data.education,
+      experience: data.experience,
+      skills: data.skills
+    };
+    return buildAnswerInventory(normalized, options || {});
+  }
+
+  function getTextAnswerForCategory(category, inventory) {
+    var cat = normalizeText(category);
+    if (!cat || cat === "unknown" || !BASIC_TEXT_CATEGORIES[cat]) return "";
+    if (!inventory || typeof inventory !== "object") return "";
+
+    // Full/legal name must always be first + last — never first name alone.
+    if (cat === "full_name") {
+      var first = trimText(inventory.first_name || "");
+      var last = trimText(inventory.last_name || "");
+      if (first && last) return trimText(first + " " + last);
+      var stored = trimText(inventory.full_name || "");
+      if (stored && /\s/.test(stored)) return stored;
+      return "";
+    }
+
+    // Project narrative must never fall back to portfolio URL.
+    if (cat === "project_highlight") {
+      return trimText(inventory.project_highlight || "");
+    }
+
+    // Phone must never use email (or any other category).
+    if (cat === "phone") {
+      return trimText(inventory.phone || "");
+    }
+
+    if (cat === "preferred_name") {
+      return trimText(inventory.preferred_name || "");
+    }
+
+    if (cat === "portfolio") {
+      return trimText(inventory.portfolio || "");
+    }
+
+    if (cat === "referral_source") {
+      return trimText(inventory.referral_source || "");
+    }
+
+    return trimText(inventory[cat] || "");
   }
 
   function hasAnswerForCategory(category, inventory) {
@@ -1204,6 +1378,10 @@
       // Never use portfolio URL (or any other category) as the project answer.
       var projectAnswer = trimText(inventory.project_highlight);
       return projectAnswer || NO_SAVED_ANSWER;
+    }
+    if (BASIC_TEXT_CATEGORIES[category]) {
+      var textAnswer = getTextAnswerForCategory(category, inventory);
+      return textAnswer ? formatProposedAnswerValue(textAnswer) : NO_SAVED_ANSWER;
     }
     if (!hasAnswerForCategory(category, inventory)) return NO_SAVED_ANSWER;
     return formatProposedAnswerValue(inventory[category]) || NO_SAVED_ANSWER;
@@ -1490,10 +1668,518 @@
     });
   }
 
+  function isBasicTextInputType(inputType) {
+    var type = normalizeText(inputType);
+    return (
+      type === "text" ||
+      type === "email" ||
+      type === "tel" ||
+      type === "url" ||
+      type === "search" ||
+      type === "textarea" ||
+      type === "contenteditable"
+    );
+  }
+
+  function isBasicTextElement(el) {
+    if (!el) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    if (tag === "select") return false;
+    var type = describeInputType(el);
+    if (type === "radio" || type === "checkbox" || type === "file" || type === "hidden") {
+      return false;
+    }
+    // Date inputs / date-like placeholders are handled by the availability-date path.
+    if (type === "date") return false;
+    if (looksLikeDatePlaceholder(el)) return false;
+    return isBasicTextInputType(type);
+  }
+
+  function pad2(n) {
+    var s = String(n == null ? "" : n);
+    return s.length === 1 ? "0" + s : s;
+  }
+
+  function parseStoredDate(value) {
+    var text = trimText(value);
+    if (!text) return null;
+    var iso = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[tT\s].*)?$/);
+    if (iso) {
+      return { y: iso[1], m: iso[2], d: iso[3], iso: iso[1] + "-" + iso[2] + "-" + iso[3] };
+    }
+    var us = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (us) {
+      var m = pad2(us[1]);
+      var d = pad2(us[2]);
+      var y = us[3];
+      return { y: y, m: m, d: d, iso: y + "-" + m + "-" + d };
+    }
+    var usDash = text.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (usDash) {
+      var m2 = pad2(usDash[1]);
+      var d2 = pad2(usDash[2]);
+      var y2 = usDash[3];
+      return { y: y2, m: m2, d: d2, iso: y2 + "-" + m2 + "-" + d2 };
+    }
+    return null;
+  }
+
+  function looksLikeDatePlaceholder(el) {
+    if (!el) return false;
+    var cue = normalizeText(
+      [
+        el.placeholder || "",
+        el.getAttribute && el.getAttribute("aria-label"),
+        el.getAttribute && el.getAttribute("aria-placeholder"),
+        el.title || "",
+        el.name || "",
+        el.id || ""
+      ].join(" ")
+    );
+    return (
+      /\bpick\s+date\b/.test(cue) ||
+      /\bmm\/dd\/yyyy\b/.test(cue) ||
+      /\bmm\-dd\-yyyy\b/.test(cue) ||
+      /\byyyy\-mm\-dd\b/.test(cue) ||
+      /\bselect\s+a\s+date\b/.test(cue) ||
+      /\bchoose\s+a\s+date\b/.test(cue)
+    );
+  }
+
+  function dateFormatCue(el) {
+    var labelText = "";
+    try {
+      if (el && typeof findLabelText === "function") labelText = findLabelText(el) || "";
+    } catch (_) {
+      labelText = "";
+    }
+    return normalizeText(
+      [
+        el && el.placeholder,
+        el && el.getAttribute && el.getAttribute("aria-label"),
+        el && el.getAttribute && el.getAttribute("pattern"),
+        el && el.name,
+        el && el.id,
+        labelText
+      ].join(" ")
+    );
+  }
+
+  function formatDateForElement(el, parsed) {
+    if (!parsed) return "";
+    var type = normalizeText(el && el.type);
+    if (type === "date") return parsed.iso;
+    var cue = dateFormatCue(el);
+    if (/\bmm\/dd\/yyyy\b/.test(cue) || /\bpick\s+date\b/.test(cue) || /\bselect\s+a\s+date\b/.test(cue)) {
+      return parsed.m + "/" + parsed.d + "/" + parsed.y;
+    }
+    if (/\bmm\-dd\-yyyy\b/.test(cue)) {
+      return parsed.m + "-" + parsed.d + "-" + parsed.y;
+    }
+    if (/\byyyy\-mm\-dd\b/.test(cue)) {
+      return parsed.iso;
+    }
+    // Preserve ISO when the field expectation is unclear.
+    return parsed.iso;
+  }
+
+  function findNativeDateInput(el) {
+    if (!el) return null;
+    var tag = (el.tagName || "").toLowerCase();
+    var type = normalizeText(el.type || "");
+    if (tag === "input" && type === "date") return el;
+
+    var root = el;
+    if (el.closest) {
+      root =
+        el.closest('[class*="date"]') ||
+        el.closest('[class*="field"]') ||
+        el.closest("label") ||
+        el.parentElement ||
+        el;
+    }
+
+    if (root && root.querySelector) {
+      var nativeDate = root.querySelector('input[type="date"]');
+      if (nativeDate) return nativeDate;
+    }
+
+    if (tag === "input" && (type === "text" || type === "search" || !type)) return el;
+    if (root && root.querySelector) {
+      var textInput = root.querySelector('input[type="text"], input:not([type]), input[type="search"]');
+      if (textInput) return textInput;
+    }
+    return tag === "input" ? el : null;
+  }
+
+  function findVisibleDateCompanion(nativeInput) {
+    if (!nativeInput || !nativeInput.parentElement) return null;
+    var root =
+      (nativeInput.closest &&
+        (nativeInput.closest('[class*="date"]') ||
+          nativeInput.closest('[class*="field"]') ||
+          nativeInput.closest("label"))) ||
+      nativeInput.parentElement;
+    if (!root || !root.querySelectorAll) return null;
+    var inputs = root.querySelectorAll("input");
+    for (var i = 0; i < inputs.length; i += 1) {
+      var input = inputs[i];
+      if (input === nativeInput) continue;
+      var type = normalizeText(input.type || "text");
+      if (type === "hidden" || type === "radio" || type === "checkbox" || type === "file") continue;
+      if (type === "text" || type === "search" || !type) return input;
+    }
+    return null;
+  }
+
+  function isAvailabilityDateCandidate(el) {
+    if (!el) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    if (tag !== "input") return false;
+    var type = normalizeText(el.type || "text");
+    if (type === "date") return true;
+    if (type === "text" || type === "search" || !type) {
+      return looksLikeDatePlaceholder(el);
+    }
+    return false;
+  }
+
+  function dateValuesMatch(parsed, actualValue, expectedFormatted) {
+    var actual = trimText(actualValue);
+    if (!actual) return false;
+    if (expectedFormatted && textValuesMatch(expectedFormatted, actual)) return true;
+    var actualParsed = parseStoredDate(actual);
+    if (parsed && actualParsed && parsed.iso === actualParsed.iso) return true;
+    return false;
+  }
+
+  function availabilityDateAnswer(inventory) {
+    var inv = inventory || {};
+    var fromDedicated = trimText(inv.available_start_date || "");
+    if (fromDedicated) return fromDedicated;
+    var fromAvailability = trimText(inv.availability || "");
+    if (parseStoredDate(fromAvailability)) return fromAvailability;
+    return "";
+  }
+
+  function fillAvailabilityDateElement(el, rawDate) {
+    if (!el) {
+      return { ok: false, status: "failed", reason: "Date element not found." };
+    }
+
+    var parsed = parseStoredDate(rawDate);
+    if (!parsed) {
+      return { ok: false, status: "skipped", reason: "No saved available start date." };
+    }
+
+    var target = findNativeDateInput(el) || el;
+    if (!target || (target.tagName || "").toLowerCase() !== "input") {
+      return { ok: false, status: "failed", reason: "No native date input found." };
+    }
+
+    var companion = findVisibleDateCompanion(target);
+    var currentTarget = readElementTextValue(target);
+    var currentVisible = companion ? readElementTextValue(companion) : "";
+    if (isFilledValue(currentTarget) || isFilledValue(currentVisible)) {
+      return { ok: false, status: "skipped", reason: "Field is already completed." };
+    }
+
+    var formatted = formatDateForElement(target, parsed);
+    var wrote = setNativeValue(target, formatted);
+    if (!wrote) {
+      return { ok: false, status: "failed", reason: "Could not set date value." };
+    }
+
+    if (companion && companion !== target && !isFilledValue(readElementTextValue(companion))) {
+      setNativeValue(companion, formatDateForElement(companion, parsed));
+    }
+
+    var afterTarget = readElementTextValue(target);
+    var afterVisible = companion ? readElementTextValue(companion) : "";
+    var persisted =
+      dateValuesMatch(parsed, afterTarget, formatted) ||
+      dateValuesMatch(parsed, afterVisible, formatDateForElement(companion || target, parsed));
+
+    if (!persisted) {
+      return {
+        ok: false,
+        status: "failed",
+        reason: "Verification failed; date field does not contain the expected value."
+      };
+    }
+
+    return { ok: true, status: "filled", reason: "", value: formatted };
+  }
+
+  function readElementTextValue(el) {
+    if (!el) return "";
+    if (
+      el.isContentEditable ||
+      normalizeText(el.getAttribute && el.getAttribute("contenteditable")) === "true"
+    ) {
+      return trimText(el.innerText || el.textContent || "");
+    }
+    return trimText(el.value || "");
+  }
+
+  function textValuesMatch(expected, actual) {
+    return normalizeText(expected) === normalizeText(actual);
+  }
+
+  function dispatchFillEvents(el) {
+    if (!el) return;
+    try {
+      el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new FocusEvent("blur", { bubbles: true, cancelable: true }));
+    } catch (_) {
+      try {
+        el.dispatchEvent(new Event("blur", { bubbles: true, cancelable: true }));
+      } catch (_) {}
+    }
+  }
+
+  function setNativeValue(el, value) {
+    if (!el) return false;
+    var next = value == null ? "" : String(value);
+    var tag = (el.tagName || "").toLowerCase();
+    var proto =
+      tag === "textarea"
+        ? window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement && window.HTMLInputElement.prototype;
+    var descriptor = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
+    var ownProto = Object.getPrototypeOf(el);
+    var ownDescriptor = ownProto ? Object.getOwnPropertyDescriptor(ownProto, "value") : null;
+
+    try {
+      if (descriptor && descriptor.set) {
+        if (ownDescriptor && ownDescriptor.set && ownDescriptor.set !== descriptor.set) {
+          ownDescriptor.set.call(el, next);
+        } else {
+          descriptor.set.call(el, next);
+        }
+      } else {
+        el.value = next;
+      }
+    } catch (_) {
+      try {
+        el.value = next;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    dispatchFillEvents(el);
+    return true;
+  }
+
+  function setContentEditableValue(el, value) {
+    if (!el) return false;
+    var next = value == null ? "" : String(value);
+    try {
+      el.focus();
+    } catch (_) {}
+    el.textContent = next;
+    try {
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: next }));
+    } catch (_) {
+      el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    }
+    el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    try {
+      el.dispatchEvent(new FocusEvent("blur", { bubbles: true, cancelable: true }));
+    } catch (_) {
+      el.dispatchEvent(new Event("blur", { bubbles: true, cancelable: true }));
+    }
+    return true;
+  }
+
+  function fillTextElement(el, value) {
+    if (!el) {
+      return { ok: false, status: "failed", reason: "Element not found." };
+    }
+    if (!isBasicTextElement(el)) {
+      return { ok: false, status: "skipped", reason: "Not a basic text field." };
+    }
+
+    var current = readElementTextValue(el);
+    if (isFilledValue(current)) {
+      return { ok: false, status: "skipped", reason: "Field is already completed." };
+    }
+
+    var answer = trimText(value);
+    if (!answer) {
+      return { ok: false, status: "skipped", reason: "No saved answer." };
+    }
+
+    var isEditable =
+      el.isContentEditable ||
+      normalizeText(el.getAttribute && el.getAttribute("contenteditable")) === "true";
+    var wrote = isEditable ? setContentEditableValue(el, answer) : setNativeValue(el, answer);
+    if (!wrote) {
+      return { ok: false, status: "failed", reason: "Could not set field value." };
+    }
+
+    var after = readElementTextValue(el);
+    if (!textValuesMatch(answer, after)) {
+      return {
+        ok: false,
+        status: "failed",
+        reason: "Verification failed; field does not contain the expected value."
+      };
+    }
+
+    return { ok: true, status: "filled", reason: "" };
+  }
+
+  function detectBasicTextCategory(el) {
+    if (!el) return { category: "unknown", confidence: 0 };
+    var context = collectContext(el);
+    return detectCategory(el, context, []);
+  }
+
+  function pushFillResult(results, base, fillResult, value) {
+    results.push({
+      category: base.category,
+      label: base.label,
+      status: fillResult.status,
+      reason: fillResult.reason || "",
+      ok: Boolean(fillResult.ok),
+      value: fillResult.ok ? value || fillResult.value || "" : ""
+    });
+  }
+
+  function fillBasicTextFields(root, inventory) {
+    var doc = root || document;
+    var inv = inventory || {};
+    var results = [];
+    var nodes = [];
+    var seenList = [];
+
+    try {
+      Array.prototype.forEach.call(
+        doc.querySelectorAll(
+          "input, textarea, [contenteditable='true'], [contenteditable='']"
+        ),
+        function (el) {
+          nodes.push(el);
+        }
+      );
+    } catch (_) {
+      return { results: [], summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 } };
+    }
+
+    function wasSeen(el) {
+      return seenList.indexOf(el) !== -1;
+    }
+
+    function markSeen(el) {
+      function add(node) {
+        if (node && seenList.indexOf(node) === -1) seenList.push(node);
+      }
+      add(el);
+      var native = findNativeDateInput(el);
+      add(native);
+      add(findVisibleDateCompanion(native || el));
+    }
+
+    nodes.forEach(function (el) {
+      if (!el || wasSeen(el)) return;
+
+      var label = findLabelText(el) || trimText(el.getAttribute && el.getAttribute("aria-label")) || "";
+      var detected = detectBasicTextCategory(el);
+      var category = detected.category || "unknown";
+
+      // Availability date autofill (native date + date-like text / Ashby native input).
+      if (category === "availability") {
+        var availCue = normalizeText(label + " " + (el.placeholder || "") + " " + (el.name || ""));
+        if (/\bnotice\s+period\b/.test(availCue)) {
+          results.push({
+            category: category,
+            label: label,
+            status: "skipped",
+            reason: "Notice period is not an availability date field.",
+            ok: false,
+            value: ""
+          });
+          return;
+        }
+        var tagName = (el.tagName || "").toLowerCase();
+        var inputType = normalizeText(el.type || "text");
+        var isDateControl =
+          tagName === "input" &&
+          (inputType === "date" ||
+            inputType === "text" ||
+            inputType === "search" ||
+            !inputType ||
+            looksLikeDatePlaceholder(el));
+        if (!isDateControl) {
+          results.push({
+            category: category,
+            label: label,
+            status: "skipped",
+            reason: "Availability field is not a date input.",
+            ok: false,
+            value: ""
+          });
+          return;
+        }
+        var dateAnswer = availabilityDateAnswer(inv);
+        var dateResult = fillAvailabilityDateElement(el, dateAnswer);
+        markSeen(el);
+        pushFillResult(
+          results,
+          { category: "availability", label: label },
+          dateResult,
+          dateResult.value || dateAnswer
+        );
+        return;
+      }
+
+      if (!isBasicTextElement(el)) return;
+
+      if (!BASIC_TEXT_CATEGORIES[category]) {
+        results.push({
+          category: category,
+          label: label,
+          status: "skipped",
+          reason: "Category is not a basic text autofill target.",
+          ok: false
+        });
+        return;
+      }
+
+      var answer = getTextAnswerForCategory(category, inv);
+      var fillResult = fillTextElement(el, answer);
+      pushFillResult(results, { category: category, label: label }, fillResult, answer);
+    });
+
+    return {
+      results: results,
+      summary: {
+        attempted: results.length,
+        filled: results.filter(function (r) {
+          return r.status === "filled";
+        }).length,
+        skipped: results.filter(function (r) {
+          return r.status === "skipped";
+        }).length,
+        failed: results.filter(function (r) {
+          return r.status === "failed";
+        }).length
+      }
+    };
+  }
+
   global.ImpulsoAutofill = {
     CATEGORY_LABELS: CATEGORY_LABELS,
     CATEGORY_ORDER: CATEGORY_ORDER,
     SENSITIVE_CATEGORIES: SENSITIVE_CATEGORIES,
+    BASIC_TEXT_CATEGORIES: BASIC_TEXT_CATEGORIES,
     NO_SAVED_ANSWER: NO_SAVED_ANSWER,
     collectContext: collectContext,
     detectCategory: detectCategory,
@@ -1502,12 +2188,24 @@
     findLabelText: findLabelText,
     getFieldIdentity: getFieldIdentity,
     buildAnswerInventory: buildAnswerInventory,
+    resolveAutofillProfilePayload: resolveAutofillProfilePayload,
+    resolveAnswerInventory: resolveAnswerInventory,
     hasAnswerForCategory: hasAnswerForCategory,
     getProposedAnswer: getProposedAnswer,
+    getTextAnswerForCategory: getTextAnswerForCategory,
     isSensitiveCategory: isSensitiveCategory,
     confidenceLabel: confidenceLabel,
     validateScanField: validateScanField,
     enrichScanField: enrichScanField,
+    setNativeValue: setNativeValue,
+    fillTextElement: fillTextElement,
+    fillAvailabilityDateElement: fillAvailabilityDateElement,
+    fillBasicTextFields: fillBasicTextFields,
+    parseStoredDate: parseStoredDate,
+    formatDateForElement: formatDateForElement,
+    availabilityDateAnswer: availabilityDateAnswer,
+    readElementTextValue: readElementTextValue,
+    textValuesMatch: textValuesMatch,
     scanDocument: scanDocument,
     scanPage: function (inventory) {
       return scanDocument(document, inventory || {});

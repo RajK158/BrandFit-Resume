@@ -1,4 +1,10 @@
 (function () {
+  // Keep a single bridge listener across re-injections on the same tab.
+  if (window.__IMPULSO_AUTOFILL_BRIDGE__) return;
+  window.__IMPULSO_AUTOFILL_BRIDGE__ = true;
+
+  var MESSAGE_TYPE = "IMPULSO_TRIGGER_AUTOFILL";
+
   function findLabelText(input) {
     if (window.ImpulsoAutofill && typeof window.ImpulsoAutofill.findLabelText === "function") {
       return window.ImpulsoAutofill.findLabelText(input);
@@ -23,66 +29,140 @@
     return (nameAttr + " " + idAttr + " " + placeholderAttr + " " + labelText).trim();
   }
 
-  chrome.storage.local.get(
-    ["firstName", "lastName", "email", "github", "linkedin", "resumeBase64", "resumeName"],
-    function (data) {
-      if (!data.firstName) return;
-
-      var inputs = document.querySelectorAll("input, textarea");
-
-      inputs.forEach(function (input) {
-        if (input.type === "file") return;
-
-        var identity = getIdentityBlob(input);
-
-        if (/\bpreferred\b/.test(identity) && /\bname\b/.test(identity)) {
-          fillReactInput(input, data.firstName);
-        } else if (/\bfirst\s*name\b/.test(identity) || (/\bfirst\b/.test(identity) && /\bname\b/.test(identity))) {
-          if (/\bpreferred\b/.test(identity) || /\bemployer\b/.test(identity) || /\bcompany\b/.test(identity)) {
-            return;
-          }
-          fillReactInput(input, data.firstName);
-        } else if (/\blast\s*name\b/.test(identity) || (/\blast\b/.test(identity) && /\bname\b/.test(identity))) {
-          fillReactInput(input, data.lastName);
-        } else if (/\be-?mail\b/.test(identity)) {
-          fillReactInput(input, data.email);
-        } else if (/\bgithub\b/.test(identity)) {
-          fillReactInput(input, data.github);
-        } else if (/\blinkedin\b/.test(identity)) {
-          fillReactInput(input, data.linkedin);
-        }
-      });
-
-      if (data.resumeBase64 && data.resumeName) {
-        document.querySelectorAll('input[type="file"]').forEach(function (fileInput) {
-          var identity = getIdentityBlob(fileInput);
-          if (
-            (/\bresume\b/.test(identity) || /\bcv\b/.test(identity)) &&
-            !/\bcover\b/.test(identity) &&
-            !/\bletter\b/.test(identity)
-          ) {
-            uploadFileToInput(fileInput, data.resumeBase64, data.resumeName);
-          }
-        });
+  function buildProfileFromLegacyStorage(data) {
+    var raw = data || {};
+    if (raw.masterProfile && typeof raw.masterProfile === "object") {
+      return raw.masterProfile;
+    }
+    var prefs = raw.applicationPreferences || {};
+    return {
+      personal: {
+        firstName: raw.firstName || "",
+        lastName: raw.lastName || "",
+        preferredName: raw.preferredName || "",
+        email: raw.email || "",
+        phone: raw.phone || "",
+        location: raw.location || ""
+      },
+      links: {
+        linkedin: raw.linkedin || "",
+        github: raw.github || "",
+        portfolio: raw.portfolio || ""
+      },
+      commonAnswers: {
+        projectHighlight: raw.projectHighlight || "",
+        referralSource: raw.referralSource || "",
+        additionalInformation:
+          raw.additionalInformation || raw.linkedinMessageOrAdditionalInfo || "",
+        defaultCoverLetter: raw.defaultCoverLetter || raw.coverLetter || "",
+        linkedinMessageOrAdditionalInfo:
+          raw.additionalInformation || raw.linkedinMessageOrAdditionalInfo || "",
+        whyInterestedInRole: raw.whyInterestedInRole || "",
+        anythingElseToKnow: raw.anythingElseToKnow || ""
+      },
+      applicationPreferences: {
+        availableStartDate:
+          prefs.availableStartDate || raw.availableStartDate || ""
       }
-    }
-  );
+    };
+  }
 
-  function fillReactInput(targetElement, value) {
-    if (!targetElement || targetElement.value === value) return;
-    var valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
-    var prototype = Object.getPrototypeOf(targetElement);
-    var prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, "value");
-
-    if (valueSetter && valueSetter.set !== prototypeValueSetter.set) {
-      prototypeValueSetter.set.call(targetElement, value);
-    } else if (valueSetter) {
-      valueSetter.set.call(targetElement, value);
-    } else {
-      targetElement.value = value;
+  function resolveInventory(profilePayload, resume) {
+    var AF = window.ImpulsoAutofill;
+    if (!AF) return {};
+    var opts = {
+      hasResume: Boolean(resume && resume.resumeBase64 && resume.resumeName),
+      resumeName: (resume && resume.resumeName) || ""
+    };
+    if (typeof AF.resolveAnswerInventory === "function") {
+      return AF.resolveAnswerInventory(profilePayload || {}, opts);
     }
-    targetElement.dispatchEvent(new Event("input", { bubbles: true }));
-    targetElement.dispatchEvent(new Event("change", { bubbles: true }));
+    if (typeof AF.buildAnswerInventory === "function") {
+      return AF.buildAnswerInventory(profilePayload || {}, opts);
+    }
+    return {};
+  }
+
+  function fillFromInventory(inventory) {
+    var AF = window.ImpulsoAutofill;
+    if (AF && typeof AF.fillBasicTextFields === "function") {
+      return AF.fillBasicTextFields(document, inventory || {});
+    }
+    return {
+      results: [],
+      summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 },
+      error: "Autofill engine is not available on this page."
+    };
+  }
+
+  function uploadResumeIfPresent(resume) {
+    if (!resume || !resume.resumeBase64 || !resume.resumeName) return;
+    document.querySelectorAll('input[type="file"]').forEach(function (fileInput) {
+      var identity = getIdentityBlob(fileInput);
+      if (
+        (/\bresume\b/.test(identity) || /\bcv\b/.test(identity)) &&
+        !/\bcover\b/.test(identity) &&
+        !/\bletter\b/.test(identity)
+      ) {
+        uploadFileToInput(fileInput, resume.resumeBase64, resume.resumeName);
+      }
+    });
+  }
+
+  function runAutofill(profilePayload, resume) {
+    var inventory = resolveInventory(profilePayload, resume);
+    var report = fillFromInventory(inventory);
+    uploadResumeIfPresent(resume);
+    return {
+      ok: !report.error,
+      error: report.error || "",
+      report: report,
+      usedLegacyFallback: false
+    };
+  }
+
+  function runLegacyFallback(resumeFromMessage, sendResponse) {
+    chrome.storage.local.get(
+      [
+        "firstName",
+        "lastName",
+        "email",
+        "phone",
+        "preferredName",
+        "location",
+        "github",
+        "linkedin",
+        "portfolio",
+        "projectHighlight",
+        "referralSource",
+        "defaultCoverLetter",
+        "coverLetter",
+        "additionalInformation",
+        "linkedinMessageOrAdditionalInfo",
+        "whyInterestedInRole",
+        "anythingElseToKnow",
+        "availableStartDate",
+        "masterProfile",
+        "resumeBase64",
+        "resumeName"
+      ],
+      function (data) {
+        var profile = buildProfileFromLegacyStorage(data);
+        var resume = resumeFromMessage || {
+          resumeBase64: data.resumeBase64 || "",
+          resumeName: data.resumeName || ""
+        };
+        if (!resume.resumeBase64 && data.resumeBase64) {
+          resume = {
+            resumeBase64: data.resumeBase64,
+            resumeName: data.resumeName || ""
+          };
+        }
+        var result = runAutofill(profile, resume);
+        result.usedLegacyFallback = true;
+        sendResponse(result);
+      }
+    );
   }
 
   function uploadFileToInput(inputElement, base64Data, filename) {
@@ -106,4 +186,25 @@
       console.error("File input error:", err);
     }
   }
+
+  chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+    if (!message || message.type !== MESSAGE_TYPE) return;
+
+    try {
+      var resume = message.resume || {};
+      if (message.profile && typeof message.profile === "object") {
+        sendResponse(runAutofill(message.profile, resume));
+        return;
+      }
+      // Fallback only when no profile payload was received.
+      runLegacyFallback(resume, sendResponse);
+      return true;
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        error: error && error.message ? error.message : "Autofill failed.",
+        report: { results: [], summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 } }
+      });
+    }
+  });
 })();
