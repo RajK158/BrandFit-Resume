@@ -20,6 +20,7 @@
     "postal_code",
     "country",
     "work_authorization",
+    "export_control_status",
     "sponsorship_now",
     "sponsorship_later",
     "availability",
@@ -58,6 +59,7 @@
     experience: "Experience",
     skills: "Skills",
     work_authorization: "Work authorization",
+    export_control_status: "Export control / U.S. person status",
     sponsorship_now: "Sponsorship now",
     sponsorship_later: "Sponsorship later",
     availability: "Availability",
@@ -219,6 +221,18 @@
       exclude: []
     },
     {
+      category: "export_control_status",
+      confidence: 0.96,
+      include: [
+        /\bexport\s+control\b/,
+        /\bitar\b/,
+        /\bu\.?\s*s\.?\s+person\b/,
+        /\bus\s+person\b/,
+        /\bwhich\s+statement\s+best\s+applies\b/
+      ],
+      exclude: [/\blegally\s+authorized\b/, /\bsponsor/]
+    },
+    {
       category: "work_authorization",
       confidence: 0.92,
       include: [
@@ -230,7 +244,7 @@
         /\bcitizen\s+or\s+national\b/,
         /\ba\s+united\s+states\s+citizen\b/
       ],
-      exclude: [/\bsponsor/]
+      exclude: [/\bsponsor/, /\bexport\s+control\b/, /\bitar\b/, /\bu\.?\s*s\.?\s+person\b/]
     },
     {
       category: "veteran_status",
@@ -1214,6 +1228,8 @@
       experience: Array.isArray(data.experience) && data.experience.length ? "Saved in profile" : "",
       skills: Array.isArray(data.skills) && data.skills.length ? data.skills.join(", ") : "",
       work_authorization: trimText(work.legallyAuthorizedToWork || ""),
+      // Explicit export-control / U.S. person status only — never inferred.
+      export_control_status: trimText(work.exportControlStatus || ""),
       sponsorship_now: trimText(work.requireSponsorshipNow || ""),
       sponsorship_later: trimText(work.requireSponsorshipFuture || ""),
       availability: trimText(prefs.availableStartDate || prefs.noticePeriod || ""),
@@ -1287,7 +1303,8 @@
       workAuthorization: {
         legallyAuthorizedToWork: trimText(work.legallyAuthorizedToWork || ""),
         requireSponsorshipNow: trimText(work.requireSponsorshipNow || ""),
-        requireSponsorshipFuture: trimText(work.requireSponsorshipFuture || "")
+        requireSponsorshipFuture: trimText(work.requireSponsorshipFuture || ""),
+        exportControlStatus: trimText(work.exportControlStatus || "")
       },
       demographics: {
         gender: trimText((data.demographics || {}).gender || ""),
@@ -3546,6 +3563,75 @@
     };
   }
 
+  function resolveSavedExportControlStatus(inventory, options) {
+    var opts = options || {};
+    var inv = inventory || {};
+    var work =
+      opts.workAuthorization ||
+      (opts.profile && opts.profile.workAuthorization) ||
+      {};
+    return trimText(
+      inv.export_control_status ||
+        inv.exportControlStatus ||
+        work.exportControlStatus ||
+        work.export_control_status ||
+        ""
+    );
+  }
+
+  function prepareAshbyExportControl(inventory, options) {
+    var empty = {
+      shouldFill: false,
+      savedValue: ""
+    };
+    if (!isAshbyHost()) return empty;
+
+    var savedValue = resolveSavedExportControlStatus(inventory, options || {});
+    // Skip silently when the user has not explicitly saved a value.
+    // Never infer from work auth, sponsorship, visa, citizenship, or resume.
+    if (!savedValue) return empty;
+
+    return {
+      shouldFill: true,
+      savedValue: savedValue
+    };
+  }
+
+  function exportControlReportFromMainWorldResult(mainResult) {
+    var result = mainResult || {};
+    if (result.success) {
+      return {
+        results: [
+          {
+            category: "export_control_status",
+            label: "Export control / U.S. person status",
+            question: "Export control / U.S. person status",
+            status: "filled",
+            reason: "",
+            ok: true,
+            value: trimText(result.selectedText || "")
+          }
+        ],
+        summary: { attempted: 1, filled: 1, skipped: 0, failed: 0 }
+      };
+    }
+
+    return {
+      results: [
+        {
+          category: "export_control_status",
+          label: "Export control / U.S. person status",
+          question: "Export control / U.S. person status",
+          status: "failed",
+          reason: trimText(result.reason || "Export-control selection failed."),
+          ok: false,
+          value: ""
+        }
+      ],
+      summary: { attempted: 1, filled: 0, skipped: 0, failed: 1 }
+    };
+  }
+
   global.ImpulsoAutofill = {
     CATEGORY_LABELS: CATEGORY_LABELS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -3581,6 +3667,8 @@
     prepareAshbyRaceEthnicity: prepareAshbyRaceEthnicity,
     canonicalizeAshbyRaceValue: canonicalizeAshbyRaceValue,
     raceReportFromMainWorldResult: raceReportFromMainWorldResult,
+    prepareAshbyExportControl: prepareAshbyExportControl,
+    exportControlReportFromMainWorldResult: exportControlReportFromMainWorldResult,
     mapSavedGenderToAshbyOption: mapSavedGenderToAshbyOption,
     matchAshbyVeteranOption: matchAshbyVeteranOption,
     matchAshbyDisabilityOption: matchAshbyDisabilityOption,

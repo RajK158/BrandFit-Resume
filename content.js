@@ -5,6 +5,7 @@
 
   var MESSAGE_TYPE = "IMPULSO_TRIGGER_AUTOFILL";
   var ASHBY_RACE_MAIN_TYPE = "IMPULSO_ASHBY_RACE_MAIN";
+  var ASHBY_EXPORT_CONTROL_MAIN_TYPE = "IMPULSO_ASHBY_EXPORT_CONTROL_MAIN";
 
   function findLabelText(input) {
     if (window.ImpulsoAutofill && typeof window.ImpulsoAutofill.findLabelText === "function") {
@@ -108,6 +109,19 @@
       inventory = inventory || {};
       inventory.race_ethnicity = raceEthnicity;
       inventory.raceEthnicity = raceEthnicity;
+    }
+
+    var work = (profilePayload && profilePayload.workAuthorization) || {};
+    var exportControl =
+      (inventory && (inventory.export_control_status || inventory.exportControlStatus)) ||
+      work.exportControlStatus ||
+      work.export_control_status ||
+      "";
+    exportControl = String(exportControl || "").trim();
+    if (exportControl) {
+      inventory = inventory || {};
+      inventory.export_control_status = exportControl;
+      inventory.exportControlStatus = exportControl;
     }
     return inventory || {};
   }
@@ -256,6 +270,92 @@
     };
   }
 
+  function requestAshbyExportControlMainWorld(savedValue, tabId) {
+    return new Promise(function (resolve) {
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: ASHBY_EXPORT_CONTROL_MAIN_TYPE,
+            tabId: typeof tabId === "number" ? tabId : undefined,
+            savedValue: String(savedValue || "")
+          },
+          function (response) {
+            if (chrome.runtime.lastError) {
+              resolve({
+                success: false,
+                selectedText: "",
+                reason: "Export-control selection failed."
+              });
+              return;
+            }
+            resolve(
+              response && typeof response === "object"
+                ? response
+                : {
+                    success: false,
+                    selectedText: "",
+                    reason: "Export-control selection failed."
+                  }
+            );
+          }
+        );
+      } catch (_) {
+        resolve({
+          success: false,
+          selectedText: "",
+          reason: "Export-control selection failed."
+        });
+      }
+    });
+  }
+
+  async function fillAshbyExportControlViaMainWorld(inventory, options, tabId) {
+    var AF = window.ImpulsoAutofill;
+    if (!AF || typeof AF.prepareAshbyExportControl !== "function") {
+      return {
+        results: [],
+        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+      };
+    }
+
+    var prepared = AF.prepareAshbyExportControl(inventory || {}, {
+      workAuthorization: (options && options.workAuthorization) || null,
+      profile: (options && options.profile) || null
+    });
+    // Skip silently when no explicit saved export-control value exists.
+    if (!prepared || !prepared.shouldFill) {
+      return {
+        results: [],
+        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+      };
+    }
+
+    var mainResult = await requestAshbyExportControlMainWorld(prepared.savedValue, tabId);
+    if (typeof AF.exportControlReportFromMainWorldResult === "function") {
+      return AF.exportControlReportFromMainWorldResult(mainResult);
+    }
+
+    return {
+      results: [
+        {
+          category: "export_control_status",
+          label: "Export control / U.S. person status",
+          question: "Export control / U.S. person status",
+          status: mainResult && mainResult.success ? "filled" : "failed",
+          reason: (mainResult && mainResult.reason) || "",
+          ok: Boolean(mainResult && mainResult.success),
+          value: (mainResult && mainResult.success && mainResult.selectedText) || ""
+        }
+      ],
+      summary: {
+        attempted: 1,
+        filled: mainResult && mainResult.success ? 1 : 0,
+        skipped: 0,
+        failed: mainResult && mainResult.success ? 0 : 1
+      }
+    };
+  }
+
   function uploadResumeIfPresent(resume) {
     if (!resume || !resume.resumeBase64 || !resume.resumeName) return;
     document.querySelectorAll('input[type="file"]').forEach(function (fileInput) {
@@ -277,13 +377,22 @@
       // Default on: include saved demographic answers automatically.
       fillDemographics: opts.fillDemographics !== false,
       profile: profilePayload || null,
-      demographics: (profilePayload && profilePayload.demographics) || null
+      demographics: (profilePayload && profilePayload.demographics) || null,
+      workAuthorization: (profilePayload && profilePayload.workAuthorization) || null
     };
     var report = fillFromInventory(inventory, fillOpts);
 
-    // Ashby Race only: verified native setter must run in the webpage MAIN world.
+    // Ashby Race: React handlers must run in the webpage MAIN world.
     var raceReport = await fillAshbyRaceViaMainWorld(inventory, fillOpts, opts.tabId);
     report = mergeReport(report, raceReport);
+
+    // Ashby export-control / U.S. person: MAIN-world React handlers; never inferred.
+    var exportReport = await fillAshbyExportControlViaMainWorld(
+      inventory,
+      fillOpts,
+      opts.tabId
+    );
+    report = mergeReport(report, exportReport);
 
     uploadResumeIfPresent(resume);
     return {

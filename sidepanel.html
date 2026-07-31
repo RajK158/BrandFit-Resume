@@ -132,6 +132,17 @@
 
               <label class="app-info-field" for="appVisaExpiration">Visa expiration date <span class="optional-tag">optional</span></label>
               <input type="date" id="appVisaExpiration" data-app-section="workAuthorization" data-app-field="visaExpirationDate">
+
+              <label class="app-info-field" for="appExportControlStatus">Export control / U.S. person status</label>
+              <select id="appExportControlStatus" data-app-section="workAuthorization" data-app-field="exportControlStatus">
+                <option value="">Select…</option>
+                <option value="A United States citizen or national">A United States citizen or national</option>
+                <option value="A lawful permanent resident of the United States (Green Card holder)">A lawful permanent resident of the United States (Green Card holder)</option>
+                <option value="A person admitted as a refugee to the United States">A person admitted as a refugee to the United States</option>
+                <option value="A person admitted as an asylee to the United States">A person admitted as an asylee to the United States</option>
+                <option value="None of the above">None of the above</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+              </select>
             </fieldset>
 
             <fieldset class="app-info-fieldset">

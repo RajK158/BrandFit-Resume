@@ -266,7 +266,9 @@
       requireSponsorshipNow: "",
       requireSponsorshipFuture: "",
       currentVisaStatus: "",
-      visaExpirationDate: ""
+      visaExpirationDate: "",
+      // Explicitly saved only — never inferred from auth/sponsorship/visa/citizenship.
+      exportControlStatus: ""
     };
     return { ...base, ...(overrides || {}) };
   }
