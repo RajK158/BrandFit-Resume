@@ -85,14 +85,27 @@
 
   function fillFromInventory(inventory) {
     var AF = window.ImpulsoAutofill;
-    if (AF && typeof AF.fillBasicTextFields === "function") {
-      return AF.fillBasicTextFields(document, inventory || {});
+    if (!AF || typeof AF.fillBasicTextFields !== "function") {
+      return {
+        results: [],
+        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 },
+        error: "Autofill engine is not available on this page."
+      };
     }
-    return {
-      results: [],
-      summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 },
-      error: "Autofill engine is not available on this page."
-    };
+
+    var report = AF.fillBasicTextFields(document, inventory || {});
+
+    // Ashby Yes/No radios only (jobs.ashbyhq.com); diagnostics stay in the console.
+    if (typeof AF.fillAshbyYesNoRadios === "function") {
+      var ashbyReport = AF.fillAshbyYesNoRadios(document, inventory || {});
+      if (typeof AF.mergeAutofillReports === "function") {
+        report = AF.mergeAutofillReports(report, ashbyReport);
+      } else {
+        report.results = (report.results || []).concat((ashbyReport && ashbyReport.results) || []);
+      }
+    }
+
+    return report;
   }
 
   function uploadResumeIfPresent(resume) {

@@ -274,8 +274,14 @@
     {
       category: "relocation",
       confidence: 0.88,
-      include: [/\brelocatem?\b/, /\bwilling\s+to\s+move\b/],
-      exclude: []
+      include: [
+        /\brelocatem?\b/,
+        /\bwilling\s+to\s+move\b/,
+        /\bin[-\s]?person\b/,
+        /\bon[-\s]?site\b/,
+        /\bwilling\s+to\s+work\s+(in[-\s]?person|on[-\s]?site)\b/
+      ],
+      exclude: [/\bstart\s+date\b/, /\bavailable\s+start\b/]
     },
     {
       category: "availability",
@@ -1249,6 +1255,7 @@
         ""
     );
     var prefs = data.applicationPreferences || {};
+    var work = data.workAuthorization || {};
     return {
       personal: {
         firstName: trimText(personal.firstName || ""),
@@ -1270,7 +1277,13 @@
         defaultCoverLetter: trimText(common.defaultCoverLetter || "")
       },
       applicationPreferences: {
-        availableStartDate: trimText(prefs.availableStartDate || "")
+        availableStartDate: trimText(prefs.availableStartDate || ""),
+        willingToRelocate: trimText(prefs.willingToRelocate || "")
+      },
+      workAuthorization: {
+        legallyAuthorizedToWork: trimText(work.legallyAuthorizedToWork || ""),
+        requireSponsorshipNow: trimText(work.requireSponsorshipNow || ""),
+        requireSponsorshipFuture: trimText(work.requireSponsorshipFuture || "")
       }
     };
   }
@@ -2175,11 +2188,453 @@
     };
   }
 
+  var ASHBY_YES_NO_CATEGORIES = {
+    work_authorization: true,
+    sponsorship_now: true,
+    sponsorship_later: true,
+    relocation: true
+  };
+
+  function isAshbyHost() {
+    try {
+      var href = String((global.location && global.location.href) || "");
+      var host = String((global.location && global.location.hostname) || "");
+      return /jobs\.ashbyhq\.com/i.test(href) || /^jobs\.ashbyhq\.com$/i.test(host);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function sleepSync(ms) {
+    var end = Date.now() + Math.max(0, Number(ms) || 0);
+    while (Date.now() < end) {
+      /* brief wait for Ashby UI to settle */
+    }
+  }
+
+  function polarityOfYesNo(value) {
+    var text = normalizeText(value);
+    if (!text) return "";
+    if (/^(yes|y|true|1)$/.test(text)) return "yes";
+    if (/^(no|n|false|0)$/.test(text)) return "no";
+    if (
+      /\bauthorized\b/.test(text) &&
+      !/\bnot\s+authorized\b/.test(text) &&
+      !/\bunauthorized\b/.test(text)
+    ) {
+      return "yes";
+    }
+    if (/\bnot\s+authorized\b/.test(text) || /\bunauthorized\b/.test(text)) return "no";
+    if (/\bdo\s+not\b/.test(text) || /\bwill\s+not\b/.test(text) || /\bwon'?t\b/.test(text)) {
+      return "no";
+    }
+    return "";
+  }
+
+  function yesNoAnswerForCategory(category, inventory) {
+    if (!ASHBY_YES_NO_CATEGORIES[category]) return "";
+    var raw = trimText((inventory && inventory[category]) || "");
+    if (!raw) return "";
+    var pol = polarityOfYesNo(raw);
+    if (pol === "yes") return "Yes";
+    if (pol === "no") return "No";
+    if (/^(yes|no)$/i.test(raw)) {
+      return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+    }
+    return "";
+  }
+
+  function getAshbyOptionWrapper(radio) {
+    if (!radio || !radio.closest) return null;
+    return radio.closest('div[class*="_option_"]');
+  }
+
+  function getAshbyOptionVisibleText(radio) {
+    if (!radio) return "";
+    var optionWrapper = getAshbyOptionWrapper(radio);
+    if (optionWrapper) {
+      return trimText(optionWrapper.innerText || optionWrapper.textContent || "");
+    }
+    return trimText(radio.value || "");
+  }
+
+  function readAshbyYesNoQuestionText(fieldset, radios) {
+    if (fieldset) {
+      var legend = fieldset.querySelector && fieldset.querySelector("legend");
+      if (legend) {
+        var legendText = trimText(legend.innerText || legend.textContent || "");
+        if (legendText) return legendText;
+      }
+      var aria = trimText(fieldset.getAttribute && fieldset.getAttribute("aria-label"));
+      if (aria) return aria;
+      var prompt =
+        fieldset.querySelector &&
+        fieldset.querySelector("h1, h2, h3, h4, label, p, [class*='label'], [class*='question']");
+      if (prompt) {
+        var promptText = trimText(prompt.innerText || prompt.textContent || "");
+        if (promptText && promptText.length < 280 && !isLikelyOptionCluster(promptText, ["yes", "no"])) {
+          return promptText;
+        }
+      }
+    }
+    return radioGroupQuestionText(radios || []) || "";
+  }
+
+  function collectAshbyRadiosInFieldset(fieldset) {
+    var found = [];
+    if (!fieldset || !fieldset.querySelectorAll) return found;
+    Array.prototype.forEach.call(fieldset.querySelectorAll('input[type="radio"]'), function (el) {
+      if (!el || normalizeText(el.type || "") !== "radio") return;
+      if (!fieldset.contains(el)) return;
+      found.push(el);
+    });
+    return found;
+  }
+
+  function isExactYesNoOnlyGroup(radios) {
+    var labels = (radios || []).map(getAshbyOptionVisibleText).map(trimText).filter(Boolean);
+    if (labels.length < 2) return false;
+    var hasYes = false;
+    var hasNo = false;
+    for (var i = 0; i < labels.length; i += 1) {
+      if (!/^(yes|no)$/i.test(labels[i])) return false;
+      if (/^yes$/i.test(labels[i])) hasYes = true;
+      if (/^no$/i.test(labels[i])) hasNo = true;
+    }
+    return hasYes && hasNo;
+  }
+
+  function isCitizenshipOrExportControlQuestion(questionText) {
+    var text = normalizeText(questionText);
+    if (!text) return false;
+    return (
+      /\bexport\s+control\b/.test(text) ||
+      /\bitar\b/.test(text) ||
+      /\bear\b/.test(text) ||
+      /\bcitizen\s+or\s+national\b/.test(text) ||
+      /\bpermanent\s+resident\b/.test(text) ||
+      /\basylee\b/.test(text) ||
+      /\brefugee\b/.test(text)
+    );
+  }
+
+  function matchExactYesNoOption(radios, yesNoAnswer) {
+    var want = normalizeText(yesNoAnswer);
+    if (want !== "yes" && want !== "no") return null;
+    for (var i = 0; i < (radios || []).length; i += 1) {
+      var optionText = normalizeText(getAshbyOptionVisibleText(radios[i]));
+      if (optionText === want) {
+        return {
+          radio: radios[i],
+          optionWrapper: getAshbyOptionWrapper(radios[i]),
+          optionText: getAshbyOptionVisibleText(radios[i])
+        };
+      }
+    }
+    return null;
+  }
+
+  function setNativeRadioChecked(input, checked) {
+    if (!input) return false;
+    var proto = window.HTMLInputElement && window.HTMLInputElement.prototype;
+    var descriptor = proto ? Object.getOwnPropertyDescriptor(proto, "checked") : null;
+    try {
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(input, Boolean(checked));
+      } else {
+        input.checked = Boolean(checked);
+      }
+    } catch (_) {
+      try {
+        input.checked = Boolean(checked);
+      } catch (_) {
+        return false;
+      }
+    }
+    return Boolean(input.checked) === Boolean(checked);
+  }
+
+  function dispatchAshbyRadioInputChange(input) {
+    if (!input) return;
+    try {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (_) {}
+    try {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {}
+  }
+
+  function clickAshbyOptionWrapper(optionWrapper) {
+    if (!optionWrapper) return;
+    try {
+      if (typeof optionWrapper.scrollIntoView === "function") {
+        optionWrapper.scrollIntoView({ block: "center" });
+      }
+    } catch (_) {}
+    try {
+      var clickFn =
+        window.HTMLElement &&
+        window.HTMLElement.prototype &&
+        typeof window.HTMLElement.prototype.click === "function"
+          ? window.HTMLElement.prototype.click
+          : null;
+      if (clickFn) {
+        clickFn.call(optionWrapper);
+      } else if (typeof optionWrapper.click === "function") {
+        optionWrapper.click();
+      }
+    } catch (_) {
+      try {
+        if (typeof optionWrapper.click === "function") optionWrapper.click();
+      } catch (_) {}
+    }
+  }
+
+  function verifyAshbyYesNoSelection(fieldset, target) {
+    if (!target || !target.checked) return false;
+    if (!fieldset || !fieldset.contains || !fieldset.contains(target)) return false;
+    var name = trimText(target.name || "");
+    var checkedCount = 0;
+    var radios = collectAshbyRadiosInFieldset(fieldset);
+    for (var i = 0; i < radios.length; i += 1) {
+      var radio = radios[i];
+      if (name && trimText(radio.name || "") !== name) continue;
+      if (radio.checked) checkedCount += 1;
+    }
+    return checkedCount === 1 && Boolean(target.checked);
+  }
+
+  function logAshbyYesNoDiagnostics(diagnostics) {
+    try {
+      console.info("[Impulso Ashby Yes/No]", diagnostics);
+    } catch (_) {}
+  }
+
+  function fillAshbyYesNoRadioGroup(fieldset, radios, answer, meta) {
+    var info = meta || {};
+    var questionText = trimText(info.questionText || "");
+    var category = trimText(info.category || "");
+    var scoped = collectAshbyRadiosInFieldset(fieldset);
+    if (!scoped.length && radios && radios.length) {
+      scoped = (radios || []).filter(function (r) {
+        return fieldset && fieldset.contains(r);
+      });
+    }
+    var optionTexts = scoped.map(getAshbyOptionVisibleText).filter(Boolean);
+
+    function fail(reason, matchedInfo) {
+      var diagnostics = {
+        question: questionText,
+        category: category,
+        proposedAnswer: trimText(answer),
+        optionTexts: optionTexts,
+        matchedOption: matchedInfo ? matchedInfo.optionText || "" : "",
+        radioNames: scoped
+          .map(function (r) {
+            return trimText(r.name || "");
+          })
+          .filter(Boolean)
+          .filter(function (n, i, arr) {
+            return arr.indexOf(n) === i;
+          }),
+        checkedAfter: scoped.map(function (r) {
+          return {
+            label: getAshbyOptionVisibleText(r),
+            checked: Boolean(r.checked)
+          };
+        }),
+        reason: reason
+      };
+      logAshbyYesNoDiagnostics(diagnostics);
+      return {
+        ok: false,
+        status: "failed",
+        reason: reason,
+        category: category,
+        question: questionText
+      };
+    }
+
+    if (!fieldset) {
+      return fail("Ashby Yes/No fieldset not found.");
+    }
+    if (!scoped.length) {
+      return fail("Ashby Yes/No radio group not found.");
+    }
+    if (!isExactYesNoOnlyGroup(scoped)) {
+      return {
+        ok: false,
+        status: "skipped",
+        reason: "Not an exact Yes/No radio group.",
+        category: category,
+        question: questionText
+      };
+    }
+    if (isCitizenshipOrExportControlQuestion(questionText)) {
+      return {
+        ok: false,
+        status: "skipped",
+        reason: "Citizenship/export-control questions are not filled yet.",
+        category: category,
+        question: questionText
+      };
+    }
+
+    var matched = matchExactYesNoOption(scoped, answer);
+    if (!matched || !matched.radio) {
+      return fail("No exact Yes/No option matched the saved answer.");
+    }
+    if (!fieldset.contains(matched.radio)) {
+      return fail("Matched option is outside the question fieldset.", matched);
+    }
+    if (!matched.optionWrapper || !fieldset.contains(matched.optionWrapper)) {
+      return fail("Ashby option wrapper (div[class*=\"_option_\"]) not found.", matched);
+    }
+
+    // React handles selection from the outer _option_ div.
+    clickAshbyOptionWrapper(matched.optionWrapper);
+    sleepSync(100);
+
+    if (!matched.radio.checked) {
+      try {
+        if (typeof matched.radio.click === "function") matched.radio.click();
+      } catch (_) {}
+    }
+
+    if (!matched.radio.checked) {
+      setNativeRadioChecked(matched.radio, true);
+      dispatchAshbyRadioInputChange(matched.radio);
+    }
+
+    sleepSync(150);
+
+    if (!verifyAshbyYesNoSelection(fieldset, matched.radio)) {
+      return fail("Ashby Yes/No radio click did not persist.", matched);
+    }
+
+    return {
+      ok: true,
+      status: "filled",
+      reason: "",
+      category: category,
+      question: questionText
+    };
+  }
+
+  function fillAshbyYesNoRadios(root, inventory) {
+    var empty = {
+      results: [],
+      summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+    };
+    if (!isAshbyHost()) return empty;
+
+    var doc = root || document;
+    var inv = inventory || {};
+    var results = [];
+    var fieldsets = [];
+    try {
+      fieldsets = Array.prototype.slice.call(doc.querySelectorAll("fieldset"));
+    } catch (_) {
+      return empty;
+    }
+
+    fieldsets.forEach(function (fieldset) {
+      var scoped = collectAshbyRadiosInFieldset(fieldset);
+      if (!scoped.length) return;
+      if (!isExactYesNoOnlyGroup(scoped)) return;
+
+      var questionText = readAshbyYesNoQuestionText(fieldset, scoped);
+      if (isCitizenshipOrExportControlQuestion(questionText)) return;
+
+      var detected = detectCategoryFromMeta({
+        tagName: "input",
+        inputType: "radio",
+        type: "radio",
+        label: questionText,
+        ariaLabel: "",
+        name: trimText((scoped[0] && scoped[0].name) || ""),
+        id: "",
+        nearby: "",
+        autocomplete: "",
+        optionLabels: scoped.map(getAshbyOptionVisibleText)
+      });
+      var category = detected.category || "unknown";
+      if (!ASHBY_YES_NO_CATEGORIES[category]) return;
+
+      var answer = yesNoAnswerForCategory(category, inv);
+      if (!answer) {
+        results.push({
+          category: category,
+          label: questionText,
+          question: questionText,
+          status: "skipped",
+          reason: "No saved Yes/No answer for this category.",
+          ok: false,
+          value: ""
+        });
+        return;
+      }
+
+      var fillResult = fillAshbyYesNoRadioGroup(fieldset, scoped, answer, {
+        questionText: questionText,
+        category: category
+      });
+      results.push({
+        category: category,
+        label: questionText,
+        question: questionText,
+        status: fillResult.status,
+        reason: fillResult.reason || "",
+        ok: Boolean(fillResult.ok),
+        value: fillResult.ok ? answer : ""
+      });
+    });
+
+    return {
+      results: results,
+      summary: {
+        attempted: results.length,
+        filled: results.filter(function (r) {
+          return r.status === "filled";
+        }).length,
+        skipped: results.filter(function (r) {
+          return r.status === "skipped";
+        }).length,
+        failed: results.filter(function (r) {
+          return r.status === "failed";
+        }).length
+      }
+    };
+  }
+
+  function mergeAutofillReports(primary, secondary) {
+    var a = primary || { results: [], summary: {} };
+    var b = secondary || { results: [], summary: {} };
+    var results = (a.results || []).concat(b.results || []);
+    return {
+      results: results,
+      error: a.error || b.error || "",
+      summary: {
+        attempted: results.length,
+        filled: results.filter(function (r) {
+          return r.status === "filled";
+        }).length,
+        skipped: results.filter(function (r) {
+          return r.status === "skipped";
+        }).length,
+        failed: results.filter(function (r) {
+          return r.status === "failed";
+        }).length
+      }
+    };
+  }
+
   global.ImpulsoAutofill = {
     CATEGORY_LABELS: CATEGORY_LABELS,
     CATEGORY_ORDER: CATEGORY_ORDER,
     SENSITIVE_CATEGORIES: SENSITIVE_CATEGORIES,
     BASIC_TEXT_CATEGORIES: BASIC_TEXT_CATEGORIES,
+    ASHBY_YES_NO_CATEGORIES: ASHBY_YES_NO_CATEGORIES,
     NO_SAVED_ANSWER: NO_SAVED_ANSWER,
     collectContext: collectContext,
     detectCategory: detectCategory,
@@ -2201,6 +2656,9 @@
     fillTextElement: fillTextElement,
     fillAvailabilityDateElement: fillAvailabilityDateElement,
     fillBasicTextFields: fillBasicTextFields,
+    fillAshbyYesNoRadios: fillAshbyYesNoRadios,
+    mergeAutofillReports: mergeAutofillReports,
+    isAshbyHost: isAshbyHost,
     parseStoredDate: parseStoredDate,
     formatDateForElement: formatDateForElement,
     availabilityDateAnswer: availabilityDateAnswer,
