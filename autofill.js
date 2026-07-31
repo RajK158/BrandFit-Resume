@@ -1223,7 +1223,9 @@
       relocation: trimText(prefs.willingToRelocate || ""),
       // Sensitive demographics: only locally saved values — never inferred.
       veteran_status: trimText(demo.veteranStatus || ""),
-      disability_status: trimText(demo.disabilityStatus || ""),
+      disability_status: trimText(
+        demo.disabilityStatus || demo.disability_status || demo["disability status"] || ""
+      ),
       gender: trimText(demo.gender || ""),
       race_ethnicity: trimText(demo.raceEthnicity || ""),
       cover_letter: trimText(common.defaultCoverLetter || ""),
@@ -1287,7 +1289,8 @@
       },
       demographics: {
         gender: trimText((data.demographics || {}).gender || ""),
-        veteranStatus: trimText((data.demographics || {}).veteranStatus || "")
+        veteranStatus: trimText((data.demographics || {}).veteranStatus || ""),
+        disabilityStatus: trimText((data.demographics || {}).disabilityStatus || "")
       }
     };
   }
@@ -3093,6 +3096,255 @@
     };
   }
 
+  function normalizeDisabilityText(value) {
+    var text = String(value == null ? "" : value);
+    // Normalize curly and straight apostrophes before other cleanup.
+    text = text.replace(/[\u2018\u2019\u02BC\u2032`]/g, "'");
+    text = text.toLowerCase();
+    text = text.replace(/\s+/g, " ").trim();
+    // Remove commas and periods for comparison only.
+    text = text.replace(/[,.]/g, "");
+    // Treat "don't" and "do not" as equivalent.
+    text = text.replace(/\bdon't\b/g, "do not");
+    text = text.replace(/\s+/g, " ").trim();
+    return text;
+  }
+
+  function disabilityAliasGroup(value) {
+    var text = normalizeDisabilityText(value);
+    if (!text) return "";
+
+    // Exact canonical forms only — no broad substring matching.
+    if (
+      text === "prefer not to answer" ||
+      text === "decline to self-identify" ||
+      text === "i do not want to answer"
+    ) {
+      return "decline";
+    }
+    if (
+      text === "yes i have a disability" ||
+      text === "yes i have a disability or have had one in the past"
+    ) {
+      return "yes";
+    }
+    if (
+      text === "no i do not have a disability" ||
+      text === "no i do not have a disability and have not had one in the past"
+    ) {
+      return "no";
+    }
+    return "";
+  }
+
+  function matchAshbyDisabilityOption(radios, savedValue) {
+    var savedNorm = normalizeDisabilityText(savedValue);
+    if (!savedNorm) return null;
+    var list = radios || [];
+
+    // Prefer exact normalized text match before aliases.
+    for (var i = 0; i < list.length; i += 1) {
+      var exactText = getAshbyOptionVisibleText(list[i]);
+      if (normalizeDisabilityText(exactText) === savedNorm) {
+        return {
+          radio: list[i],
+          optionWrapper: getAshbyOptionWrapper(list[i]),
+          optionText: exactText
+        };
+      }
+    }
+
+    var savedGroup = disabilityAliasGroup(savedValue);
+    if (!savedGroup) return null;
+
+    for (var j = 0; j < list.length; j += 1) {
+      var optionText = getAshbyOptionVisibleText(list[j]);
+      if (disabilityAliasGroup(optionText) === savedGroup) {
+        return {
+          radio: list[j],
+          optionWrapper: getAshbyOptionWrapper(list[j]),
+          optionText: optionText
+        };
+      }
+    }
+    return null;
+  }
+
+  function resolveSavedDisabilityStatus(inventory, options) {
+    var opts = options || {};
+    var inv = inventory || {};
+    var demo = opts.demographics || (opts.profile && opts.profile.demographics) || {};
+    return trimText(
+      inv.disability_status ||
+        inv.disabilityStatus ||
+        inv["disability status"] ||
+        demo.disabilityStatus ||
+        demo.disability_status ||
+        demo["disability status"] ||
+        ""
+    );
+  }
+
+  function logAshbyDisabilityError(reason) {
+    try {
+      console.error("[Impulso Ashby Disability]", reason);
+    } catch (_) {}
+  }
+
+  function applyAshbyDisabilityFallbackClick(radio, optionWrapper) {
+    // Existing verified Ashby path used by gender/veteran/Yes-No.
+    clickAshbyOptionWrapper(optionWrapper);
+    sleepSync(100);
+    if (!radio.checked) {
+      try {
+        if (typeof radio.click === "function") radio.click();
+      } catch (_) {}
+    }
+    if (!radio.checked) {
+      setNativeRadioChecked(radio, true);
+      dispatchAshbyRadioInputChange(radio);
+    }
+    sleepSync(150);
+  }
+
+  function fillAshbyDisabilityRadios(root, inventory, options) {
+    var empty = {
+      results: [],
+      summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+    };
+    if (!isAshbyHost()) return empty;
+
+    var savedDisability = resolveSavedDisabilityStatus(inventory, options || {});
+    // Skip silently when no saved disability answer exists.
+    if (!savedDisability) return empty;
+
+    var doc = root || document;
+    var fieldset = null;
+    try {
+      fieldset = Array.prototype.slice
+        .call(doc.querySelectorAll("fieldset"))
+        .find(function (fs) {
+          return /disability status/i.test((fs && fs.innerText) || "");
+        });
+    } catch (_) {
+      fieldset = null;
+    }
+
+    if (!fieldset) {
+      logAshbyDisabilityError("Disability fieldset not found.");
+      return {
+        results: [
+          {
+            category: "disability_status",
+            label: "Disability status",
+            question: "Disability status",
+            status: "failed",
+            reason: "Disability fieldset not found.",
+            ok: false,
+            value: ""
+          }
+        ],
+        summary: { attempted: 1, filled: 0, skipped: 0, failed: 1 }
+      };
+    }
+
+    var radios = [];
+    try {
+      radios = Array.prototype.slice.call(fieldset.querySelectorAll('input[type="radio"]'));
+    } catch (_) {
+      radios = [];
+    }
+
+    var questionText = "Disability status";
+    try {
+      var legend = fieldset.querySelector && fieldset.querySelector("legend");
+      var legendText = legend ? trimText(legend.innerText || legend.textContent || "") : "";
+      if (legendText) questionText = legendText;
+    } catch (_) {}
+
+    var matched = matchAshbyDisabilityOption(radios, savedDisability);
+    if (!matched || !matched.radio) {
+      logAshbyDisabilityError("No disability option matched the saved answer.");
+      return {
+        results: [
+          {
+            category: "disability_status",
+            label: questionText,
+            question: questionText,
+            status: "failed",
+            reason: "No disability option matched the saved answer.",
+            ok: false,
+            value: ""
+          }
+        ],
+        summary: { attempted: 1, filled: 0, skipped: 0, failed: 1 }
+      };
+    }
+
+    var radio = matched.radio;
+    var wrapper = radio.closest ? radio.closest('div[class*="_option_"]') : null;
+    if (!wrapper) {
+      logAshbyDisabilityError("Ashby disability option wrapper not found.");
+      return {
+        results: [
+          {
+            category: "disability_status",
+            label: questionText,
+            question: questionText,
+            status: "failed",
+            reason: "Ashby disability option wrapper not found.",
+            ok: false,
+            value: ""
+          }
+        ],
+        summary: { attempted: 1, filled: 0, skipped: 0, failed: 1 }
+      };
+    }
+
+    // Exact console-verified approach first.
+    try {
+      wrapper.click();
+    } catch (_) {}
+    sleepSync(300);
+
+    if (radio.checked !== true) {
+      applyAshbyDisabilityFallbackClick(radio, wrapper);
+    }
+
+    if (radio.checked !== true) {
+      logAshbyDisabilityError("Disability radio selection did not persist.");
+      return {
+        results: [
+          {
+            category: "disability_status",
+            label: questionText,
+            question: questionText,
+            status: "failed",
+            reason: "Disability radio selection did not persist.",
+            ok: false,
+            value: ""
+          }
+        ],
+        summary: { attempted: 1, filled: 0, skipped: 0, failed: 1 }
+      };
+    }
+
+    return {
+      results: [
+        {
+          category: "disability_status",
+          label: questionText,
+          question: questionText,
+          status: "filled",
+          reason: "",
+          ok: true,
+          value: matched.optionText || savedDisability
+        }
+      ],
+      summary: { attempted: 1, filled: 1, skipped: 0, failed: 0 }
+    };
+  }
+
   global.ImpulsoAutofill = {
     CATEGORY_LABELS: CATEGORY_LABELS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -3123,8 +3375,10 @@
     fillAshbyYesNoRadios: fillAshbyYesNoRadios,
     fillAshbyGenderRadios: fillAshbyGenderRadios,
     fillAshbyVeteranRadios: fillAshbyVeteranRadios,
+    fillAshbyDisabilityRadios: fillAshbyDisabilityRadios,
     mapSavedGenderToAshbyOption: mapSavedGenderToAshbyOption,
     matchAshbyVeteranOption: matchAshbyVeteranOption,
+    matchAshbyDisabilityOption: matchAshbyDisabilityOption,
     mergeAutofillReports: mergeAutofillReports,
     isAshbyHost: isAshbyHost,
     parseStoredDate: parseStoredDate,

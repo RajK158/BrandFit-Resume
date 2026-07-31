@@ -74,13 +74,28 @@
       hasResume: Boolean(resume && resume.resumeBase64 && resume.resumeName),
       resumeName: (resume && resume.resumeName) || ""
     };
+    var inventory = {};
     if (typeof AF.resolveAnswerInventory === "function") {
-      return AF.resolveAnswerInventory(profilePayload || {}, opts);
+      inventory = AF.resolveAnswerInventory(profilePayload || {}, opts);
+    } else if (typeof AF.buildAnswerInventory === "function") {
+      inventory = AF.buildAnswerInventory(profilePayload || {}, opts);
     }
-    if (typeof AF.buildAnswerInventory === "function") {
-      return AF.buildAnswerInventory(profilePayload || {}, opts);
+
+    // Ensure disability status is wired from masterProfile.demographics.disabilityStatus.
+    var demo = (profilePayload && profilePayload.demographics) || {};
+    var disability =
+      (inventory && (inventory.disability_status || inventory.disabilityStatus || inventory["disability status"])) ||
+      demo.disabilityStatus ||
+      demo.disability_status ||
+      demo["disability status"] ||
+      "";
+    disability = String(disability || "").trim();
+    if (disability) {
+      inventory = inventory || {};
+      inventory.disability_status = disability;
+      inventory.disabilityStatus = disability;
     }
-    return {};
+    return inventory || {};
   }
 
   function fillFromInventory(inventory, options) {
@@ -128,6 +143,19 @@
       }
     }
 
+    // Ashby disability status — always invoked during Trigger Auto-Apply when engine is present.
+    if (typeof AF.fillAshbyDisabilityRadios === "function") {
+      var disabilityReport = AF.fillAshbyDisabilityRadios(document, inventory || {}, {
+        demographics: opts.demographics || null,
+        profile: opts.profile || null
+      });
+      if (typeof AF.mergeAutofillReports === "function") {
+        report = AF.mergeAutofillReports(report, disabilityReport);
+      } else {
+        report.results = (report.results || []).concat((disabilityReport && disabilityReport.results) || []);
+      }
+    }
+
     return report;
   }
 
@@ -150,7 +178,9 @@
     var inventory = resolveInventory(profilePayload, resume);
     var report = fillFromInventory(inventory, {
       // Default on: include saved demographic answers automatically.
-      fillDemographics: opts.fillDemographics !== false
+      fillDemographics: opts.fillDemographics !== false,
+      profile: profilePayload || null,
+      demographics: (profilePayload && profilePayload.demographics) || null
     });
     uploadResumeIfPresent(resume);
     return {
