@@ -4,6 +4,7 @@
   window.__IMPULSO_AUTOFILL_BRIDGE__ = true;
 
   var MESSAGE_TYPE = "IMPULSO_TRIGGER_AUTOFILL";
+  var ASHBY_RACE_MAIN_TYPE = "IMPULSO_ASHBY_RACE_MAIN";
 
   function findLabelText(input) {
     if (window.ImpulsoAutofill && typeof window.ImpulsoAutofill.findLabelText === "function") {
@@ -81,7 +82,7 @@
       inventory = AF.buildAnswerInventory(profilePayload || {}, opts);
     }
 
-    // Ensure disability status is wired from masterProfile.demographics.disabilityStatus.
+    // Ensure disability / race-ethnicity are wired from masterProfile.demographics.
     var demo = (profilePayload && profilePayload.demographics) || {};
     var disability =
       (inventory && (inventory.disability_status || inventory.disabilityStatus || inventory["disability status"])) ||
@@ -95,7 +96,30 @@
       inventory.disability_status = disability;
       inventory.disabilityStatus = disability;
     }
+
+    var raceEthnicity =
+      (inventory && (inventory.race_ethnicity || inventory.raceEthnicity || inventory["race ethnicity"])) ||
+      demo.raceEthnicity ||
+      demo.race_ethnicity ||
+      demo["race ethnicity"] ||
+      "";
+    raceEthnicity = String(raceEthnicity || "").trim();
+    if (raceEthnicity) {
+      inventory = inventory || {};
+      inventory.race_ethnicity = raceEthnicity;
+      inventory.raceEthnicity = raceEthnicity;
+    }
     return inventory || {};
+  }
+
+  function mergeReport(report, next) {
+    var AF = window.ImpulsoAutofill;
+    if (AF && typeof AF.mergeAutofillReports === "function") {
+      return AF.mergeAutofillReports(report, next);
+    }
+    var merged = report || { results: [], summary: {} };
+    merged.results = (merged.results || []).concat((next && next.results) || []);
+    return merged;
   }
 
   function fillFromInventory(inventory, options) {
@@ -113,50 +137,123 @@
 
     // Ashby Yes/No radios only (jobs.ashbyhq.com); diagnostics stay in the console.
     if (typeof AF.fillAshbyYesNoRadios === "function") {
-      var ashbyReport = AF.fillAshbyYesNoRadios(document, inventory || {});
-      if (typeof AF.mergeAutofillReports === "function") {
-        report = AF.mergeAutofillReports(report, ashbyReport);
-      } else {
-        report.results = (report.results || []).concat((ashbyReport && ashbyReport.results) || []);
-      }
+      report = mergeReport(report, AF.fillAshbyYesNoRadios(document, inventory || {}));
     }
 
     // Ashby gender radios when demographics are included (default on for Trigger Auto-Apply).
     if (typeof AF.fillAshbyGenderRadios === "function") {
-      var genderReport = AF.fillAshbyGenderRadios(document, inventory || {}, {
-        fillDemographics: opts.fillDemographics !== false
-      });
-      if (typeof AF.mergeAutofillReports === "function") {
-        report = AF.mergeAutofillReports(report, genderReport);
-      } else {
-        report.results = (report.results || []).concat((genderReport && genderReport.results) || []);
-      }
+      report = mergeReport(
+        report,
+        AF.fillAshbyGenderRadios(document, inventory || {}, {
+          fillDemographics: opts.fillDemographics !== false
+        })
+      );
     }
 
     // Ashby veteran status (only when a saved veteranStatus exists).
     if (typeof AF.fillAshbyVeteranRadios === "function") {
-      var veteranReport = AF.fillAshbyVeteranRadios(document, inventory || {});
-      if (typeof AF.mergeAutofillReports === "function") {
-        report = AF.mergeAutofillReports(report, veteranReport);
-      } else {
-        report.results = (report.results || []).concat((veteranReport && veteranReport.results) || []);
-      }
+      report = mergeReport(report, AF.fillAshbyVeteranRadios(document, inventory || {}));
     }
 
     // Ashby disability status — always invoked during Trigger Auto-Apply when engine is present.
     if (typeof AF.fillAshbyDisabilityRadios === "function") {
-      var disabilityReport = AF.fillAshbyDisabilityRadios(document, inventory || {}, {
-        demographics: opts.demographics || null,
-        profile: opts.profile || null
-      });
-      if (typeof AF.mergeAutofillReports === "function") {
-        report = AF.mergeAutofillReports(report, disabilityReport);
-      } else {
-        report.results = (report.results || []).concat((disabilityReport && disabilityReport.results) || []);
-      }
+      report = mergeReport(
+        report,
+        AF.fillAshbyDisabilityRadios(document, inventory || {}, {
+          demographics: opts.demographics || null,
+          profile: opts.profile || null
+        })
+      );
     }
 
+    // Ashby Race selection runs in the webpage MAIN world (via background.js).
     return report;
+  }
+
+  function requestAshbyRaceMainWorld(canonicalRaceValue, tabId) {
+    return new Promise(function (resolve) {
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: ASHBY_RACE_MAIN_TYPE,
+            tabId: typeof tabId === "number" ? tabId : undefined,
+            canonicalRaceValue: String(canonicalRaceValue || "")
+          },
+          function (response) {
+            if (chrome.runtime.lastError) {
+              resolve({
+                success: false,
+                selectedText: "",
+                reason: "Race selection failed."
+              });
+              return;
+            }
+            resolve(
+              response && typeof response === "object"
+                ? response
+                : {
+                    success: false,
+                    selectedText: "",
+                    reason: "Race selection failed."
+                  }
+            );
+          }
+        );
+      } catch (_) {
+        resolve({
+          success: false,
+          selectedText: "",
+          reason: "Race selection failed."
+        });
+      }
+    });
+  }
+
+  async function fillAshbyRaceViaMainWorld(inventory, options, tabId) {
+    var AF = window.ImpulsoAutofill;
+    if (!AF || typeof AF.prepareAshbyRaceEthnicity !== "function") {
+      return {
+        results: [],
+        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+      };
+    }
+
+    var prepared = AF.prepareAshbyRaceEthnicity(inventory || {}, {
+      demographics: (options && options.demographics) || null,
+      profile: (options && options.profile) || null
+    });
+    // Skip silently when no saved race/ethnicity value exists.
+    if (!prepared || !prepared.shouldFill) {
+      return {
+        results: [],
+        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+      };
+    }
+
+    var mainResult = await requestAshbyRaceMainWorld(prepared.canonicalRaceValue, tabId);
+    if (typeof AF.raceReportFromMainWorldResult === "function") {
+      return AF.raceReportFromMainWorldResult(mainResult);
+    }
+
+    return {
+      results: [
+        {
+          category: "race_ethnicity",
+          label: "Race",
+          question: "Race",
+          status: mainResult && mainResult.success ? "filled" : "failed",
+          reason: (mainResult && mainResult.reason) || "",
+          ok: Boolean(mainResult && mainResult.success),
+          value: (mainResult && mainResult.success && mainResult.selectedText) || ""
+        }
+      ],
+      summary: {
+        attempted: 1,
+        filled: mainResult && mainResult.success ? 1 : 0,
+        skipped: 0,
+        failed: mainResult && mainResult.success ? 0 : 1
+      }
+    };
   }
 
   function uploadResumeIfPresent(resume) {
@@ -173,15 +270,21 @@
     });
   }
 
-  function runAutofill(profilePayload, resume, options) {
+  async function runAutofill(profilePayload, resume, options) {
     var opts = options || {};
     var inventory = resolveInventory(profilePayload, resume);
-    var report = fillFromInventory(inventory, {
+    var fillOpts = {
       // Default on: include saved demographic answers automatically.
       fillDemographics: opts.fillDemographics !== false,
       profile: profilePayload || null,
       demographics: (profilePayload && profilePayload.demographics) || null
-    });
+    };
+    var report = fillFromInventory(inventory, fillOpts);
+
+    // Ashby Race only: verified native setter must run in the webpage MAIN world.
+    var raceReport = await fillAshbyRaceViaMainWorld(inventory, fillOpts, opts.tabId);
+    report = mergeReport(report, raceReport);
+
     uploadResumeIfPresent(resume);
     return {
       ok: !report.error,
@@ -191,7 +294,7 @@
     };
   }
 
-  function runLegacyFallback(resumeFromMessage, sendResponse) {
+  function runLegacyFallback(resumeFromMessage, sendResponse, tabId) {
     chrome.storage.local.get(
       [
         "firstName",
@@ -228,9 +331,19 @@
             resumeName: data.resumeName || ""
           };
         }
-        var result = runAutofill(profile, resume, { fillDemographics: true });
-        result.usedLegacyFallback = true;
-        sendResponse(result);
+        runAutofill(profile, resume, { fillDemographics: true, tabId: tabId })
+          .then(function (result) {
+            result.usedLegacyFallback = true;
+            sendResponse(result);
+          })
+          .catch(function (error) {
+            sendResponse({
+              ok: false,
+              error: error && error.message ? error.message : "Autofill failed.",
+              report: { results: [], summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 } },
+              usedLegacyFallback: true
+            });
+          });
       }
     );
   }
@@ -257,21 +370,35 @@
     }
   }
 
-  chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+  chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     if (!message || message.type !== MESSAGE_TYPE) return;
+
+    var tabId =
+      typeof message.tabId === "number" && message.tabId > 0
+        ? message.tabId
+        : sender && sender.tab && typeof sender.tab.id === "number"
+          ? sender.tab.id
+          : undefined;
 
     try {
       var resume = message.resume || {};
       if (message.profile && typeof message.profile === "object") {
-        sendResponse(
-          runAutofill(message.profile, resume, {
-            fillDemographics: message.fillDemographics !== false
-          })
-        );
-        return;
+        runAutofill(message.profile, resume, {
+          fillDemographics: message.fillDemographics !== false,
+          tabId: tabId
+        })
+          .then(sendResponse)
+          .catch(function (error) {
+            sendResponse({
+              ok: false,
+              error: error && error.message ? error.message : "Autofill failed.",
+              report: { results: [], summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 } }
+            });
+          });
+        return true;
       }
       // Fallback only when no profile payload was received.
-      runLegacyFallback(resume, sendResponse);
+      runLegacyFallback(resume, sendResponse, tabId);
       return true;
     } catch (error) {
       sendResponse({
@@ -282,3 +409,4 @@
     }
   });
 })();
+

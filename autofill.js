@@ -1227,7 +1227,9 @@
         demo.disabilityStatus || demo.disability_status || demo["disability status"] || ""
       ),
       gender: trimText(demo.gender || ""),
-      race_ethnicity: trimText(demo.raceEthnicity || ""),
+      race_ethnicity: trimText(
+        demo.raceEthnicity || demo.race_ethnicity || demo["race ethnicity"] || ""
+      ),
       cover_letter: trimText(common.defaultCoverLetter || ""),
       // Explicit saved answer only — never auto-generated from resume projects or portfolio URL.
       project_highlight: trimText(common.projectHighlight || ""),
@@ -1289,6 +1291,12 @@
       },
       demographics: {
         gender: trimText((data.demographics || {}).gender || ""),
+        raceEthnicity: trimText(
+          (data.demographics || {}).raceEthnicity ||
+            (data.demographics || {}).race_ethnicity ||
+            (data.demographics || {})["race ethnicity"] ||
+            ""
+        ),
         veteranStatus: trimText((data.demographics || {}).veteranStatus || ""),
         disabilityStatus: trimText((data.demographics || {}).disabilityStatus || "")
       }
@@ -3345,6 +3353,199 @@
     };
   }
 
+  function canonicalizeRaceOptionText(value) {
+    var text = String(value == null ? "" : value);
+    // Drop explanatory text after " - " / en-dash / em-dash.
+    text = text.split(/\s+[-–—]\s+/)[0] || text;
+    // Drop the Ashby EEOC parenthetical suffix (and any other parentheticals).
+    text = text.replace(/\s*\(\s*Not\s+Hispanic\s+or\s+Latino\s*\)/gi, "");
+    text = text.replace(/\s*\([^)]*\)/g, "");
+    // Case-insensitive, punctuation-insensitive, collapse whitespace.
+    text = text.toLowerCase();
+    text = text.replace(/[^\w\s]/g, " ");
+    text = text.replace(/\s+/g, " ").trim();
+    return text;
+  }
+
+  function raceDeclineCanonical(value) {
+    var text = canonicalizeRaceOptionText(value);
+    if (text === "prefer not to answer" || text === "decline to self identify") {
+      return "decline to self identify";
+    }
+    return text;
+  }
+
+  function matchAshbyRaceEthnicityOption(inputs, savedValue) {
+    var savedCanon = raceDeclineCanonical(savedValue);
+    if (!savedCanon) return null;
+    var list = inputs || [];
+
+    // Exact canonical equality only — no broad substring matching.
+    for (var i = 0; i < list.length; i += 1) {
+      var optionText = getAshbyOptionVisibleText(list[i]);
+      if (raceDeclineCanonical(optionText) === savedCanon) {
+        return {
+          input: list[i],
+          radio: list[i],
+          optionText: optionText,
+          primaryLabel: optionText,
+          canonical: savedCanon
+        };
+      }
+    }
+    return null;
+  }
+
+  function resolveSavedRaceEthnicity(inventory, options) {
+    var opts = options || {};
+    var inv = inventory || {};
+    var demo = opts.demographics || (opts.profile && opts.profile.demographics) || {};
+    return trimText(
+      inv.race_ethnicity ||
+        inv.raceEthnicity ||
+        inv["race ethnicity"] ||
+        demo.raceEthnicity ||
+        demo.race_ethnicity ||
+        demo["race ethnicity"] ||
+        ""
+    );
+  }
+
+  function findAshbyEeocRaceRadioGroup(doc) {
+    var root = doc || document;
+    var allRadios = [];
+    try {
+      allRadios = Array.prototype.slice.call(root.querySelectorAll('input[type="radio"]'));
+    } catch (_) {
+      return { name: "", radios: [] };
+    }
+
+    var seed = null;
+    for (var i = 0; i < allRadios.length; i += 1) {
+      var name = String((allRadios[i] && allRadios[i].name) || "");
+      if (/systemfield_eeoc_race/i.test(name)) {
+        seed = allRadios[i];
+        break;
+      }
+    }
+    if (!seed) return { name: "", radios: [] };
+
+    var groupName = String(seed.name || "");
+    var radios = allRadios.filter(function (radio) {
+      return radio && String(radio.name || "") === groupName;
+    });
+    return { name: groupName, radios: radios };
+  }
+
+  function logAshbyRaceMatchFailure(savedValue, inputs) {
+    var visible = (inputs || []).map(getAshbyOptionVisibleText);
+    try {
+      console.info("[Impulso Ashby Race/Ethnicity]", {
+        savedValue: trimText(savedValue),
+        canonicalSavedValue: raceDeclineCanonical(savedValue),
+        visibleOptions: visible,
+        canonicalVisibleOptions: visible.map(raceDeclineCanonical)
+      });
+    } catch (_) {}
+  }
+
+  function verifyAshbyEeocRaceSelection(target, groupRadios) {
+    if (!target || target.checked !== true) return false;
+    var name = String(target.name || "");
+    var checkedCount = 0;
+    var list = groupRadios || [];
+    for (var i = 0; i < list.length; i += 1) {
+      var radio = list[i];
+      if (!radio) continue;
+      if (name && String(radio.name || "") !== name) continue;
+      if (radio.checked) checkedCount += 1;
+    }
+    return checkedCount === 1 && target.checked === true;
+  }
+
+  function canonicalizeAshbyRaceValue(value) {
+    return raceDeclineCanonical(value);
+  }
+
+  /**
+   * Build a Race autofill report from the MAIN-world selection result.
+   * Race is counted filled only when result.success is true.
+   */
+  function raceReportFromMainWorldResult(mainResult) {
+    var result = mainResult || {};
+    if (result.success) {
+      return {
+        results: [
+          {
+            category: "race_ethnicity",
+            label: "Race",
+            question: "Race",
+            status: "filled",
+            reason: "",
+            ok: true,
+            value: trimText(result.selectedText || "")
+          }
+        ],
+        summary: { attempted: 1, filled: 1, skipped: 0, failed: 0 }
+      };
+    }
+
+    var reason = trimText(result.reason || "Race selection failed.");
+    return {
+      results: [
+        {
+          category: "race_ethnicity",
+          label: "Race",
+          question: "Race",
+          status: "failed",
+          reason: reason,
+          ok: false,
+          value: ""
+        }
+      ],
+      summary: { attempted: 1, filled: 0, skipped: 0, failed: 1 }
+    };
+  }
+
+  function prepareAshbyRaceEthnicity(inventory, options) {
+    var empty = {
+      shouldFill: false,
+      canonicalRaceValue: "",
+      savedRace: ""
+    };
+    if (!isAshbyHost()) return empty;
+
+    var savedRace = resolveSavedRaceEthnicity(inventory, options || {});
+    // Skip silently when no saved race/ethnicity answer exists.
+    if (!savedRace) return empty;
+
+    var canonicalRaceValue = canonicalizeAshbyRaceValue(savedRace);
+    if (!canonicalRaceValue) return empty;
+
+    return {
+      shouldFill: true,
+      canonicalRaceValue: canonicalRaceValue,
+      savedRace: savedRace
+    };
+  }
+
+  // Legacy sync entry point retained for API stability; Race selection runs in MAIN world.
+  function fillAshbyRaceEthnicity(root, inventory, options) {
+    var prepared = prepareAshbyRaceEthnicity(inventory, options || {});
+    if (!prepared.shouldFill) {
+      return {
+        results: [],
+        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+      };
+    }
+    return {
+      results: [],
+      summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 },
+      pendingMainWorld: true,
+      canonicalRaceValue: prepared.canonicalRaceValue
+    };
+  }
+
   global.ImpulsoAutofill = {
     CATEGORY_LABELS: CATEGORY_LABELS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -3376,9 +3577,14 @@
     fillAshbyGenderRadios: fillAshbyGenderRadios,
     fillAshbyVeteranRadios: fillAshbyVeteranRadios,
     fillAshbyDisabilityRadios: fillAshbyDisabilityRadios,
+    fillAshbyRaceEthnicity: fillAshbyRaceEthnicity,
+    prepareAshbyRaceEthnicity: prepareAshbyRaceEthnicity,
+    canonicalizeAshbyRaceValue: canonicalizeAshbyRaceValue,
+    raceReportFromMainWorldResult: raceReportFromMainWorldResult,
     mapSavedGenderToAshbyOption: mapSavedGenderToAshbyOption,
     matchAshbyVeteranOption: matchAshbyVeteranOption,
     matchAshbyDisabilityOption: matchAshbyDisabilityOption,
+    matchAshbyRaceEthnicityOption: matchAshbyRaceEthnicityOption,
     mergeAutofillReports: mergeAutofillReports,
     isAshbyHost: isAshbyHost,
     parseStoredDate: parseStoredDate,
