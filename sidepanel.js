@@ -574,7 +574,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
 
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["autofill.js", "content.js"]
+      files: ["autofill.js", "autofill/adapters/ashby.js", "content.js"]
     });
 
     const response = await chrome.tabs.sendMessage(tab.id, {

@@ -4,8 +4,6 @@
   window.__IMPULSO_AUTOFILL_BRIDGE__ = true;
 
   var MESSAGE_TYPE = "IMPULSO_TRIGGER_AUTOFILL";
-  var ASHBY_RACE_MAIN_TYPE = "IMPULSO_ASHBY_RACE_MAIN";
-  var ASHBY_EXPORT_CONTROL_MAIN_TYPE = "IMPULSO_ASHBY_EXPORT_CONTROL_MAIN";
 
   function findLabelText(input) {
     if (window.ImpulsoAutofill && typeof window.ImpulsoAutofill.findLabelText === "function") {
@@ -137,7 +135,6 @@
   }
 
   function fillFromInventory(inventory, options) {
-    var opts = options || {};
     var AF = window.ImpulsoAutofill;
     if (!AF || typeof AF.fillBasicTextFields !== "function") {
       return {
@@ -147,213 +144,7 @@
       };
     }
 
-    var report = AF.fillBasicTextFields(document, inventory || {});
-
-    // Ashby Yes/No radios only (jobs.ashbyhq.com); diagnostics stay in the console.
-    if (typeof AF.fillAshbyYesNoRadios === "function") {
-      report = mergeReport(report, AF.fillAshbyYesNoRadios(document, inventory || {}));
-    }
-
-    // Ashby gender radios when demographics are included (default on for Trigger Auto-Apply).
-    if (typeof AF.fillAshbyGenderRadios === "function") {
-      report = mergeReport(
-        report,
-        AF.fillAshbyGenderRadios(document, inventory || {}, {
-          fillDemographics: opts.fillDemographics !== false
-        })
-      );
-    }
-
-    // Ashby veteran status (only when a saved veteranStatus exists).
-    if (typeof AF.fillAshbyVeteranRadios === "function") {
-      report = mergeReport(report, AF.fillAshbyVeteranRadios(document, inventory || {}));
-    }
-
-    // Ashby disability status — always invoked during Trigger Auto-Apply when engine is present.
-    if (typeof AF.fillAshbyDisabilityRadios === "function") {
-      report = mergeReport(
-        report,
-        AF.fillAshbyDisabilityRadios(document, inventory || {}, {
-          demographics: opts.demographics || null,
-          profile: opts.profile || null
-        })
-      );
-    }
-
-    // Ashby Race selection runs in the webpage MAIN world (via background.js).
-    return report;
-  }
-
-  function requestAshbyRaceMainWorld(canonicalRaceValue, tabId) {
-    return new Promise(function (resolve) {
-      try {
-        chrome.runtime.sendMessage(
-          {
-            type: ASHBY_RACE_MAIN_TYPE,
-            tabId: typeof tabId === "number" ? tabId : undefined,
-            canonicalRaceValue: String(canonicalRaceValue || "")
-          },
-          function (response) {
-            if (chrome.runtime.lastError) {
-              resolve({
-                success: false,
-                selectedText: "",
-                reason: "Race selection failed."
-              });
-              return;
-            }
-            resolve(
-              response && typeof response === "object"
-                ? response
-                : {
-                    success: false,
-                    selectedText: "",
-                    reason: "Race selection failed."
-                  }
-            );
-          }
-        );
-      } catch (_) {
-        resolve({
-          success: false,
-          selectedText: "",
-          reason: "Race selection failed."
-        });
-      }
-    });
-  }
-
-  async function fillAshbyRaceViaMainWorld(inventory, options, tabId) {
-    var AF = window.ImpulsoAutofill;
-    if (!AF || typeof AF.prepareAshbyRaceEthnicity !== "function") {
-      return {
-        results: [],
-        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
-      };
-    }
-
-    var prepared = AF.prepareAshbyRaceEthnicity(inventory || {}, {
-      demographics: (options && options.demographics) || null,
-      profile: (options && options.profile) || null
-    });
-    // Skip silently when no saved race/ethnicity value exists.
-    if (!prepared || !prepared.shouldFill) {
-      return {
-        results: [],
-        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
-      };
-    }
-
-    var mainResult = await requestAshbyRaceMainWorld(prepared.canonicalRaceValue, tabId);
-    if (typeof AF.raceReportFromMainWorldResult === "function") {
-      return AF.raceReportFromMainWorldResult(mainResult);
-    }
-
-    return {
-      results: [
-        {
-          category: "race_ethnicity",
-          label: "Race",
-          question: "Race",
-          status: mainResult && mainResult.success ? "filled" : "failed",
-          reason: (mainResult && mainResult.reason) || "",
-          ok: Boolean(mainResult && mainResult.success),
-          value: (mainResult && mainResult.success && mainResult.selectedText) || ""
-        }
-      ],
-      summary: {
-        attempted: 1,
-        filled: mainResult && mainResult.success ? 1 : 0,
-        skipped: 0,
-        failed: mainResult && mainResult.success ? 0 : 1
-      }
-    };
-  }
-
-  function requestAshbyExportControlMainWorld(savedValue, tabId) {
-    return new Promise(function (resolve) {
-      try {
-        chrome.runtime.sendMessage(
-          {
-            type: ASHBY_EXPORT_CONTROL_MAIN_TYPE,
-            tabId: typeof tabId === "number" ? tabId : undefined,
-            savedValue: String(savedValue || "")
-          },
-          function (response) {
-            if (chrome.runtime.lastError) {
-              resolve({
-                success: false,
-                selectedText: "",
-                reason: "Export-control selection failed."
-              });
-              return;
-            }
-            resolve(
-              response && typeof response === "object"
-                ? response
-                : {
-                    success: false,
-                    selectedText: "",
-                    reason: "Export-control selection failed."
-                  }
-            );
-          }
-        );
-      } catch (_) {
-        resolve({
-          success: false,
-          selectedText: "",
-          reason: "Export-control selection failed."
-        });
-      }
-    });
-  }
-
-  async function fillAshbyExportControlViaMainWorld(inventory, options, tabId) {
-    var AF = window.ImpulsoAutofill;
-    if (!AF || typeof AF.prepareAshbyExportControl !== "function") {
-      return {
-        results: [],
-        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
-      };
-    }
-
-    var prepared = AF.prepareAshbyExportControl(inventory || {}, {
-      workAuthorization: (options && options.workAuthorization) || null,
-      profile: (options && options.profile) || null
-    });
-    // Skip silently when no explicit saved export-control value exists.
-    if (!prepared || !prepared.shouldFill) {
-      return {
-        results: [],
-        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
-      };
-    }
-
-    var mainResult = await requestAshbyExportControlMainWorld(prepared.savedValue, tabId);
-    if (typeof AF.exportControlReportFromMainWorldResult === "function") {
-      return AF.exportControlReportFromMainWorldResult(mainResult);
-    }
-
-    return {
-      results: [
-        {
-          category: "export_control_status",
-          label: "Export control / U.S. person status",
-          question: "Export control / U.S. person status",
-          status: mainResult && mainResult.success ? "filled" : "failed",
-          reason: (mainResult && mainResult.reason) || "",
-          ok: Boolean(mainResult && mainResult.success),
-          value: (mainResult && mainResult.success && mainResult.selectedText) || ""
-        }
-      ],
-      summary: {
-        attempted: 1,
-        filled: mainResult && mainResult.success ? 1 : 0,
-        skipped: 0,
-        failed: mainResult && mainResult.success ? 0 : 1
-      }
-    };
+    return AF.fillBasicTextFields(document, inventory || {});
   }
 
   function uploadResumeIfPresent(resume) {
@@ -382,17 +173,21 @@
     };
     var report = fillFromInventory(inventory, fillOpts);
 
-    // Ashby Race: React handlers must run in the webpage MAIN world.
-    var raceReport = await fillAshbyRaceViaMainWorld(inventory, fillOpts, opts.tabId);
-    report = mergeReport(report, raceReport);
-
-    // Ashby export-control / U.S. person: MAIN-world React handlers; never inferred.
-    var exportReport = await fillAshbyExportControlViaMainWorld(
-      inventory,
-      fillOpts,
-      opts.tabId
-    );
-    report = mergeReport(report, exportReport);
+    var Ashby = window.ImpulsoAshbyAdapter;
+    if (Ashby && typeof Ashby.isSupportedPage === "function" && Ashby.isSupportedPage()) {
+      if (typeof Ashby.fillSupportedFields === "function") {
+        var ashbyReport = await Ashby.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, ashbyReport);
+      }
+    }
 
     uploadResumeIfPresent(resume);
     return {

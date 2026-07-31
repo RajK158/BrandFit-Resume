@@ -20,5 +20,19 @@
   },
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://jobs.ashbyhq.com/*",
+        "*://*.ashbyhq.com/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/ashby.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }
