@@ -1284,6 +1284,9 @@
         legallyAuthorizedToWork: trimText(work.legallyAuthorizedToWork || ""),
         requireSponsorshipNow: trimText(work.requireSponsorshipNow || ""),
         requireSponsorshipFuture: trimText(work.requireSponsorshipFuture || "")
+      },
+      demographics: {
+        gender: trimText((data.demographics || {}).gender || "")
       }
     };
   }
@@ -2629,6 +2632,219 @@
     };
   }
 
+  function mapSavedGenderToAshbyOption(savedGender) {
+    var text = normalizeText(savedGender);
+    if (!text) return "";
+    if (text === "man" || text === "male") return "Male";
+    if (text === "woman" || text === "female") return "Female";
+    if (
+      text === "prefer not to answer" ||
+      text === "prefer not to say" ||
+      text === "decline to self-identify"
+    ) {
+      return "Decline to self-identify";
+    }
+    // Never guess or infer gender (including Non-binary / Self-describe).
+    return "";
+  }
+
+  function matchAshbyGenderOption(radios, targetOptionText) {
+    var want = normalizeText(targetOptionText);
+    if (!want) return null;
+    for (var i = 0; i < (radios || []).length; i += 1) {
+      var optionText = getAshbyOptionVisibleText(radios[i]);
+      if (normalizeText(optionText) === want) {
+        return {
+          radio: radios[i],
+          optionWrapper: getAshbyOptionWrapper(radios[i]),
+          optionText: optionText
+        };
+      }
+    }
+    return null;
+  }
+
+  function logAshbyGenderDiagnostics(diagnostics) {
+    try {
+      console.info("[Impulso Ashby Gender]", diagnostics);
+    } catch (_) {}
+  }
+
+  function fillAshbyGenderRadioGroup(fieldset, radios, targetOptionText, meta) {
+    var info = meta || {};
+    var questionText = trimText(info.questionText || "");
+    var scoped = collectAshbyRadiosInFieldset(fieldset);
+    if (!scoped.length && radios && radios.length) {
+      scoped = (radios || []).filter(function (r) {
+        return fieldset && fieldset.contains(r);
+      });
+    }
+    var optionTexts = scoped.map(getAshbyOptionVisibleText).filter(Boolean);
+
+    function fail(reason, matchedInfo) {
+      var diagnostics = {
+        question: questionText,
+        category: "gender",
+        proposedAnswer: trimText(info.savedGender || ""),
+        mappedOption: trimText(targetOptionText),
+        optionTexts: optionTexts,
+        matchedOption: matchedInfo ? matchedInfo.optionText || "" : "",
+        checkedAfter: scoped.map(function (r) {
+          return {
+            label: getAshbyOptionVisibleText(r),
+            checked: Boolean(r.checked)
+          };
+        }),
+        reason: reason
+      };
+      logAshbyGenderDiagnostics(diagnostics);
+      return {
+        ok: false,
+        status: "failed",
+        reason: reason,
+        category: "gender",
+        question: questionText
+      };
+    }
+
+    if (!fieldset) return fail("Ashby gender fieldset not found.");
+    if (!scoped.length) return fail("Ashby gender radio group not found.");
+
+    var matched = matchAshbyGenderOption(scoped, targetOptionText);
+    if (!matched || !matched.radio) {
+      return fail("No exact gender option matched the saved answer.");
+    }
+    if (!fieldset.contains(matched.radio)) {
+      return fail("Matched gender option is outside the question fieldset.", matched);
+    }
+    if (!matched.optionWrapper || !fieldset.contains(matched.optionWrapper)) {
+      return fail("Ashby option wrapper (div[class*=\"_option_\"]) not found.", matched);
+    }
+
+    clickAshbyOptionWrapper(matched.optionWrapper);
+    sleepSync(100);
+
+    if (!matched.radio.checked) {
+      try {
+        if (typeof matched.radio.click === "function") matched.radio.click();
+      } catch (_) {}
+    }
+
+    if (!matched.radio.checked) {
+      setNativeRadioChecked(matched.radio, true);
+      dispatchAshbyRadioInputChange(matched.radio);
+    }
+
+    sleepSync(150);
+
+    if (!verifyAshbyYesNoSelection(fieldset, matched.radio)) {
+      return fail("Ashby gender radio click did not persist.", matched);
+    }
+
+    return {
+      ok: true,
+      status: "filled",
+      reason: "",
+      category: "gender",
+      question: questionText
+    };
+  }
+
+  function fillAshbyGenderRadios(root, inventory, options) {
+    var empty = {
+      results: [],
+      summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 }
+    };
+    var opts = options || {};
+    if (!isAshbyHost()) return empty;
+    if (!opts.fillDemographics) return empty;
+
+    var savedGender = trimText((inventory && inventory.gender) || "");
+    if (!savedGender) return empty;
+
+    var targetOption = mapSavedGenderToAshbyOption(savedGender);
+    if (!targetOption) {
+      return {
+        results: [
+          {
+            category: "gender",
+            label: "Gender",
+            question: "Gender",
+            status: "skipped",
+            reason: "Saved gender has no exact Ashby option mapping.",
+            ok: false,
+            value: ""
+          }
+        ],
+        summary: { attempted: 1, filled: 0, skipped: 1, failed: 0 }
+      };
+    }
+
+    var doc = root || document;
+    var results = [];
+    var fieldsets = [];
+    try {
+      fieldsets = Array.prototype.slice.call(doc.querySelectorAll("fieldset"));
+    } catch (_) {
+      return empty;
+    }
+
+    fieldsets.forEach(function (fieldset) {
+      var scoped = collectAshbyRadiosInFieldset(fieldset);
+      if (!scoped.length) return;
+      // Leave Yes/No work-auth/sponsorship groups to the existing Ashby Yes/No filler.
+      if (isExactYesNoOnlyGroup(scoped)) return;
+
+      var questionText = readAshbyYesNoQuestionText(fieldset, scoped);
+      var optionLabels = scoped.map(getAshbyOptionVisibleText);
+      var detected = detectCategoryFromMeta({
+        tagName: "input",
+        inputType: "radio",
+        type: "radio",
+        label: questionText,
+        ariaLabel: "",
+        name: trimText((scoped[0] && scoped[0].name) || ""),
+        id: "",
+        nearby: "",
+        autocomplete: "",
+        optionLabels: optionLabels
+      });
+      var category = detected.category || "unknown";
+      // Gender only — do not process race, veteran, or disability in this task.
+      if (category !== "gender") return;
+
+      var fillResult = fillAshbyGenderRadioGroup(fieldset, scoped, targetOption, {
+        questionText: questionText,
+        savedGender: savedGender
+      });
+      results.push({
+        category: "gender",
+        label: questionText,
+        question: questionText,
+        status: fillResult.status,
+        reason: fillResult.reason || "",
+        ok: Boolean(fillResult.ok),
+        value: fillResult.ok ? targetOption : ""
+      });
+    });
+
+    return {
+      results: results,
+      summary: {
+        attempted: results.length,
+        filled: results.filter(function (r) {
+          return r.status === "filled";
+        }).length,
+        skipped: results.filter(function (r) {
+          return r.status === "skipped";
+        }).length,
+        failed: results.filter(function (r) {
+          return r.status === "failed";
+        }).length
+      }
+    };
+  }
+
   global.ImpulsoAutofill = {
     CATEGORY_LABELS: CATEGORY_LABELS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -2657,6 +2873,8 @@
     fillAvailabilityDateElement: fillAvailabilityDateElement,
     fillBasicTextFields: fillBasicTextFields,
     fillAshbyYesNoRadios: fillAshbyYesNoRadios,
+    fillAshbyGenderRadios: fillAshbyGenderRadios,
+    mapSavedGenderToAshbyOption: mapSavedGenderToAshbyOption,
     mergeAutofillReports: mergeAutofillReports,
     isAshbyHost: isAshbyHost,
     parseStoredDate: parseStoredDate,

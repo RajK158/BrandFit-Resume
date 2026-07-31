@@ -756,6 +756,8 @@ input {
   padding: 10px;
   margin-top: 12px;
   border-radius: 6px;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 .panel-box strong {

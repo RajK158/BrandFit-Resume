@@ -580,6 +580,8 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
     const response = await chrome.tabs.sendMessage(tab.id, {
       type: "IMPULSO_TRIGGER_AUTOFILL",
       profile: profilePayload,
+      // Always include saved demographic answers when an exact value exists.
+      fillDemographics: true,
       resume: {
         resumeBase64: resumeBase64,
         resumeName: resumeName

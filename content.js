@@ -83,7 +83,8 @@
     return {};
   }
 
-  function fillFromInventory(inventory) {
+  function fillFromInventory(inventory, options) {
+    var opts = options || {};
     var AF = window.ImpulsoAutofill;
     if (!AF || typeof AF.fillBasicTextFields !== "function") {
       return {
@@ -105,6 +106,18 @@
       }
     }
 
+    // Ashby gender radios when demographics are included (default on for Trigger Auto-Apply).
+    if (typeof AF.fillAshbyGenderRadios === "function") {
+      var genderReport = AF.fillAshbyGenderRadios(document, inventory || {}, {
+        fillDemographics: opts.fillDemographics !== false
+      });
+      if (typeof AF.mergeAutofillReports === "function") {
+        report = AF.mergeAutofillReports(report, genderReport);
+      } else {
+        report.results = (report.results || []).concat((genderReport && genderReport.results) || []);
+      }
+    }
+
     return report;
   }
 
@@ -122,9 +135,13 @@
     });
   }
 
-  function runAutofill(profilePayload, resume) {
+  function runAutofill(profilePayload, resume, options) {
+    var opts = options || {};
     var inventory = resolveInventory(profilePayload, resume);
-    var report = fillFromInventory(inventory);
+    var report = fillFromInventory(inventory, {
+      // Default on: include saved demographic answers automatically.
+      fillDemographics: opts.fillDemographics !== false
+    });
     uploadResumeIfPresent(resume);
     return {
       ok: !report.error,
@@ -171,7 +188,7 @@
             resumeName: data.resumeName || ""
           };
         }
-        var result = runAutofill(profile, resume);
+        var result = runAutofill(profile, resume, { fillDemographics: true });
         result.usedLegacyFallback = true;
         sendResponse(result);
       }
@@ -206,7 +223,11 @@
     try {
       var resume = message.resume || {};
       if (message.profile && typeof message.profile === "object") {
-        sendResponse(runAutofill(message.profile, resume));
+        sendResponse(
+          runAutofill(message.profile, resume, {
+            fillDemographics: message.fillDemographics !== false
+          })
+        );
         return;
       }
       // Fallback only when no profile payload was received.
