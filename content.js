@@ -118,6 +118,16 @@
       }
     }
 
+    // Ashby veteran status (only when a saved veteranStatus exists).
+    if (typeof AF.fillAshbyVeteranRadios === "function") {
+      var veteranReport = AF.fillAshbyVeteranRadios(document, inventory || {});
+      if (typeof AF.mergeAutofillReports === "function") {
+        report = AF.mergeAutofillReports(report, veteranReport);
+      } else {
+        report.results = (report.results || []).concat((veteranReport && veteranReport.results) || []);
+      }
+    }
+
     return report;
   }
 
