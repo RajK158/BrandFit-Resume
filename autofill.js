@@ -313,7 +313,15 @@
         /\bnotice\s+period\b/,
         /\bavailability\b/
       ],
-      exclude: []
+      exclude: [
+        /\bstart\s+date\s+year\b/,
+        /\bend\s+date\s+year\b/,
+        /\beducation\s+start\b/,
+        /\beducation\s+end\b/,
+        /\bschool\b/,
+        /\buniversity\b/,
+        /\bdegree\b/
+      ]
     },
     {
       category: "postal_code",
@@ -347,8 +355,18 @@
     },
     {
       category: "education",
-      confidence: 0.82,
-      include: [/\beducation\b/, /\bdegree\b/, /\buniversity\b/, /\bschool\b/, /\bgpa\b/],
+      confidence: 0.9,
+      include: [
+        /\beducation\b/,
+        /\bdegree\b/,
+        /\buniversity\b/,
+        /\bschool\b/,
+        /\bgpa\b/,
+        /\bstart\s+date\s+year\b/,
+        /\bend\s+date\s+year\b/,
+        /\beducation\s+start\s+year\b/,
+        /\beducation\s+end\s+year\b/
+      ],
       exclude: []
     },
     {
@@ -602,6 +620,150 @@
     );
   }
 
+  function looksLikeEducationDateField(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\bstart\s+date\s+year\b/.test(text) || /\bend\s+date\s+year\b/.test(text)) return true;
+    if (/\beducation\s+(start|end)\s+year\b/.test(text)) return true;
+    if (/\banticipated\s+graduation\b/.test(text)) return true;
+    if (
+      (/\bstart\s+year\b/.test(text) || /\bend\s+year\b/.test(text)) &&
+      /\b(education|school|degree|university|college)\b/.test(text)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function looksLikeLocationCityField(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\bjob\s+location\b/.test(text)) return false;
+    if (/\bpreferred\s+(work\s+)?location\b/.test(text)) return false;
+    if (/\breloc/.test(text)) return false;
+    if (/\bphone\b/.test(text) && /\bcountry\b/.test(text)) return false;
+    if (/\bcitizen/.test(text) || /\bcitizenship\b/.test(text) || /\bnationality\b/.test(text)) return false;
+    return (
+      /\blocation\s*\(?\s*city\s*\)?/.test(text) ||
+      /\bcurrent\s+location\b/.test(text) ||
+      text === "city" ||
+      text === "city *" ||
+      /^city\b/.test(text) ||
+      /\bwhere\s+are\s+you\s+located\b/.test(text)
+    );
+  }
+
+  function normalizeEducationRecord(item) {
+    var row = item && typeof item === "object" ? item : {};
+    return {
+      institution: trimText(row.institution || row.school_name || row.school || ""),
+      degree: trimText(row.degree || row.degree_type || ""),
+      field: trimText(row.field || row.major || row.discipline || ""),
+      location: trimText(row.location || ""),
+      startDate: trimText(row.startDate || row.start_date || ""),
+      endDate: trimText(row.endDate || row.end_date || row.graduation_year || ""),
+      gpa: trimText(row.gpa || ""),
+      isCurrent: Boolean(row.isCurrent || row.currentlyEnrolled || row.inProgress)
+    };
+  }
+
+  function extractYearFromEducationDate(value) {
+    var text = trimText(value);
+    if (!text) return "";
+    if (/^(present|current|now|ongoing|in\s*progress|expected|n\/?a)$/i.test(text)) return "";
+    var match = text.match(/\b((?:19|20)\d{2})\b/);
+    return match ? match[1] : "";
+  }
+
+  function educationEndSortValue(record) {
+    var row = normalizeEducationRecord(record);
+    if (isEducationInProgress(row)) return Number.POSITIVE_INFINITY;
+    var year = extractYearFromEducationDate(row.endDate);
+    if (year) return parseInt(year, 10);
+    var parsed = parseStoredDate(row.endDate);
+    if (parsed && parsed.y) return parseInt(parsed.y, 10);
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  function isEducationInProgress(record) {
+    var row = normalizeEducationRecord(record);
+    if (row.isCurrent) return true;
+    var end = normalizeText(row.endDate);
+    if (!end) return Boolean(row.institution || row.degree || row.field);
+    return /^(present|current|now|ongoing|in\s*progress)$/.test(end) || /\bin\s*progress\b/.test(end);
+  }
+
+  function isValidEducationRecord(record) {
+    var row = normalizeEducationRecord(record);
+    return Boolean(row.institution || row.degree || row.field || row.startDate || row.endDate);
+  }
+
+  function listValidEducationRecords(educationList) {
+    // Preserve stored order. Do not reorder by graduation date for multi-entry fill.
+    var list = Array.isArray(educationList) ? educationList : [];
+    var valid = [];
+    list.forEach(function (item) {
+      if (isValidEducationRecord(item)) valid.push(normalizeEducationRecord(item));
+    });
+    return valid;
+  }
+
+  function selectPrimaryEducation(educationList) {
+    var valid = listValidEducationRecords(educationList);
+    if (!valid.length) return null;
+
+    var inProgress = valid.filter(function (row) {
+      return isEducationInProgress(row);
+    });
+    if (inProgress.length) return inProgress[0];
+
+    var best = valid[0];
+    var bestScore = educationEndSortValue(best);
+    for (var i = 1; i < valid.length; i += 1) {
+      var score = educationEndSortValue(valid[i]);
+      if (score > bestScore) {
+        best = valid[i];
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  function buildPrimaryEducationAnswers(educationList) {
+    var primary = selectPrimaryEducation(educationList);
+    if (!primary) {
+      return {
+        primary_education: null,
+        education_school: "",
+        education_degree: "",
+        education_discipline: "",
+        education_start_year: "",
+        education_end_year: "",
+        education_anticipated_graduation: ""
+      };
+    }
+    return {
+      primary_education: primary,
+      education_school: primary.institution || "",
+      education_degree: primary.degree || "",
+      education_discipline: primary.field || "",
+      education_start_year: extractYearFromEducationDate(primary.startDate),
+      education_end_year: extractYearFromEducationDate(primary.endDate),
+      education_anticipated_graduation: primary.endDate || ""
+    };
+  }
+
+  function phoneDigitsOnly(value) {
+    return String(value == null ? "" : value).replace(/\D/g, "");
+  }
+
+  function phoneValuesMatch(expected, actual) {
+    var want = phoneDigitsOnly(expected);
+    var got = phoneDigitsOnly(actual);
+    if (!want || !got) return false;
+    return want === got || want.endsWith(got) || got.endsWith(want);
+  }
+
   function detectCategoryFromMeta(meta) {
     var inputType = describeInputTypeFromMeta(meta || {});
     var label = trimText(meta.label || "");
@@ -624,6 +786,10 @@
     if (inputType === "tel") {
       return validateDetection({ category: "phone", confidence: 0.97 }, inputType);
     }
+    if (looksLikeEducationDateField(questionBlob) || looksLikeEducationDateField(fullBlob)) {
+      return validateDetection({ category: "education", confidence: 0.93 }, inputType);
+    }
+
     if (inputType === "date") {
       if (
         /\bearliest\b/.test(questionBlob) ||
@@ -1207,6 +1373,7 @@
     var last = trimText(personal.lastName || opts.lastName || "");
     var resumeName = trimText(opts.resumeName || "");
     var hasResume = Boolean(opts.hasResume || resumeName);
+    var educationAnswers = buildPrimaryEducationAnswers(data.education);
     return {
       first_name: first,
       last_name: last,
@@ -1215,8 +1382,13 @@
       preferred_name: trimText(personal.preferredName || personal.preferredFirstName || ""),
       email: trimText(personal.email || opts.email || ""),
       phone: trimText(personal.phone || ""),
+      phone_country: trimText(personal.phoneCountry || ""),
+      phone_country_code: trimText(personal.phoneCountryCode || ""),
       address: trimText(personal.location || ""),
-      city: "",
+      // Reuse personal.location as the applicant's current city/location (never inferred).
+      location: trimText(personal.location || ""),
+      current_location: trimText(personal.location || ""),
+      city: trimText(personal.location || ""),
       state: "",
       postal_code: "",
       country: trimText(work.countryApplyingIn || ""),
@@ -1225,6 +1397,14 @@
       portfolio: trimText(links.portfolio || ""),
       url: "",
       education: Array.isArray(data.education) && data.education.length ? "Saved in profile" : "",
+      education_records: listValidEducationRecords(data.education),
+      primary_education: educationAnswers.primary_education,
+      education_school: educationAnswers.education_school,
+      education_degree: educationAnswers.education_degree,
+      education_discipline: educationAnswers.education_discipline,
+      education_start_year: educationAnswers.education_start_year,
+      education_end_year: educationAnswers.education_end_year,
+      education_anticipated_graduation: educationAnswers.education_anticipated_graduation,
       experience: Array.isArray(data.experience) && data.experience.length ? "Saved in profile" : "",
       skills: Array.isArray(data.skills) && data.skills.length ? data.skills.join(", ") : "",
       work_authorization: trimText(work.legallyAuthorizedToWork || ""),
@@ -1276,6 +1456,11 @@
     );
     var prefs = data.applicationPreferences || {};
     var work = data.workAuthorization || {};
+    var education = Array.isArray(data.education)
+      ? data.education.map(function (item) {
+          return normalizeEducationRecord(item);
+        })
+      : [];
     return {
       personal: {
         firstName: trimText(personal.firstName || ""),
@@ -1283,6 +1468,8 @@
         preferredName: trimText(personal.preferredName || personal.preferredFirstName || ""),
         email: trimText(personal.email || ""),
         phone: trimText(personal.phone || ""),
+        phoneCountry: trimText(personal.phoneCountry || ""),
+        phoneCountryCode: trimText(personal.phoneCountryCode || ""),
         location: trimText(personal.location || "")
       },
       links: {
@@ -1290,6 +1477,7 @@
         github: trimText(links.github || ""),
         portfolio: trimText(links.portfolio || "")
       },
+      education: education,
       commonAnswers: {
         projectHighlight: trimText(common.projectHighlight || ""),
         referralSource: trimText(common.referralSource || ""),
@@ -2070,7 +2258,20 @@
     }
 
     var after = readElementTextValue(el);
-    if (!textValuesMatch(answer, after)) {
+    var inputType = normalizeText(el.type || "");
+    var phoneCue = normalizeText(
+      [el.name || "", el.id || "", el.getAttribute && el.getAttribute("aria-label"), findLabelText(el)].join(" ")
+    );
+    var treatAsPhone = inputType === "tel" || /\bphone\b/.test(phoneCue) || /\bmobile\b/.test(phoneCue);
+    if (treatAsPhone) {
+      if (!phoneValuesMatch(answer, after)) {
+        return {
+          ok: false,
+          status: "failed",
+          reason: "Verification failed; field does not contain the expected value."
+        };
+      }
+    } else if (!textValuesMatch(answer, after)) {
       return {
         ok: false,
         status: "failed",
@@ -2098,9 +2299,11 @@
     });
   }
 
-  function fillBasicTextFields(root, inventory) {
+  function fillBasicTextFields(root, inventory, options) {
     var doc = root || document;
     var inv = inventory || {};
+    var opts = options || {};
+    var handledElements = opts.handledElements || [];
     var results = [];
     var nodes = [];
     var seenList = [];
@@ -2115,16 +2318,22 @@
         }
       );
     } catch (_) {
-      return { results: [], summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 } };
+      return {
+        results: [],
+        summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 },
+        handledElements: handledElements
+      };
     }
 
     function wasSeen(el) {
-      return seenList.indexOf(el) !== -1;
+      return seenList.indexOf(el) !== -1 || handledElements.indexOf(el) !== -1;
     }
 
     function markSeen(el) {
       function add(node) {
-        if (node && seenList.indexOf(node) === -1) seenList.push(node);
+        if (!node) return;
+        if (seenList.indexOf(node) === -1) seenList.push(node);
+        if (handledElements.indexOf(node) === -1) handledElements.push(node);
       }
       add(el);
       var native = findNativeDateInput(el);
@@ -2138,11 +2347,24 @@
       var label = findLabelText(el) || trimText(el.getAttribute && el.getAttribute("aria-label")) || "";
       var detected = detectBasicTextCategory(el);
       var category = detected.category || "unknown";
+      var labelCue = normalizeText(label + " " + (el.placeholder || "") + " " + (el.name || "") + " " + (el.id || ""));
+
+      // Education fields are owned by ATS adapters (e.g. Greenhouse). Do not mark handled.
+      if (looksLikeEducationDateField(labelCue) || category === "education") {
+        return;
+      }
+
+      // Location (City) autocomplete is owned by the Greenhouse adapter.
+      // Do not mark handled here — the adapter must still be able to select a suggestion.
+      if (looksLikeLocationCityField(labelCue) || category === "city" || category === "location") {
+        return;
+      }
 
       // Availability date autofill (native date + date-like text / Ashby native input).
       if (category === "availability") {
-        var availCue = normalizeText(label + " " + (el.placeholder || "") + " " + (el.name || ""));
+        var availCue = labelCue;
         if (/\bnotice\s+period\b/.test(availCue)) {
+          markSeen(el);
           results.push({
             category: category,
             label: label,
@@ -2200,6 +2422,7 @@
 
       var answer = getTextAnswerForCategory(category, inv);
       var fillResult = fillTextElement(el, answer);
+      markSeen(el);
       pushFillResult(results, { category: category, label: label }, fillResult, answer);
     });
 
@@ -2216,7 +2439,8 @@
         failed: results.filter(function (r) {
           return r.status === "failed";
         }).length
-      }
+      },
+      handledElements: handledElements
     };
   }
 
@@ -2240,6 +2464,28 @@
         }).length
       }
     };
+  }
+
+  function detectActiveAtsHost() {
+    try {
+      if (
+        global.ImpulsoAshbyAdapter &&
+        typeof global.ImpulsoAshbyAdapter.isSupportedPage === "function" &&
+        global.ImpulsoAshbyAdapter.isSupportedPage()
+      ) {
+        return "ashby";
+      }
+    } catch (_) {}
+    try {
+      if (
+        global.ImpulsoGreenhouseAdapter &&
+        typeof global.ImpulsoGreenhouseAdapter.isSupportedPage === "function" &&
+        global.ImpulsoGreenhouseAdapter.isSupportedPage()
+      ) {
+        return "greenhouse";
+      }
+    } catch (_) {}
+    return "generic";
   }
 
   global.ImpulsoAutofill = {
@@ -2274,6 +2520,16 @@
     availabilityDateAnswer: availabilityDateAnswer,
     readElementTextValue: readElementTextValue,
     textValuesMatch: textValuesMatch,
+    phoneValuesMatch: phoneValuesMatch,
+    phoneDigitsOnly: phoneDigitsOnly,
+    looksLikeEducationDateField: looksLikeEducationDateField,
+    looksLikeLocationCityField: looksLikeLocationCityField,
+    normalizeEducationRecord: normalizeEducationRecord,
+    extractYearFromEducationDate: extractYearFromEducationDate,
+    listValidEducationRecords: listValidEducationRecords,
+    selectPrimaryEducation: selectPrimaryEducation,
+    buildPrimaryEducationAnswers: buildPrimaryEducationAnswers,
+    detectActiveAtsHost: detectActiveAtsHost,
     scanDocument: scanDocument,
     scanPage: function (inventory) {
       return scanDocument(document, inventory || {});

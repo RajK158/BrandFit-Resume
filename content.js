@@ -136,15 +136,19 @@
 
   function fillFromInventory(inventory, options) {
     var AF = window.ImpulsoAutofill;
+    var opts = options || {};
     if (!AF || typeof AF.fillBasicTextFields !== "function") {
       return {
         results: [],
         summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 },
+        handledElements: opts.handledElements || [],
         error: "Autofill engine is not available on this page."
       };
     }
 
-    return AF.fillBasicTextFields(document, inventory || {});
+    return AF.fillBasicTextFields(document, inventory || {}, {
+      handledElements: opts.handledElements || []
+    });
   }
 
   function uploadResumeIfPresent(resume) {
@@ -161,21 +165,119 @@
     });
   }
 
+  function detectActiveAts() {
+    var Ashby = window.ImpulsoAshbyAdapter;
+    if (Ashby && typeof Ashby.isSupportedPage === "function" && Ashby.isSupportedPage()) {
+      return "ashby";
+    }
+    var Greenhouse = window.ImpulsoGreenhouseAdapter;
+    if (Greenhouse && typeof Greenhouse.isSupportedPage === "function" && Greenhouse.isSupportedPage()) {
+      return "greenhouse";
+    }
+    return "generic";
+  }
+
+  function nationalPhoneForSeparateCountryCode(phone, countryCode) {
+    var raw = String(phone == null ? "" : phone).replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    var AF = window.ImpulsoAutofill;
+    var digits =
+      AF && typeof AF.phoneDigitsOnly === "function"
+        ? AF.phoneDigitsOnly(raw)
+        : raw.replace(/\D/g, "");
+    var codeDigits =
+      AF && typeof AF.phoneDigitsOnly === "function"
+        ? AF.phoneDigitsOnly(countryCode)
+        : String(countryCode == null ? "" : countryCode).replace(/\D/g, "");
+    if (codeDigits && digits.indexOf(codeDigits) === 0 && digits.length > codeDigits.length + 6) {
+      return digits.slice(codeDigits.length) || raw;
+    }
+    return raw;
+  }
+
+  function loadLatestMasterProfileSnapshot() {
+    return new Promise(function (resolve) {
+      try {
+        if (!chrome || !chrome.storage || !chrome.storage.local) {
+          resolve(null);
+          return;
+        }
+        chrome.storage.local.get(["masterProfile"], function (data) {
+          if (chrome.runtime && chrome.runtime.lastError) {
+            resolve(null);
+            return;
+          }
+          resolve(data && data.masterProfile && typeof data.masterProfile === "object" ? data.masterProfile : null);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
   async function runAutofill(profilePayload, resume, options) {
     var opts = options || {};
-    var inventory = resolveInventory(profilePayload, resume);
+    // Refresh from the latest synced master profile immediately before autofill.
+    var latestMaster = await loadLatestMasterProfileSnapshot();
+    var profile = profilePayload && typeof profilePayload === "object" ? Object.assign({}, profilePayload) : {};
+    if (latestMaster) {
+      if (Array.isArray(latestMaster.education)) {
+        profile.education = latestMaster.education;
+      }
+      if (latestMaster.personal && typeof latestMaster.personal === "object") {
+        profile.personal = Object.assign({}, profile.personal || {}, latestMaster.personal);
+      }
+      if (latestMaster.links && typeof latestMaster.links === "object") {
+        profile.links = Object.assign({}, profile.links || {}, latestMaster.links);
+      }
+      if (latestMaster.workAuthorization && typeof latestMaster.workAuthorization === "object") {
+        profile.workAuthorization = Object.assign(
+          {},
+          profile.workAuthorization || {},
+          latestMaster.workAuthorization
+        );
+      }
+      if (latestMaster.demographics && typeof latestMaster.demographics === "object") {
+        profile.demographics = Object.assign({}, profile.demographics || {}, latestMaster.demographics);
+      }
+    }
+
+    var inventory = resolveInventory(profile, resume);
+    var handledElements = [];
+    var ats = detectActiveAts();
+
+    // Keep ordered education records from the latest master profile for multi-entry Greenhouse fill.
+    var AF = window.ImpulsoAutofill;
+    if (AF && typeof AF.listValidEducationRecords === "function") {
+      inventory = Object.assign({}, inventory, {
+        education_records: AF.listValidEducationRecords(profile.education)
+      });
+    } else if (Array.isArray(profile.education)) {
+      inventory = Object.assign({}, inventory, {
+        education_records: profile.education
+      });
+    }
+
+    // Greenhouse phone widgets use a separate country dropdown + national number input.
+    if (ats === "greenhouse" && inventory && inventory.phone_country_code) {
+      inventory = Object.assign({}, inventory, {
+        phone: nationalPhoneForSeparateCountryCode(inventory.phone, inventory.phone_country_code)
+      });
+    }
+
     var fillOpts = {
       // Default on: include saved demographic answers automatically.
       fillDemographics: opts.fillDemographics !== false,
-      profile: profilePayload || null,
-      demographics: (profilePayload && profilePayload.demographics) || null,
-      workAuthorization: (profilePayload && profilePayload.workAuthorization) || null
+      profile: profile || null,
+      demographics: (profile && profile.demographics) || null,
+      workAuthorization: (profile && profile.workAuthorization) || null,
+      handledElements: handledElements
     };
     var report = fillFromInventory(inventory, fillOpts);
 
-    var Ashby = window.ImpulsoAshbyAdapter;
-    if (Ashby && typeof Ashby.isSupportedPage === "function" && Ashby.isSupportedPage()) {
-      if (typeof Ashby.fillSupportedFields === "function") {
+    if (ats === "ashby") {
+      var Ashby = window.ImpulsoAshbyAdapter;
+      if (Ashby && typeof Ashby.fillSupportedFields === "function") {
         var ashbyReport = await Ashby.fillSupportedFields({
           root: document,
           inventory: inventory,
@@ -186,6 +288,22 @@
           tabId: opts.tabId
         });
         report = mergeReport(report, ashbyReport);
+      }
+    } else if (ats === "greenhouse") {
+      var Greenhouse = window.ImpulsoGreenhouseAdapter;
+      if (Greenhouse && typeof Greenhouse.fillSupportedFields === "function") {
+        var greenhouseReport = await Greenhouse.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, greenhouseReport);
       }
     }
 

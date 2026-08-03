@@ -318,6 +318,8 @@
         lastName: "",
         email: "",
         phone: "",
+        phoneCountry: "",
+        phoneCountryCode: "",
         location: "",
         preferredName: ""
       },
@@ -524,13 +526,17 @@
   function syncLegacyKeysFromProfile(profile) {
     const personal = (profile && profile.personal) || {};
     const links = (profile && profile.links) || {};
+    // Keep a chrome.storage snapshot so content-script autofill can refresh
+    // education/contact data immediately before filling (IndexedDB is extension-page only).
+    const snapshot = createDefaultMasterProfile(profile || {});
 
     return chromeStorageSet({
       firstName: personal.firstName || "",
       lastName: personal.lastName || "",
       email: personal.email || "",
       github: links.github || "",
-      linkedin: links.linkedin || ""
+      linkedin: links.linkedin || "",
+      masterProfile: snapshot
     });
   }
 
@@ -629,6 +635,13 @@
         console.warn("Failed to persist deduped projects on load:", error);
       }
       return toPersist;
+    }
+
+    // Refresh chrome.storage snapshot so content-script autofill sees latest IndexedDB profile.
+    try {
+      await syncLegacyKeysFromProfile(normalized);
+    } catch (error) {
+      console.warn("Failed to sync master profile snapshot for autofill:", error);
     }
 
     return normalized;
@@ -1886,6 +1899,11 @@
           draft.personal && draft.personal.lastName,
           choices["personal.lastName"]
         ),
+        preferredName: _pickScalar(
+          master.personal && master.personal.preferredName,
+          draft.personal && draft.personal.preferredName,
+          choices["personal.preferredName"]
+        ),
         email: _pickScalar(
           master.personal && master.personal.email,
           draft.personal && draft.personal.email,
@@ -1895,6 +1913,16 @@
           master.personal && master.personal.phone,
           draft.personal && draft.personal.phone,
           choices["personal.phone"]
+        ),
+        phoneCountry: _pickScalar(
+          master.personal && master.personal.phoneCountry,
+          draft.personal && draft.personal.phoneCountry,
+          choices["personal.phoneCountry"]
+        ),
+        phoneCountryCode: _pickScalar(
+          master.personal && master.personal.phoneCountryCode,
+          draft.personal && draft.personal.phoneCountryCode,
+          choices["personal.phoneCountryCode"]
         ),
         location: _pickScalar(
           master.personal && master.personal.location,

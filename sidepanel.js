@@ -448,6 +448,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       document.getElementById("email").value = personal.email;
       updateEmailTypoWarning(personal.email);
     }
+    if (personal.phone) {
+      const phoneEl = document.getElementById("phone");
+      if (phoneEl) phoneEl.value = personal.phone;
+    }
+    if (personal.phoneCountry) {
+      const phoneCountryEl = document.getElementById("phoneCountry");
+      if (phoneCountryEl) phoneCountryEl.value = personal.phoneCountry;
+    }
+    if (personal.phoneCountryCode) {
+      const phoneCountryCodeEl = document.getElementById("phoneCountryCode");
+      if (phoneCountryCodeEl) phoneCountryCodeEl.value = personal.phoneCountryCode;
+    }
+    if (personal.location) {
+      const locationEl = document.getElementById("location");
+      if (locationEl) locationEl.value = personal.location;
+    }
 
     if (window.ImpulsoResume) {
       await window.ImpulsoResume.init();
@@ -471,6 +487,14 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
   const preferredNameEl = document.getElementById("preferredName");
   const preferredName = preferredNameEl ? preferredNameEl.value : "";
   const email = document.getElementById("email").value;
+  const phoneEl = document.getElementById("phone");
+  const phone = phoneEl ? phoneEl.value : "";
+  const phoneCountryEl = document.getElementById("phoneCountry");
+  const phoneCountry = phoneCountryEl ? phoneCountryEl.value : "";
+  const phoneCountryCodeEl = document.getElementById("phoneCountryCode");
+  const phoneCountryCode = phoneCountryCodeEl ? phoneCountryCodeEl.value : "";
+  const locationEl = document.getElementById("location");
+  const location = locationEl ? locationEl.value : "";
 
   try {
     if (email.trim() && !window.ImpulsoStorage.isValidEmailFormat(email)) {
@@ -488,7 +512,11 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
         firstName: firstName,
         lastName: lastName,
         preferredName: preferredName,
-        email: email
+        email: email,
+        phone: phone,
+        phoneCountry: phoneCountry,
+        phoneCountryCode: phoneCountryCode,
+        location: location
       }
     };
 

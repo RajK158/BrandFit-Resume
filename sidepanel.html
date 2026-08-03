@@ -72,6 +72,23 @@
       <input type="email" id="email" placeholder="raj@example.com">
       <div id="emailTypoWarning" class="email-typo-warning" hidden role="status" aria-live="polite"></div>
 
+      <label for="phone">Phone</label>
+      <input type="tel" id="phone" placeholder="555-0100" autocomplete="tel-national">
+
+      <div class="row">
+        <div>
+          <label for="phoneCountry">Phone country</label>
+          <input type="text" id="phoneCountry" placeholder="United States" autocomplete="country-name">
+        </div>
+        <div>
+          <label for="phoneCountryCode">Phone country code</label>
+          <input type="text" id="phoneCountryCode" placeholder="+1" autocomplete="tel-country-code">
+        </div>
+      </div>
+
+      <label for="location">Current location (City)</label>
+      <input type="text" id="location" placeholder="Long Beach, California, United States" autocomplete="address-level2">
+
       <button id="saveBtn" class="action btn-secondary" type="button">Save Core Profile</button>
 
       <div id="masterProfilePanel" class="master-profile-panel">
