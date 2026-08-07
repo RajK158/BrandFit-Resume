@@ -1319,6 +1319,18 @@
 
     nodes.forEach(function (el) {
       if (!isVisibleEnough(el)) return;
+     
+      var className = String((el.className && el.className.baseVal) || el.className || "");
+      var elId = String(el.id || "");
+      var role = String(el.getAttribute && el.getAttribute("role") || "").toLowerCase();
+      if (
+        /\biti__search-input\b/.test(className) ||
+        /^iti-\d+__search-input$/.test(elId) ||
+        (role === "listbox" && /\biti__country-list\b/.test(className)) ||
+        (role === "listbox" && /^iti-\d+__country-listbox$/.test(elId))
+      ) {
+        return;
+      }
       var type = (el.type || "").toLowerCase();
       if (type === "hidden" || type === "submit" || type === "button" || type === "image" || type === "reset") {
         return;
