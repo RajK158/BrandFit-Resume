@@ -779,7 +779,7 @@
     );
     var optionLabels = meta.optionLabels || [];
 
-    // 1) DOM type first
+   
     if (inputType === "email") {
       return validateDetection({ category: "email", confidence: 0.98 }, inputType);
     }
@@ -812,12 +812,12 @@
       return validateDetection({ category: "unknown", confidence: 0.35 }, inputType);
     }
 
-    // Project narrative questions before any URL/portfolio heuristics
+   
     if (looksLikeProjectHighlight(questionBlob) || looksLikeProjectHighlight(fullBlob)) {
       return validateDetection({ category: "project_highlight", confidence: 0.94 }, inputType);
     }
 
-    // Non-file elements can never be resume upload (enforced in validateDetection too)
+    
     if (inputType === "url" || inputType === "text" || inputType === "search" || inputType === "textarea") {
       if (/\blinkedin\b/.test(fullBlob)) {
         return validateDetection({ category: "linkedin", confidence: 0.96 }, inputType);
@@ -884,7 +884,24 @@
       return validateDetection({ category: "url", confidence: 0.75 }, inputType);
     }
 
-    // Radio/select groups: classify question first, then option cues
+    
+    if (
+      (/\bhispanic\b/.test(questionBlob) ||
+        /\blatino\b/.test(questionBlob) ||
+        /\blatina\b/.test(questionBlob) ||
+        /\blatinx\b/.test(questionBlob)) &&
+      !/\brace\b/.test(questionBlob) &&
+      !/\bethnicity\b/.test(questionBlob) &&
+      !/\bethnic\b/.test(questionBlob)
+    ) {
+      return validateDetection(
+        { category: "unknown", confidence: 0.98 },
+        inputType,
+        optionLabels
+      );
+    }
+
+   
     if (
       inputType === "radio" ||
       inputType === "select" ||
@@ -908,7 +925,7 @@
 
     for (var i = 0; i < TEXT_RULES.length; i += 1) {
       if (TEXT_RULES[i].category === "resume_upload") continue;
-      // Match the field's own question text first to avoid nearby-question bleed.
+    
       if (ruleMatches(TEXT_RULES[i], questionBlob)) {
         return validateDetection(
           { category: TEXT_RULES[i].category, confidence: TEXT_RULES[i].confidence },
@@ -942,7 +959,7 @@
       result = { category: "unknown", confidence: 0.3 };
     }
 
-    // race/ethnicity cannot be gender
+   
     if (result.category === "gender") {
       var raceCue = normalizeText((optionLabels || []).join(" ") + " ");
       var labelCue = normalizeText(String((detected && detected.label) || ""));
