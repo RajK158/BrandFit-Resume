@@ -301,6 +301,7 @@
   function createDefaultDemographics(overrides) {
     const base = {
       gender: "",
+      hispanicLatino: "",
       raceEthnicity: "",
       veteranStatus: "",
       disabilityStatus: ""
