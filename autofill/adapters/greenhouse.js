@@ -3425,7 +3425,8 @@
         category !== "sponsorship_now" &&
         category !== "sponsorship_later" &&
         category !== "hispanic_latino" &&
-        category !== "gender"
+        category !== "gender" &&
+        category !== "race_ethnicity"
       ) {
         continue;
       }
@@ -3447,6 +3448,26 @@
           reason: genderResult.reason || "",
           ok: Boolean(genderResult.ok),
           value: genderResult.ok ? genderResult.value || answer : ""
+        });
+        continue;
+      }
+      if (category === "race_ethnicity") {
+        handledElements.push(control);
+        var raceLabel = classified.label || labelForCombobox(control) || category;
+        var raceResult = await selectCustomDropdownOption(
+          control,
+          function (optionLabel) {
+            return optionMatches("race_ethnicity", answer, optionLabel);
+          },
+          answer
+        );
+        results.push({
+          category: category,
+          label: raceLabel,
+          status: raceResult.status,
+          reason: raceResult.reason || "",
+          ok: Boolean(raceResult.ok),
+          value: raceResult.ok ? raceResult.value || answer : ""
         });
         continue;
       }
