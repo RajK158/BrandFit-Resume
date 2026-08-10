@@ -3424,11 +3424,32 @@
         category !== "work_authorization" &&
         category !== "sponsorship_now" &&
         category !== "sponsorship_later" &&
-        category !== "hispanic_latino"
+        category !== "hispanic_latino" &&
+        category !== "gender"
       ) {
         continue;
       }
       var answer = getInventoryAnswer(category, inventory, options);
+      if (category === "gender") {
+        handledElements.push(control);
+        var genderLabel = classified.label || labelForCombobox(control) || category;
+        var genderResult = await selectCustomDropdownOption(
+          control,
+          function (optionLabel) {
+            return optionMatches("gender", answer, optionLabel);
+          },
+          answer
+        );
+        results.push({
+          category: category,
+          label: genderLabel,
+          status: genderResult.status,
+          reason: genderResult.reason || "",
+          ok: Boolean(genderResult.ok),
+          value: genderResult.ok ? genderResult.value || answer : ""
+        });
+        continue;
+      }
       var row = await fillLabeledYesNoDropdown(control, category, answer, handledElements);
       if (row) results.push(row);
     }
