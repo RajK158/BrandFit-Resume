@@ -29,6 +29,7 @@
     "veteran_status",
     "disability_status",
     "gender",
+    "hispanic_latino",
     "race_ethnicity",
     "education",
     "experience",
@@ -68,6 +69,7 @@
     veteran_status: "Veteran status",
     disability_status: "Disability status",
     gender: "Gender",
+    hispanic_latino: "Hispanic/Latino",
     race_ethnicity: "Race/ethnicity",
     cover_letter: "Cover letter",
     project_highlight: "Project highlight",
@@ -95,6 +97,7 @@
 
   var SENSITIVE_CATEGORIES = {
     gender: true,
+    hispanic_latino: true,
     race_ethnicity: true,
     veteran_status: true,
     disability_status: true
@@ -895,7 +898,7 @@
       !/\bethnic\b/.test(questionBlob)
     ) {
       return validateDetection(
-        { category: "unknown", confidence: 0.98 },
+        { category: "hispanic_latino", confidence: 0.98 },
         inputType,
         optionLabels
       );
@@ -1452,6 +1455,12 @@
         demo.disabilityStatus || demo.disability_status || demo["disability status"] || ""
       ),
       gender: trimText(demo.gender || ""),
+      hispanic_latino: trimText(
+        demo.hispanicLatino ||
+          demo.hispanic_latino ||
+          demo["hispanic latino"] ||
+          ""
+      ),
       race_ethnicity: trimText(
         demo.raceEthnicity || demo.race_ethnicity || demo["race ethnicity"] || ""
       ),
@@ -1525,6 +1534,12 @@
       },
       demographics: {
         gender: trimText((data.demographics || {}).gender || ""),
+        hispanicLatino: trimText(
+          (data.demographics || {}).hispanicLatino ||
+            (data.demographics || {}).hispanic_latino ||
+            (data.demographics || {})["hispanic latino"] ||
+            ""
+        ),
         raceEthnicity: trimText(
           (data.demographics || {}).raceEthnicity ||
             (data.demographics || {}).race_ethnicity ||
