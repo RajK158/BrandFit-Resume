@@ -344,6 +344,7 @@
   function isSensitive(category) {
     return (
       category === "gender" ||
+      category === "hispanic_latino" ||
       category === "race_ethnicity" ||
       category === "veteran_status" ||
       category === "disability_status"
@@ -3422,7 +3423,8 @@
       if (
         category !== "work_authorization" &&
         category !== "sponsorship_now" &&
-        category !== "sponsorship_later"
+        category !== "sponsorship_later" &&
+        category !== "hispanic_latino"
       ) {
         continue;
       }
