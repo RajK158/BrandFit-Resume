@@ -904,7 +904,21 @@
       );
     }
 
-   
+    if (
+      (/\bsms\b/.test(questionBlob) || /\bwhatsapp\b/.test(questionBlob)) &&
+      (/\bcommunications?\b/.test(questionBlob) || /\bmessage\b/.test(questionBlob)) &&
+      (/\bselect\s+yes\b/.test(questionBlob) ||
+        /\bselect\s+no\b/.test(questionBlob) ||
+        /\bopt\s+out\b/.test(questionBlob) ||
+        /\bstop\b/.test(questionBlob))
+    ) {
+      return validateDetection(
+        { category: "unknown", confidence: 0.98 },
+        inputType,
+        optionLabels
+      );
+    }
+
     if (
       inputType === "radio" ||
       inputType === "select" ||
