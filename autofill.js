@@ -180,7 +180,7 @@
       category: "phone",
       confidence: 0.94,
       include: [/\bphone\b/, /\bmobile\b/, /\btelephone\b/, /\bcell\b/, /\bphone\s*number\b/],
-      exclude: []
+      exclude: [/\bmobile\s+(role|position|job)\b/]
     },
     {
       category: "preferred_name",
