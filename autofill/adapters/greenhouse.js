@@ -3426,7 +3426,8 @@
         category !== "sponsorship_later" &&
         category !== "hispanic_latino" &&
         category !== "gender" &&
-        category !== "race_ethnicity"
+        category !== "race_ethnicity" &&
+        category !== "veteran_status"
       ) {
         continue;
       }
@@ -3468,6 +3469,26 @@
           reason: raceResult.reason || "",
           ok: Boolean(raceResult.ok),
           value: raceResult.ok ? raceResult.value || answer : ""
+        });
+        continue;
+      }
+      if (category === "veteran_status") {
+        handledElements.push(control);
+        var veteranLabel = classified.label || labelForCombobox(control) || category;
+        var veteranResult = await selectCustomDropdownOption(
+          control,
+          function (optionLabel) {
+            return optionMatches("veteran_status", answer, optionLabel);
+          },
+          answer
+        );
+        results.push({
+          category: category,
+          label: veteranLabel,
+          status: veteranResult.status,
+          reason: veteranResult.reason || "",
+          ok: Boolean(veteranResult.ok),
+          value: veteranResult.ok ? veteranResult.value || answer : ""
         });
         continue;
       }
