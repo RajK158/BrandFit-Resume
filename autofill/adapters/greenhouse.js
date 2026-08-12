@@ -3427,7 +3427,8 @@
         category !== "hispanic_latino" &&
         category !== "gender" &&
         category !== "race_ethnicity" &&
-        category !== "veteran_status"
+        category !== "veteran_status" &&
+        category !== "disability_status"
       ) {
         continue;
       }
@@ -3489,6 +3490,26 @@
           reason: veteranResult.reason || "",
           ok: Boolean(veteranResult.ok),
           value: veteranResult.ok ? veteranResult.value || answer : ""
+        });
+        continue;
+      }
+      if (category === "disability_status") {
+        handledElements.push(control);
+        var disabilityLabel = classified.label || labelForCombobox(control) || category;
+        var disabilityResult = await selectCustomDropdownOption(
+          control,
+          function (optionLabel) {
+            return optionMatches("disability_status", answer, optionLabel);
+          },
+          answer
+        );
+        results.push({
+          category: category,
+          label: disabilityLabel,
+          status: disabilityResult.status,
+          reason: disabilityResult.reason || "",
+          ok: Boolean(disabilityResult.ok),
+          value: disabilityResult.ok ? disabilityResult.value || answer : ""
         });
         continue;
       }
