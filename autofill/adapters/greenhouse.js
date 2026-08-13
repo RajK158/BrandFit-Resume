@@ -345,6 +345,7 @@
     return (
       category === "gender" ||
       category === "hispanic_latino" ||
+      category === "transgender" ||
       category === "race_ethnicity" ||
       category === "veteran_status" ||
       category === "disability_status"
@@ -3441,6 +3442,7 @@
         category !== "sponsorship_now" &&
         category !== "sponsorship_later" &&
         category !== "hispanic_latino" &&
+        category !== "transgender" &&
         category !== "gender" &&
         category !== "race_ethnicity" &&
         category !== "veteran_status" &&
@@ -3466,6 +3468,26 @@
           reason: genderResult.reason || "",
           ok: Boolean(genderResult.ok),
           value: genderResult.ok ? genderResult.value || answer : ""
+        });
+        continue;
+      }
+      if (category === "transgender") {
+        handledElements.push(control);
+        var transgenderLabel = classified.label || labelForCombobox(control) || category;
+        var transgenderResult = await selectCustomDropdownOption(
+          control,
+          function (optionLabel) {
+            return optionMatches("transgender", answer, optionLabel);
+          },
+          answer
+        );
+        results.push({
+          category: category,
+          label: transgenderLabel,
+          status: transgenderResult.status,
+          reason: transgenderResult.reason || "",
+          ok: Boolean(transgenderResult.ok),
+          value: transgenderResult.ok ? transgenderResult.value || answer : ""
         });
         continue;
       }

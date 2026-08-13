@@ -302,6 +302,7 @@
     const base = {
       gender: "",
       hispanicLatino: "",
+      transgender: "",
       raceEthnicity: "",
       veteranStatus: "",
       disabilityStatus: ""

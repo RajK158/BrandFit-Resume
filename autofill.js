@@ -30,6 +30,7 @@
     "disability_status",
     "gender",
     "hispanic_latino",
+    "transgender",
     "race_ethnicity",
     "education",
     "experience",
@@ -70,6 +71,7 @@
     disability_status: "Disability status",
     gender: "Gender",
     hispanic_latino: "Hispanic/Latino",
+    transgender: "Transgender",
     race_ethnicity: "Race/ethnicity",
     cover_letter: "Cover letter",
     project_highlight: "Project highlight",
@@ -98,6 +100,7 @@
   var SENSITIVE_CATEGORIES = {
     gender: true,
     hispanic_latino: true,
+    transgender: true,
     race_ethnicity: true,
     veteran_status: true,
     disability_status: true
@@ -904,6 +907,14 @@
       );
     }
 
+    if (/\btransgender\b/.test(questionBlob)) {
+      return validateDetection(
+        { category: "transgender", confidence: 0.98 },
+        inputType,
+        optionLabels
+      );
+    }
+
     if (
       (/\bsms\b/.test(questionBlob) || /\bwhatsapp\b/.test(questionBlob)) &&
       (/\bcommunications?\b/.test(questionBlob) || /\bmessage\b/.test(questionBlob)) &&
@@ -1475,6 +1486,7 @@
           demo["hispanic latino"] ||
           ""
       ),
+      transgender: trimText(demo.transgender || ""),
       race_ethnicity: trimText(
         demo.raceEthnicity || demo.race_ethnicity || demo["race ethnicity"] || ""
       ),
@@ -1554,6 +1566,7 @@
             (data.demographics || {})["hispanic latino"] ||
             ""
         ),
+        transgender: trimText((data.demographics || {}).transgender || ""),
         raceEthnicity: trimText(
           (data.demographics || {}).raceEthnicity ||
             (data.demographics || {}).race_ethnicity ||
