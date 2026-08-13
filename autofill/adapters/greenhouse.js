@@ -1741,7 +1741,14 @@
     if (norm === "master of engineering" || compact === "meng") {
       return "Master's Degree";
     }
-    if (norm === "bachelor of science" || compact === "bs") {
+    if (
+      norm === "bachelor of science" ||
+      compact === "bs" ||
+      norm === "bachelor of engineering" ||
+      compact === "be" ||
+      norm === "bachelor of technology" ||
+      compact === "btech"
+    ) {
       return "Bachelor's Degree";
     }
     return "";
@@ -2493,6 +2500,15 @@
     var blocks = getEducationBlocks(root);
     var section =
       blocks.length && blocks[0].root ? climbToEducationSection(blocks[0].root, root || document) : root || document;
+    var educationContainer =
+      blocks.length &&
+      blocks[0].root &&
+      blocks[0].root.closest
+        ? blocks[0].root.closest(".education--container")
+        : null;
+    if (educationContainer) {
+      section = educationContainer;
+    }
     var buttons = section.querySelectorAll("button, a, [role='button']");
     var best = null;
     var bestScore = 0;
