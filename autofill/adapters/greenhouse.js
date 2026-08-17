@@ -2466,6 +2466,148 @@
     return results;
   }
 
+  function parseSavedGpa(raw) {
+    var text = String(raw == null ? "" : raw).trim();
+    if (!text) return null;
+    var match = text.match(/(\d+(?:\.\d+)?)/);
+    if (!match) return null;
+    var value = Number(match[1]);
+    if (!isFinite(value)) return null;
+    return value;
+  }
+
+  function allGpaNumbers(text) {
+    var matches = String(text || "").match(/\d+(?:\.\d+)?/g) || [];
+    var values = [];
+    var i;
+    for (i = 0; i < matches.length; i += 1) {
+      var value = Number(matches[i]);
+      if (isFinite(value)) values.push(value);
+    }
+    return values;
+  }
+
+  function interpretGpaOption(text) {
+    var label = String(text || "").trim();
+    if (!label) return null;
+    var lower = label.toLowerCase();
+    var numbers = allGpaNumbers(label);
+    if (!numbers.length) return null;
+
+    var closedMatch = lower.match(
+      /(\d+(?:\.\d+)?)\s*(?:-|–|—|to|through)\s*(\d+(?:\.\d+)?)/i
+    );
+    if (closedMatch) {
+      var low = Number(closedMatch[1]);
+      var high = Number(closedMatch[2]);
+      if (!isFinite(low) || !isFinite(high)) return null;
+      return { kind: "closed", min: Math.min(low, high), max: Math.max(low, high) };
+    }
+
+    if (
+      /(\d+(?:\.\d+)?)\s*\+/.test(label) ||
+      /\bor higher\b/.test(lower) ||
+      /\band above\b/.test(lower) ||
+      /\bor greater\b/.test(lower) ||
+      /\bat least\b/.test(lower)
+    ) {
+      return { kind: "lower", min: numbers[0], inclusive: true };
+    }
+
+    if (
+      /\bor below\b/.test(lower) ||
+      /\band under\b/.test(lower) ||
+      /\bor under\b/.test(lower) ||
+      /\band below\b/.test(lower)
+    ) {
+      return { kind: "upper", max: numbers[0], inclusive: true };
+    }
+
+    if (
+      /\bbelow\b/.test(lower) ||
+      /\bunder\b/.test(lower) ||
+      /\bless than\b/.test(lower)
+    ) {
+      return { kind: "upper", max: numbers[0], inclusive: false };
+    }
+
+    if (numbers.length !== 1) return null;
+    return { kind: "exact", value: numbers[0] };
+  }
+
+  function gpaOptionContains(interpreted, gpa) {
+    if (!interpreted || !isFinite(gpa)) return false;
+    if (interpreted.kind === "exact") return gpa === interpreted.value;
+    if (interpreted.kind === "closed") {
+      return gpa >= interpreted.min && gpa <= interpreted.max;
+    }
+    if (interpreted.kind === "lower") {
+      return interpreted.inclusive ? gpa >= interpreted.min : gpa > interpreted.min;
+    }
+    if (interpreted.kind === "upper") {
+      return interpreted.inclusive ? gpa <= interpreted.max : gpa < interpreted.max;
+    }
+    return false;
+  }
+
+  function pickGpaDropdownOption(options, savedGpa) {
+    var gpa = parseSavedGpa(savedGpa);
+    if (gpa == null) return null;
+    var exact = [];
+    var closed = [];
+    var bound = [];
+    (options || []).forEach(function (opt) {
+      var label = trimText(opt && opt.label);
+      if (!label) return;
+      var interpreted = interpretGpaOption(label);
+      if (!interpreted) return;
+      if (!gpaOptionContains(interpreted, gpa)) return;
+      if (interpreted.kind === "exact") exact.push(opt);
+      else if (interpreted.kind === "closed") closed.push(opt);
+      else bound.push(opt);
+    });
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return null;
+    if (closed.length === 1) return closed[0];
+    if (closed.length > 1) return null;
+    if (bound.length === 1) return bound[0];
+    return null;
+  }
+
+  async function fillStandaloneGpaDropdown(root, inventory, profile, handledElements) {
+    var results = [];
+    var education = resolvePrimaryEducation(inventory, profile);
+    var saved = education && education.gpa ? String(education.gpa).trim() : "";
+    if (!saved || parseSavedGpa(saved) == null) return results;
+
+    var comboboxes = collectCustomComboboxControls(root);
+    var i;
+    for (i = 0; i < comboboxes.length; i += 1) {
+      var control = comboboxes[i];
+      if (wasHandled(handledElements, control)) continue;
+      var label = labelForCombobox(control);
+      var blob = normalizeText(label);
+      if (!/\bgpa\b/.test(blob) && blob.indexOf("grade point average") === -1) continue;
+      handledElements.push(control);
+      var result = await selectEducationDropdownOption(
+        control,
+        function (opts) {
+          return pickGpaDropdownOption(opts, saved);
+        },
+        saved
+      );
+      results.push({
+        category: "education_gpa",
+        label: label || "GPA",
+        status: result.status,
+        reason: result.reason || "",
+        ok: Boolean(result.ok),
+        value: result.ok ? result.value || saved : ""
+      });
+    }
+    return results;
+  }
+
   function educationAnswerFor(kind, education, inventory) {
     if (!education && inventory) {
       if (kind === "education_school") return trimText(inventory.education_school || "");
@@ -3616,6 +3758,16 @@
     );
     for (var g = 0; g < graduationRows.length; g += 1) {
       results.push(graduationRows[g]);
+    }
+
+    var gpaRows = await fillStandaloneGpaDropdown(
+      root,
+      inventory,
+      options.profile,
+      handledElements
+    );
+    for (var gp = 0; gp < gpaRows.length; gp += 1) {
+      results.push(gpaRows[gp]);
     }
 
     var comboboxes = collectCustomComboboxControls(root);
