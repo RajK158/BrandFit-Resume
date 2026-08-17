@@ -2242,51 +2242,228 @@
     return { year: year, month: month, season: season, raw: text };
   }
 
+  function expandGraduationMonths(text) {
+    var out = normalizeText(text);
+    out = out.replace(/\bsept\b/g, "september");
+    out = out.replace(/\bsep\b/g, "september");
+    out = out.replace(/\bjan\b/g, "january");
+    out = out.replace(/\bfeb\b/g, "february");
+    out = out.replace(/\bmar\b/g, "march");
+    out = out.replace(/\bapr\b/g, "april");
+    out = out.replace(/\bjun\b/g, "june");
+    out = out.replace(/\bjul\b/g, "july");
+    out = out.replace(/\baug\b/g, "august");
+    out = out.replace(/\boct\b/g, "october");
+    out = out.replace(/\bnov\b/g, "november");
+    out = out.replace(/\bdec\b/g, "december");
+    return out;
+  }
+
+  function graduationMonthNumber(monthName) {
+    var names = [
+      "january",
+      "february",
+      "march",
+      "april",
+      "may",
+      "june",
+      "july",
+      "august",
+      "september",
+      "october",
+      "november",
+      "december"
+    ];
+    var idx = names.indexOf(normalizeText(monthName));
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+  function graduationDateValue(year, month) {
+    var y = parseInt(year, 10);
+    if (!y) return null;
+    var m = parseInt(month, 10);
+    if (!m) m = 0;
+    return y * 12 + m;
+  }
+
+  function parseGraduationYearMonth(text) {
+    var expanded = expandGraduationMonths(text);
+    var parts = parseGraduationParts(expanded);
+    if (!parts.year) return null;
+    var month = parts.month ? graduationMonthNumber(parts.month) : 0;
+    return {
+      year: parseInt(parts.year, 10),
+      month: month,
+      season: parts.season || "",
+      value: graduationDateValue(parts.year, month)
+    };
+  }
+
+  function optionHasExplicitMonth(text) {
+    return /\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(
+      expandGraduationMonths(text)
+    );
+  }
+
+  function optionHasExplicitSeason(text) {
+    return /\b(spring|summer|fall|autumn|winter)\b/.test(normalizeText(text));
+  }
+
+  function isOpenEndedGraduationLabel(text) {
+    var blob = normalizeText(text);
+    return (
+      /\b(or|and)\s+later\b/.test(blob) ||
+      /\bor\s+after\b/.test(blob) ||
+      /\bafter\b/.test(blob) ||
+      /\bbefore\b/.test(blob) ||
+      /\bearlier\s+than\b/.test(blob) ||
+      /\b(or|and)\s+earlier\b/.test(blob)
+    );
+  }
+
+  function parseClosedGraduationRange(label) {
+    var text = expandGraduationMonths(label);
+    if (isOpenEndedGraduationLabel(text)) return null;
+    var bits = text.split(/\s*(?:[-–—]|through|thru|until|\bto\b)\s*/);
+    if (bits.length !== 2) return null;
+    var start = parseGraduationYearMonth(bits[0]);
+    var end = parseGraduationYearMonth(bits[1]);
+    if (!start || !end || !start.year || !end.year) return null;
+    var startVal = graduationDateValue(start.year, start.month || 1);
+    var endVal = graduationDateValue(end.year, end.month || 12);
+    if (startVal == null || endVal == null) return null;
+    return { start: startVal, end: endVal };
+  }
+
+  function openEndedGraduationMatches(label, savedVal) {
+    if (savedVal == null) return false;
+    var text = expandGraduationMonths(label);
+    var bound;
+    var boundText;
+    if (/\b(or|and)\s+later\b/.test(text) || /\bor\s+after\b/.test(text)) {
+      boundText = text.replace(/\b(or|and)\s+later\b[\s\S]*$/, "").replace(/\bor\s+after\b[\s\S]*$/, "");
+      bound = parseGraduationYearMonth(boundText);
+      if (!bound || !bound.month || bound.value == null) return false;
+      return savedVal >= bound.value;
+    }
+    if (/\bearlier\s+than\b/.test(text)) {
+      boundText = text.replace(/^[\s\S]*\bearlier\s+than\b/, "");
+      bound = parseGraduationYearMonth(boundText);
+      if (!bound || !bound.month || bound.value == null) return false;
+      return savedVal < bound.value;
+    }
+    if (/\bbefore\b/.test(text)) {
+      boundText = text.replace(/^[\s\S]*\bbefore\b/, "");
+      bound = parseGraduationYearMonth(boundText);
+      if (!bound || !bound.month || bound.value == null) return false;
+      return savedVal < bound.value;
+    }
+    if (/\bafter\b/.test(text)) {
+      boundText = text.replace(/^[\s\S]*\bafter\b/, "");
+      bound = parseGraduationYearMonth(boundText);
+      if (!bound || !bound.month || bound.value == null) return false;
+      return savedVal > bound.value;
+    }
+    if (/\b(or|and)\s+earlier\b/.test(text)) {
+      boundText = text.replace(/\b(or|and)\s+earlier\b[\s\S]*$/, "");
+      bound = parseGraduationYearMonth(boundText);
+      if (!bound || !bound.month || bound.value == null) return false;
+      return savedVal <= bound.value;
+    }
+    return false;
+  }
+
+  function classifyGraduationOptionMatch(label, saved) {
+    var text = trimText(label);
+    if (!text || !saved || !saved.year) return "";
+    var savedVal = saved.month ? saved.value : null;
+
+    if (isOpenEndedGraduationLabel(text)) {
+      if (!saved.month) return "";
+      return openEndedGraduationMatches(text, savedVal) ? "open" : "";
+    }
+
+    var range = parseClosedGraduationRange(text);
+    if (range) {
+      if (!saved.month) return "";
+      return savedVal >= range.start && savedVal <= range.end ? "closed" : "";
+    }
+
+    var opt = parseGraduationYearMonth(text);
+    if (!opt || opt.year !== saved.year) return "";
+
+    if (optionHasExplicitMonth(text) && saved.month && opt.month === saved.month) {
+      return "exact";
+    }
+    if (optionHasExplicitSeason(text) && saved.season && opt.season && saved.season === opt.season) {
+      return "season";
+    }
+    if (!optionHasExplicitMonth(text) && !optionHasExplicitSeason(text) && !opt.month && !opt.season) {
+      return "year";
+    }
+    return "";
+  }
+
   function pickAnticipatedGraduationOption(options, savedGraduation) {
-    var parts = parseGraduationParts(savedGraduation);
-    if (!parts.year && !parts.month && !parts.season) return null;
-    var exact = [];
-    var compatible = [];
+    var saved = parseGraduationYearMonth(savedGraduation);
+    if (!saved || !saved.year) return null;
+
+    var buckets = {
+      exact: [],
+      closed: [],
+      season: [],
+      year: [],
+      open: []
+    };
     (options || []).forEach(function (opt) {
-      var optParts = parseGraduationParts(opt.label);
-      var optNorm = normalizeOptionText(opt.label);
-      if (!optNorm) return;
-      if (parts.year && optParts.year && parts.year !== optParts.year) return;
-
-      var monthMatch = parts.month && optParts.month && parts.month === optParts.month;
-      var seasonMatch =
-        parts.season &&
-        optParts.season &&
-        parts.season === optParts.season;
-      var yearOnly =
-        parts.year &&
-        optParts.year === parts.year &&
-        !optParts.month &&
-        !optParts.season &&
-        !parts.month &&
-        !parts.season;
-
-      if (monthMatch && parts.year && optParts.year === parts.year) {
-        exact.push(opt);
-        return;
-      }
-      if (seasonMatch && parts.year && optParts.year === parts.year) {
-        exact.push(opt);
-        return;
-      }
-      if (yearOnly || (parts.year && optNorm === parts.year)) {
-        compatible.push(opt);
-        return;
-      }
-      // Option is year-only while saved has month/season — compatible.
-      if (parts.year && optParts.year === parts.year && !optParts.month && !optParts.season) {
-        compatible.push(opt);
-      }
+      var kind = classifyGraduationOptionMatch(opt && opt.label, saved);
+      if (kind && buckets[kind]) buckets[kind].push(opt);
     });
-    if (exact.length === 1) return exact[0];
-    if (exact.length > 1) return exact[0];
-    if (compatible.length === 1) return compatible[0];
+
+    var order = ["exact", "closed", "season", "year", "open"];
+    var i;
+    for (i = 0; i < order.length; i += 1) {
+      var list = buckets[order[i]];
+      if (list.length === 1) return list[0];
+      if (list.length > 1) return null;
+    }
     return null;
+  }
+
+  async function fillStandaloneGraduationDropdown(root, inventory, profile, handledElements) {
+    var results = [];
+    var education = resolvePrimaryEducation(inventory, profile);
+    var saved = educationAnswerFor("education_anticipated_graduation", education, inventory);
+    if (!trimText(saved)) return results;
+
+    var comboboxes = collectCustomComboboxControls(root);
+    var i;
+    for (i = 0; i < comboboxes.length; i += 1) {
+      var control = comboboxes[i];
+      if (wasHandled(handledElements, control)) continue;
+      var label = labelForCombobox(control);
+      var blob = normalizeText(label);
+      if (!/\bgraduation\s+date\b/.test(blob) && !/\banticipated\s+graduation\b/.test(blob)) {
+        continue;
+      }
+      handledElements.push(control);
+      var result = await selectEducationDropdownOption(
+        control,
+        function (opts) {
+          return pickAnticipatedGraduationOption(opts, saved);
+        },
+        saved
+      );
+      results.push({
+        category: "education_anticipated_graduation",
+        label: label || "Graduation date",
+        status: result.status,
+        reason: result.reason || "",
+        ok: Boolean(result.ok),
+        value: result.ok ? result.value || saved : ""
+      });
+    }
+    return results;
   }
 
   function educationAnswerFor(kind, education, inventory) {
@@ -3430,6 +3607,16 @@
       handledElements
     );
     if (locationRow) results.push(locationRow);
+
+    var graduationRows = await fillStandaloneGraduationDropdown(
+      root,
+      inventory,
+      options.profile,
+      handledElements
+    );
+    for (var g = 0; g < graduationRows.length; g += 1) {
+      results.push(graduationRows[g]);
+    }
 
     var comboboxes = collectCustomComboboxControls(root);
     for (var c = 0; c < comboboxes.length; c += 1) {
