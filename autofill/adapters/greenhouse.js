@@ -2881,6 +2881,125 @@
     return results;
   }
 
+  function isStandaloneGpaTextControl(el) {
+    if (!el) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    if (tag !== "input" && tag !== "textarea") return false;
+    var type = normalizeText(el.type || "");
+    if (
+      type === "hidden" ||
+      type === "file" ||
+      type === "checkbox" ||
+      type === "radio" ||
+      type === "button" ||
+      type === "submit" ||
+      type === "image" ||
+      type === "reset"
+    ) {
+      return false;
+    }
+    var role = normalizeText(el.getAttribute && el.getAttribute("role"));
+    if (role === "combobox" || role === "listbox") return false;
+    var cls = String((el.className && el.className.baseVal) || el.className || "").toLowerCase();
+    if (cls.indexOf("select__") !== -1 || cls.indexOf("select-") !== -1) return false;
+    if (el.closest) {
+      if (el.closest("[role='combobox']")) return false;
+      if (el.closest("[class*='select__control']") || el.closest("[class*='Select-control']")) return false;
+      if (el.closest("[class*='select__container']") || el.closest("[class*='select-container']")) return false;
+    }
+    return true;
+  }
+
+  function fillStandaloneGpaTextFields(root, inventory, profile, handledElements) {
+    var results = [];
+    var education = resolvePrimaryEducation(inventory, profile);
+    var saved = education && education.gpa ? String(education.gpa).trim() : "";
+    var parsedGpa = parseSavedGpa(saved);
+    if (parsedGpa == null) return results;
+    var written = String(parsedGpa);
+    var doc = root || document;
+    var nodes = [];
+    try {
+      Array.prototype.forEach.call(doc.querySelectorAll("input, textarea"), function (el) {
+        nodes.push(el);
+      });
+    } catch (_) {}
+    var i;
+    for (i = 0; i < nodes.length; i += 1) {
+      var el = nodes[i];
+      if (wasHandled(handledElements, el)) continue;
+      if (!isStandaloneGpaTextControl(el)) continue;
+      var meta = fieldMeta(el);
+      var own = normalizeText([meta.label, meta.ariaLabel].join(" "));
+      var detected = classifyField(el);
+      if (
+        !/\bgpa\b/.test(own) &&
+        own.indexOf("grade point average") === -1 &&
+        !(detected && detected.category === "education_gpa")
+      ) {
+        continue;
+      }
+      markHandled(handledElements, el);
+      var label = meta.label || meta.ariaLabel || "GPA";
+      var current = readValue(el);
+      if (isFilledValue(current)) {
+        var currentParsed = parseSavedGpa(current);
+        if (currentParsed != null && currentParsed === parsedGpa) {
+          results.push({
+            category: "education_gpa",
+            label: label,
+            status: "filled",
+            reason: "",
+            ok: true,
+            value: current
+          });
+        } else {
+          results.push({
+            category: "education_gpa",
+            label: label,
+            status: "skipped",
+            reason: "Field is already completed.",
+            ok: false,
+            value: ""
+          });
+        }
+        continue;
+      }
+      if (!setNativeValue(el, written)) {
+        results.push({
+          category: "education_gpa",
+          label: label,
+          status: "failed",
+          reason: "Could not set field value.",
+          ok: false,
+          value: ""
+        });
+        continue;
+      }
+      var after = parseSavedGpa(readValue(el));
+      if (after == null || after !== parsedGpa) {
+        results.push({
+          category: "education_gpa",
+          label: label,
+          status: "failed",
+          reason: "Verification failed.",
+          ok: false,
+          value: ""
+        });
+        continue;
+      }
+      results.push({
+        category: "education_gpa",
+        label: label,
+        status: "filled",
+        reason: "",
+        ok: true,
+        value: written
+      });
+    }
+    return results;
+  }
+
   function educationAnswerFor(kind, education, inventory) {
     if (!education && inventory) {
       if (kind === "education_school") return trimText(inventory.education_school || "");
@@ -4072,6 +4191,16 @@
     );
     for (var gp = 0; gp < gpaRows.length; gp += 1) {
       results.push(gpaRows[gp]);
+    }
+
+    var gpaTextRows = fillStandaloneGpaTextFields(
+      root,
+      inventory,
+      options.profile,
+      handledElements
+    );
+    for (var gpt = 0; gpt < gpaTextRows.length; gpt += 1) {
+      results.push(gpaTextRows[gpt]);
     }
 
     var comboboxes = collectCustomComboboxControls(root);
