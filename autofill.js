@@ -35,6 +35,8 @@
     "race_ethnicity",
     "education_gpa",
     "education_anticipated_graduation",
+    "education_start_month",
+    "education_end_month",
     "education",
     "experience",
     "skills",
@@ -62,6 +64,8 @@
     url: "URL",
     education_gpa: "GPA",
     education_anticipated_graduation: "Graduation date",
+    education_start_month: "Education start month",
+    education_end_month: "Education end month",
     education: "Education",
     experience: "Experience",
     skills: "Skills",
@@ -328,6 +332,10 @@
       exclude: [
         /\bstart\s+date\s+year\b/,
         /\bend\s+date\s+year\b/,
+        /\bstart\s+date\s+month\b/,
+        /\bend\s+date\s+month\b/,
+        /\beducation\s+start\s+month\b/,
+        /\beducation\s+end\s+month\b/,
         /\beducation\s+start\b/,
         /\beducation\s+end\b/,
         /\bschool\b/,
@@ -636,7 +644,9 @@
     var text = normalizeText(blob);
     if (!text) return false;
     if (/\bstart\s+date\s+year\b/.test(text) || /\bend\s+date\s+year\b/.test(text)) return true;
+    if (/\bstart\s+date\s+month\b/.test(text) || /\bend\s+date\s+month\b/.test(text)) return true;
     if (/\beducation\s+(start|end)\s+year\b/.test(text)) return true;
+    if (/\beducation\s+(start|end)\s+month\b/.test(text)) return true;
     if (/\banticipated\s+graduation\b/.test(text)) return true;
     if (/\bexpected\s+graduation\b/.test(text)) return true;
     if (/\bgraduation\s+date\b/.test(text)) return true;
@@ -704,6 +714,51 @@
       gpa: trimText(row.gpa || ""),
       isCurrent: Boolean(row.isCurrent || row.currentlyEnrolled || row.inProgress)
     };
+  }
+
+  function extractMonthFromEducationDate(value) {
+    var text = trimText(value);
+    if (!text) return "";
+    if (/^(present|current|now|ongoing|in\s*progress|expected|n\/?a)$/i.test(text)) return "";
+    var names = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December"
+    ];
+    function fromNumber(raw) {
+      var num = parseInt(raw, 10);
+      if (!num || num < 1 || num > 12) return "";
+      return names[num - 1];
+    }
+    var parsed = parseStoredDate(text);
+    if (parsed && parsed.m) {
+      var fromParsed = fromNumber(parsed.m);
+      if (fromParsed) return fromParsed;
+    }
+    var yearMonth = text.match(/^(\d{4})-(\d{1,2})$/);
+    if (yearMonth) return fromNumber(yearMonth[2]);
+    var monthYear = text.match(/^(\d{1,2})\/(\d{4})$/);
+    if (monthYear) return fromNumber(monthYear[1]);
+    var lower = normalizeText(text);
+    var abbrs = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    var i;
+    for (i = 0; i < names.length; i += 1) {
+      if (new RegExp("\\b" + names[i].toLowerCase() + "\\b").test(lower)) return names[i];
+    }
+    if (/\bsept\b/.test(lower)) return "September";
+    for (i = 0; i < abbrs.length; i += 1) {
+      if (new RegExp("\\b" + abbrs[i] + "\\b").test(lower)) return names[i];
+    }
+    return "";
   }
 
   function extractYearFromEducationDate(value) {
@@ -778,6 +833,8 @@
         education_discipline: "",
         education_start_year: "",
         education_end_year: "",
+        education_start_month: "",
+        education_end_month: "",
         education_anticipated_graduation: "",
         education_gpa: ""
       };
@@ -789,6 +846,8 @@
       education_discipline: primary.field || "",
       education_start_year: extractYearFromEducationDate(primary.startDate),
       education_end_year: extractYearFromEducationDate(primary.endDate),
+      education_start_month: extractMonthFromEducationDate(primary.startDate),
+      education_end_month: extractMonthFromEducationDate(primary.endDate),
       education_anticipated_graduation: primary.endDate || "",
       education_gpa: primary.gpa || ""
     };
@@ -829,6 +888,12 @@
     }
 
     var ownLabel = normalizeText([label, ariaLabel].join(" "));
+    if (/\bstart\s+date\s+month\b/.test(ownLabel) || /\beducation\s+start\s+month\b/.test(ownLabel)) {
+      return validateDetection({ category: "education_start_month", confidence: 0.98 }, inputType);
+    }
+    if (/\bend\s+date\s+month\b/.test(ownLabel) || /\beducation\s+end\s+month\b/.test(ownLabel)) {
+      return validateDetection({ category: "education_end_month", confidence: 0.98 }, inputType);
+    }
     if (
       /\bgraduation\s+date\b/.test(ownLabel) ||
       /\banticipated\s+graduation\b/.test(ownLabel) ||
@@ -1524,6 +1589,8 @@
       education_discipline: educationAnswers.education_discipline,
       education_start_year: educationAnswers.education_start_year,
       education_end_year: educationAnswers.education_end_year,
+      education_start_month: educationAnswers.education_start_month,
+      education_end_month: educationAnswers.education_end_month,
       education_anticipated_graduation: educationAnswers.education_anticipated_graduation,
       education_gpa: educationAnswers.education_gpa,
       experience: Array.isArray(data.experience) && data.experience.length ? "Saved in profile" : "",
@@ -2491,7 +2558,9 @@
         looksLikeEducationDateField(labelCue) ||
         category === "education" ||
         category === "education_gpa" ||
-        category === "education_anticipated_graduation"
+        category === "education_anticipated_graduation" ||
+        category === "education_start_month" ||
+        category === "education_end_month"
       ) {
         return;
       }
@@ -2668,6 +2737,7 @@
     looksLikeLocationCityField: looksLikeLocationCityField,
     normalizeEducationRecord: normalizeEducationRecord,
     extractYearFromEducationDate: extractYearFromEducationDate,
+    extractMonthFromEducationDate: extractMonthFromEducationDate,
     listValidEducationRecords: listValidEducationRecords,
     selectPrimaryEducation: selectPrimaryEducation,
     buildPrimaryEducationAnswers: buildPrimaryEducationAnswers,

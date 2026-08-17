@@ -74,7 +74,10 @@
     return (
       /\bstart\s+date\s+year\b/.test(text) ||
       /\bend\s+date\s+year\b/.test(text) ||
-      /\beducation\s+(start|end)\s+year\b/.test(text)
+      /\bstart\s+date\s+month\b/.test(text) ||
+      /\bend\s+date\s+month\b/.test(text) ||
+      /\beducation\s+(start|end)\s+year\b/.test(text) ||
+      /\beducation\s+(start|end)\s+month\b/.test(text)
     );
   }
 
@@ -1569,7 +1572,7 @@
     var cats = supportedCategories();
     var labelCue = normalizeText([label, meta.name, meta.id, meta.ariaLabel, meta.placeholder].join(" "));
 
-    if (looksLikeEducationDateField(labelCue) || category === "education") {
+    if (looksLikeEducationDateField(labelCue) || category === "education" || category === "education_start_month" || category === "education_end_month") {
       markHandled(handledElements, el);
       return null;
     }
@@ -1889,6 +1892,14 @@
     return match ? match[1] : "";
   }
 
+  function educationMonthFrom(value) {
+    var engine = af();
+    if (engine && typeof engine.extractMonthFromEducationDate === "function") {
+      return engine.extractMonthFromEducationDate(value);
+    }
+    return "";
+  }
+
   function isExcludedEducationQuestion(blob) {
     var text = normalizeText(blob);
     if (!text) return false;
@@ -1903,6 +1914,12 @@
     var text = normalizeText(labelBlob);
     if (!text || isExcludedEducationQuestion(text)) return "";
     if (/\banticipated\s+graduation\b/.test(text)) return "education_anticipated_graduation";
+    if (/\bstart\s+date\s+month\b/.test(text) || /\beducation\s+start\s+month\b/.test(text)) {
+      return "education_start_month";
+    }
+    if (/\bend\s+date\s+month\b/.test(text) || /\beducation\s+end\s+month\b/.test(text)) {
+      return "education_end_month";
+    }
     if (/\bstart\s+date\s+year\b/.test(text) || /\beducation\s+start\s+year\b/.test(text)) {
       return "education_start_year";
     }
@@ -2191,6 +2208,52 @@
       if (got === want) matches.push(opt);
     });
     return matches.length === 1 || matches.length > 1 ? matches[0] : null;
+  }
+
+  function monthIndexFromLabel(value) {
+    var raw = trimText(value);
+    if (!raw) return -1;
+    var norm = normalizeText(raw).replace(/[.]/g, "").replace(/\s+/g, " ").trim();
+    var names = [
+      "january",
+      "february",
+      "march",
+      "april",
+      "may",
+      "june",
+      "july",
+      "august",
+      "september",
+      "october",
+      "november",
+      "december"
+    ];
+    var abbrs = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    var i;
+    for (i = 0; i < names.length; i += 1) {
+      if (norm === names[i]) return i;
+    }
+    if (norm === "sept") return 8;
+    for (i = 0; i < abbrs.length; i += 1) {
+      if (norm === abbrs[i]) return i;
+    }
+    if (/^\d{1,2}$/.test(norm)) {
+      var num = parseInt(norm, 10);
+      if (num >= 1 && num <= 12) return num - 1;
+    }
+    return -1;
+  }
+
+  function pickMonthOption(options, savedMonth) {
+    var want = monthIndexFromLabel(savedMonth);
+    if (want < 0) return null;
+    var matches = [];
+    (options || []).forEach(function (opt) {
+      var got = monthIndexFromLabel(opt && opt.label);
+      if (got === want) matches.push(opt);
+    });
+    if (matches.length === 1) return matches[0];
+    return null;
   }
 
   function findSearchInputNear(control, listbox) {
@@ -2825,6 +2888,8 @@
       if (kind === "education_discipline") return trimText(inventory.education_discipline || "");
       if (kind === "education_start_year") return trimText(inventory.education_start_year || "");
       if (kind === "education_end_year") return trimText(inventory.education_end_year || "");
+      if (kind === "education_start_month") return trimText(inventory.education_start_month || "");
+      if (kind === "education_end_month") return trimText(inventory.education_end_month || "");
       if (kind === "education_anticipated_graduation") {
         return trimText(inventory.education_anticipated_graduation || "");
       }
@@ -2835,6 +2900,8 @@
     if (kind === "education_discipline") return trimText(row.field || "");
     if (kind === "education_start_year") return educationYearFrom(row.startDate);
     if (kind === "education_end_year") return educationYearFrom(row.endDate);
+    if (kind === "education_start_month") return educationMonthFrom(row.startDate);
+    if (kind === "education_end_month") return educationMonthFrom(row.endDate);
     if (kind === "education_anticipated_graduation") return trimText(row.endDate || "");
     return "";
   }
@@ -2863,9 +2930,13 @@
       if (isExcludedEducationQuestion(cue)) return;
       var kind = classifyEducationField(cue);
       if (!kind && looksLikeEducationDateField(cue)) {
-        if (/\bstart\b/.test(normalizeText(cue))) kind = "education_start_year";
-        else if (/\bend\b/.test(normalizeText(cue))) kind = "education_end_year";
-        else if (/\banticipated\b/.test(normalizeText(cue))) kind = "education_anticipated_graduation";
+        var cueText = normalizeText(cue);
+        if (/\bmonth\b/.test(cueText)) {
+          if (/\bstart\b/.test(cueText)) kind = "education_start_month";
+          else if (/\bend\b/.test(cueText)) kind = "education_end_month";
+        } else if (/\bstart\b/.test(cueText)) kind = "education_start_year";
+        else if (/\bend\b/.test(cueText)) kind = "education_end_year";
+        else if (/\banticipated\b/.test(cueText)) kind = "education_anticipated_graduation";
       }
       if (!kind) return;
       // Prefer combobox already captured for the same kind near this field.
@@ -2875,7 +2946,9 @@
         (kind === "education_school" ||
           kind === "education_degree" ||
           kind === "education_discipline" ||
-          kind === "education_anticipated_graduation")
+          kind === "education_anticipated_graduation" ||
+          kind === "education_start_month" ||
+          kind === "education_end_month")
       ) {
         remember(kind, nearbyControl, label || kind);
         if (seen.indexOf(el) === -1) seen.push(el);
@@ -3304,6 +3377,12 @@
       ) {
         return { ok: true, status: "filled", reason: "", value: current };
       }
+      if (
+        (kind === "education_start_month" || kind === "education_end_month") &&
+        pickMonthOption([{ label: current }], answer)
+      ) {
+        return { ok: true, status: "filled", reason: "", value: current };
+      }
     }
 
     var tag = (node.tagName || "").toLowerCase();
@@ -3320,6 +3399,17 @@
           },
           answer
         );
+      }
+    } else if (kind === "education_start_month" || kind === "education_end_month") {
+      result = await selectEducationDropdownOption(
+        control,
+        function (options) {
+          return pickMonthOption(options, answer);
+        },
+        answer
+      );
+      if (result && result.status === "failed" && /no compatible/i.test(result.reason || "")) {
+        result = { ok: false, status: "skipped", reason: "No compatible education option.", value: "" };
       }
     } else if (kind === "education_school") {
       result = await fillSchoolTypeahead(control, answer);
@@ -3432,7 +3522,9 @@
       "education_school",
       "education_degree",
       "education_discipline",
+      "education_start_month",
       "education_start_year",
+      "education_end_month",
       "education_end_year"
     ];
     var filledFields = [];
@@ -3550,7 +3642,9 @@
           "education_school",
           "education_degree",
           "education_discipline",
+          "education_start_month",
           "education_start_year",
+          "education_end_month",
           "education_end_year"
         ],
         failedFields: [],
@@ -4122,6 +4216,8 @@
       if (
         looksLikeEducationDateField(labelCue) ||
         (detected && detected.category === "education") ||
+        (detected && detected.category === "education_start_month") ||
+        (detected && detected.category === "education_end_month") ||
         classifyEducationField(labelCue)
       ) {
         markHandled(handledElements, el);
