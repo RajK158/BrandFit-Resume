@@ -33,6 +33,7 @@
     "transgender",
     "race_ethnicity",
     "education_gpa",
+    "education_anticipated_graduation",
     "education",
     "experience",
     "skills",
@@ -59,6 +60,7 @@
     portfolio: "Portfolio",
     url: "URL",
     education_gpa: "GPA",
+    education_anticipated_graduation: "Graduation date",
     education: "Education",
     experience: "Experience",
     skills: "Skills",
@@ -634,6 +636,8 @@
     if (/\bstart\s+date\s+year\b/.test(text) || /\bend\s+date\s+year\b/.test(text)) return true;
     if (/\beducation\s+(start|end)\s+year\b/.test(text)) return true;
     if (/\banticipated\s+graduation\b/.test(text)) return true;
+    if (/\bexpected\s+graduation\b/.test(text)) return true;
+    if (/\bgraduation\s+date\b/.test(text)) return true;
     if (
       (/\bstart\s+year\b/.test(text) || /\bend\s+year\b/.test(text)) &&
       /\b(education|school|degree|university|college)\b/.test(text)
@@ -796,11 +800,25 @@
     if (inputType === "tel") {
       return validateDetection({ category: "phone", confidence: 0.97 }, inputType);
     }
+
+    var ownLabel = normalizeText([label, ariaLabel].join(" "));
+    if (
+      /\bgraduation\s+date\b/.test(ownLabel) ||
+      /\banticipated\s+graduation\b/.test(ownLabel) ||
+      /\bexpected\s+graduation\b/.test(ownLabel)
+    ) {
+      return validateDetection(
+        { category: "education_anticipated_graduation", confidence: 0.98 },
+        inputType
+      );
+    }
+    if (looksLikeEducationDateField(ownLabel)) {
+      return validateDetection({ category: "education", confidence: 0.98 }, inputType);
+    }
     if (looksLikeEducationDateField(questionBlob) || looksLikeEducationDateField(fullBlob)) {
       return validateDetection({ category: "education", confidence: 0.93 }, inputType);
     }
 
-    var ownLabel = normalizeText([label, ariaLabel].join(" "));
     if (/\bgpa\b/.test(ownLabel) || /\bgrade\s+point\s+average\b/.test(ownLabel)) {
       return validateDetection({ category: "education_gpa", confidence: 0.98 }, inputType);
     }
@@ -2431,7 +2449,12 @@
       var labelCue = normalizeText(label + " " + (el.placeholder || "") + " " + (el.name || "") + " " + (el.id || ""));
 
       // Education fields are owned by ATS adapters (e.g. Greenhouse). Do not mark handled.
-      if (looksLikeEducationDateField(labelCue) || category === "education" || category === "education_gpa") {
+      if (
+        looksLikeEducationDateField(labelCue) ||
+        category === "education" ||
+        category === "education_gpa" ||
+        category === "education_anticipated_graduation"
+      ) {
         return;
       }
 
