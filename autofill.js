@@ -32,6 +32,7 @@
     "hispanic_latino",
     "transgender",
     "race_ethnicity",
+    "education_gpa",
     "education",
     "experience",
     "skills",
@@ -57,6 +58,7 @@
     github: "GitHub",
     portfolio: "Portfolio",
     url: "URL",
+    education_gpa: "GPA",
     education: "Education",
     experience: "Experience",
     skills: "Skills",
@@ -745,7 +747,8 @@
         education_discipline: "",
         education_start_year: "",
         education_end_year: "",
-        education_anticipated_graduation: ""
+        education_anticipated_graduation: "",
+        education_gpa: ""
       };
     }
     return {
@@ -755,7 +758,8 @@
       education_discipline: primary.field || "",
       education_start_year: extractYearFromEducationDate(primary.startDate),
       education_end_year: extractYearFromEducationDate(primary.endDate),
-      education_anticipated_graduation: primary.endDate || ""
+      education_anticipated_graduation: primary.endDate || "",
+      education_gpa: primary.gpa || ""
     };
   }
 
@@ -794,6 +798,11 @@
     }
     if (looksLikeEducationDateField(questionBlob) || looksLikeEducationDateField(fullBlob)) {
       return validateDetection({ category: "education", confidence: 0.93 }, inputType);
+    }
+
+    var ownLabel = normalizeText([label, ariaLabel].join(" "));
+    if (/\bgpa\b/.test(ownLabel) || /\bgrade\s+point\s+average\b/.test(ownLabel)) {
+      return validateDetection({ category: "education_gpa", confidence: 0.98 }, inputType);
     }
 
     if (inputType === "date") {
@@ -1462,6 +1471,7 @@
       education_start_year: educationAnswers.education_start_year,
       education_end_year: educationAnswers.education_end_year,
       education_anticipated_graduation: educationAnswers.education_anticipated_graduation,
+      education_gpa: educationAnswers.education_gpa,
       experience: Array.isArray(data.experience) && data.experience.length ? "Saved in profile" : "",
       skills: Array.isArray(data.skills) && data.skills.length ? data.skills.join(", ") : "",
       work_authorization: trimText(work.legallyAuthorizedToWork || ""),
@@ -2421,7 +2431,7 @@
       var labelCue = normalizeText(label + " " + (el.placeholder || "") + " " + (el.name || "") + " " + (el.id || ""));
 
       // Education fields are owned by ATS adapters (e.g. Greenhouse). Do not mark handled.
-      if (looksLikeEducationDateField(labelCue) || category === "education") {
+      if (looksLikeEducationDateField(labelCue) || category === "education" || category === "education_gpa") {
         return;
       }
 
