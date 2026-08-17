@@ -2027,17 +2027,91 @@
     return null;
   }
 
+  function isComputerRelatedDiscipline(value) {
+    var text = normalizeOptionText(value) || normalizeDegreeText(value);
+    if (!text) return false;
+    if (
+      /\b(electrical|mechanical|civil|chemical|aerospace|industrial|biomedical)\b/.test(text) &&
+      text !== "computer engineering"
+    ) {
+      return false;
+    }
+    if (/\b(biology|chemistry|physics|mathematics|business|data science)\b/.test(text)) {
+      return false;
+    }
+    if (
+      text === "computer science" ||
+      text === "computer sciences" ||
+      text === "computer engineering" ||
+      text === "software engineering" ||
+      text === "information technology" ||
+      text === "information systems" ||
+      text === "computer and information science" ||
+      text === "computer and information sciences" ||
+      text === "computer science and information systems"
+    ) {
+      return true;
+    }
+    if (/\bcomputer sciences?\b/.test(text) && /\binformation\s+(science|sciences|systems|technology)\b/.test(text)) {
+      return true;
+    }
+    if (/\bcomputer sciences?\b/.test(text) && !/\b(biology|business|chemistry|physics|electrical|mechanical)\b/.test(text)) {
+      return true;
+    }
+    if (text === "software engineering" || /\bsoftware engineering\b/.test(text)) return true;
+    if (text === "information technology" || text === "information systems") return true;
+    return false;
+  }
+
+  function isUnsafeDisciplineFallback(optionLabel) {
+    var b = normalizeOptionText(optionLabel);
+    if (!b) return true;
+    return (
+      b === "other" ||
+      b === "engineering" ||
+      b === "electrical engineering" ||
+      b === "mathematics" ||
+      b === "data science" ||
+      b === "business"
+    );
+  }
+
+  function computerDisciplineFallbackLabels() {
+    return [
+      "computer engineering",
+      "computer science",
+      "computer and information sciences",
+      "computer and information science",
+      "computer science and information systems",
+      "software engineering",
+      "information technology",
+      "information systems"
+    ];
+  }
+
+  function isSafeComputerDisciplineFallback(optionLabel) {
+    var b = normalizeOptionText(optionLabel);
+    if (!b || b === "computer" || isUnsafeDisciplineFallback(optionLabel)) return false;
+    var list = computerDisciplineFallbackLabels();
+    var i;
+    for (i = 0; i < list.length; i += 1) {
+      if (b === list[i]) return true;
+    }
+    return false;
+  }
+
   function disciplineOptionsEquivalent(saved, optionLabel) {
     var a = normalizeOptionText(saved);
     var b = normalizeOptionText(optionLabel);
     if (!a || !b) return false;
     if (a === b) return true;
-    if (b === "other" || a === "other") return false;
+    if (b === "computer" || a === "computer") return false;
+    if (isUnsafeDisciplineFallback(optionLabel) || isUnsafeDisciplineFallback(saved)) return false;
     var cs = "computer science";
     var cis = "computer and information sciences";
     var cis2 = "computer and information science";
+    var csis = "computer science and information systems";
     if ((a === cs || a.indexOf(cs) !== -1) && (b === cis || b === cis2 || b.indexOf(cis) !== -1 || b.indexOf(cs) !== -1)) {
-      // Allow only the known safe CS variants, not unrelated disciplines.
       if (b.indexOf("computer") === -1) return false;
       if (/\b(engineering|biology|business|chemistry|physics|math)\b/.test(b) && b.indexOf("computer") === -1) {
         return false;
@@ -2046,13 +2120,17 @@
         b === cs ||
         b === cis ||
         b === cis2 ||
-        b === "computer science and information systems" ||
-        b.indexOf("computer and information") !== -1 ||
-        b === "computer sciences"
+        b === csis ||
+        b === "computer sciences" ||
+        b === "computer engineering" ||
+        b.indexOf("computer and information") !== -1
       );
     }
     if ((b === cs || b.indexOf(cs) !== -1) && (a === cis || a === cis2 || a.indexOf(cis) !== -1)) {
       return true;
+    }
+    if (isComputerRelatedDiscipline(saved)) {
+      return isSafeComputerDisciplineFallback(optionLabel);
     }
     return false;
   }
@@ -2061,6 +2139,7 @@
     var saved = trimText(savedDiscipline);
     var label = trimText(optionLabel);
     if (!saved || !label) return false;
+    if (normalizeText(label) === "computer") return false;
     if (normalizeOptionText(label) === "other" || normalizeDegreeText(label) === "other") return false;
     // Prefer exact normalized match (Computer Science -> Computer Science).
     if (normalizeDegreeText(saved) === normalizeDegreeText(label)) return true;
@@ -2072,17 +2151,41 @@
     var saved = trimText(savedDiscipline);
     if (!saved) return null;
     var exact = null;
+    var ranked = {};
     var equiv = null;
+    var rankList = computerDisciplineFallbackLabels();
     (options || []).forEach(function (opt) {
       var label = trimText(opt && opt.label);
-      if (!label || normalizeOptionText(label) === "other") return;
-      if (normalizeDegreeText(saved) === normalizeDegreeText(label) || normalizeOptionText(saved) === normalizeOptionText(label)) {
+      if (!label || isUnsafeDisciplineFallback(label)) return;
+      if (
+        normalizeDegreeText(saved) === normalizeDegreeText(label) ||
+        normalizeOptionText(saved) === normalizeOptionText(label)
+      ) {
         if (!exact) exact = opt;
+        return;
+      }
+      if (isComputerRelatedDiscipline(saved)) {
+        var norm = normalizeOptionText(label);
+        var r;
+        for (r = 0; r < rankList.length; r += 1) {
+          if (norm === rankList[r]) {
+            if (!ranked[norm]) ranked[norm] = opt;
+            break;
+          }
+        }
         return;
       }
       if (!equiv && disciplineOptionsEquivalent(saved, label)) equiv = opt;
     });
-    return exact || equiv || null;
+    if (exact) return exact;
+    if (isComputerRelatedDiscipline(saved)) {
+      var i;
+      for (i = 0; i < rankList.length; i += 1) {
+        if (ranked[rankList[i]]) return ranked[rankList[i]];
+      }
+      return null;
+    }
+    return equiv || null;
   }
 
   function normalizeSchoolName(value) {
@@ -2254,6 +2357,109 @@
     });
     if (matches.length === 1) return matches[0];
     return null;
+  }
+
+  function findEducationMonthListbox(control, savedMonth) {
+    if (control) {
+      var owned =
+        trimText(control.getAttribute && control.getAttribute("aria-controls")) ||
+        trimText(control.getAttribute && control.getAttribute("aria-owns")) ||
+        "";
+      if (owned) {
+        var ids = owned.split(/\s+/);
+        var i;
+        for (i = 0; i < ids.length; i += 1) {
+          var byId = document.getElementById(ids[i]);
+          if (isListboxOpen(byId)) return byId;
+          if (byId) {
+            var nested =
+              byId.getAttribute && byId.getAttribute("role") === "listbox"
+                ? byId
+                : byId.querySelector("[role='listbox']");
+            if (isListboxOpen(nested)) return nested;
+          }
+        }
+      }
+      var root = comboboxRoot(control);
+      if (root) {
+        var local = root.querySelector("[role='listbox']");
+        if (isListboxOpen(local)) return local;
+      }
+    }
+    var boxes = document.querySelectorAll("[role='listbox']");
+    var b;
+    for (b = 0; b < boxes.length; b += 1) {
+      if (!isListboxOpen(boxes[b])) continue;
+      var options = collectListboxOptions(boxes[b]);
+      var seen = {};
+      var monthCount = 0;
+      var o;
+      for (o = 0; o < options.length; o += 1) {
+        var idx = monthIndexFromLabel(options[o] && options[o].label);
+        if (idx < 0 || seen[idx]) continue;
+        seen[idx] = true;
+        monthCount += 1;
+      }
+      if (monthCount >= 6) return boxes[b];
+    }
+    return null;
+  }
+
+  async function fillEducationMonthDropdown(control, savedMonth) {
+    var saved = trimText(savedMonth);
+    var want = monthIndexFromLabel(saved);
+    if (!saved || want < 0) {
+      return { ok: false, status: "skipped", reason: "No saved answer." };
+    }
+    var current = readComboboxSelectedText(control);
+    if (current && monthIndexFromLabel(current) === want) {
+      return { ok: true, status: "filled", reason: "", value: current };
+    }
+
+    clickElement(control);
+    await sleep(120);
+
+    var listbox = null;
+    for (var attempt = 0; attempt < 12; attempt += 1) {
+      listbox = findEducationMonthListbox(control, savedMonth);
+      if (listbox && collectListboxOptions(listbox).length) break;
+      await sleep(60);
+    }
+    if (!listbox) {
+      return { ok: false, status: "failed", reason: "Dropdown listbox did not open." };
+    }
+
+    var options = collectListboxOptions(listbox);
+    var matched = null;
+    var i;
+    for (i = 0; i < options.length; i += 1) {
+      if (monthIndexFromLabel(options[i] && options[i].label) === want) {
+        matched = options[i];
+        break;
+      }
+    }
+    if (!matched) {
+      try {
+        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      } catch (_) {}
+      return { ok: false, status: "skipped", reason: "No compatible education option." };
+    }
+
+    if (matched.el && typeof matched.el.click === "function") {
+      matched.el.click();
+    }
+    await sleep(500);
+
+    var selected = "";
+    for (var v = 0; v < 10; v += 1) {
+      selected = readComboboxSelectedText(control);
+      if (selected && monthIndexFromLabel(selected) === want) break;
+      await sleep(60);
+    }
+    if (!selected || monthIndexFromLabel(selected) !== want) {
+      return { ok: false, status: "failed", reason: "Verification failed." };
+    }
+    return { ok: true, status: "filled", reason: "", value: selected };
   }
 
   function findSearchInputNear(control, listbox) {
@@ -2431,6 +2637,119 @@
     }
     if (!selected || !(schoolsMatchNormalized(selected, saved) || pickSchoolOption([{ label: selected }], saved))) {
       return { ok: false, status: "failed", reason: "Verification failed; selected school did not persist." };
+    }
+    return { ok: true, status: "filled", reason: "", value: selected };
+  }
+
+  async function fillDisciplineTypeahead(control, savedDiscipline) {
+    var saved = trimText(savedDiscipline);
+    if (!saved) {
+      return { ok: false, status: "skipped", reason: "No saved answer." };
+    }
+    if (isComboboxAlreadyFilled(control)) {
+      var current = readComboboxSelectedText(control);
+      if (current && normalizeText(current) !== "computer" && disciplineOptionMatches(saved, current)) {
+        return { ok: true, status: "filled", reason: "", value: current };
+      }
+      if (current && normalizeText(current) !== "computer") {
+        return { ok: false, status: "skipped", reason: "Field is already completed." };
+      }
+    }
+
+    clickElement(control);
+    await sleep(120);
+
+    var listbox = null;
+    var searchInput = null;
+    for (var attempt = 0; attempt < 10; attempt += 1) {
+      listbox = findVisibleListbox();
+      if (listbox) break;
+      await sleep(60);
+    }
+    searchInput = findSearchInputNear(control, listbox) || searchInput;
+
+    var options = listbox ? collectListboxOptions(listbox) : [];
+    var matched = pickDisciplineOption(options, saved);
+
+    if (!matched) {
+      searchInput = findSearchInputNear(control, listbox) || searchInput;
+      if (searchInput) {
+        typeIntoSearchInput(searchInput, saved);
+        await sleep(350);
+        listbox = null;
+        for (var wait = 0; wait < 12; wait += 1) {
+          listbox = findVisibleListbox();
+          if (listbox && collectListboxOptions(listbox).length) break;
+          await sleep(80);
+        }
+        if (listbox) {
+          options = collectListboxOptions(listbox);
+          matched = pickDisciplineOption(options, saved);
+        }
+      }
+    }
+
+    if (!matched && isComputerRelatedDiscipline(saved)) {
+      searchInput = findSearchInputNear(control, listbox) || searchInput;
+      if (searchInput) {
+        typeIntoSearchInput(searchInput, "computer");
+        await sleep(350);
+        listbox = null;
+        for (var wait2 = 0; wait2 < 12; wait2 += 1) {
+          listbox = findVisibleListbox();
+          if (listbox && collectListboxOptions(listbox).length) break;
+          await sleep(80);
+        }
+        if (listbox) {
+          options = collectListboxOptions(listbox);
+          matched = pickDisciplineOption(options, saved);
+        }
+      }
+    }
+
+    function clearDisciplineSearch() {
+      if (searchInput) {
+        try {
+          setNativeValue(searchInput, "");
+        } catch (_) {}
+      }
+      try {
+        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      } catch (_) {}
+    }
+
+    if (
+      !matched ||
+      !matched.label ||
+      normalizeText(matched.label) === "computer" ||
+      !disciplineOptionMatches(saved, matched.label)
+    ) {
+      clearDisciplineSearch();
+      return { ok: false, status: "skipped", reason: "No compatible education option." };
+    }
+
+    if (matched.el && typeof matched.el.click === "function") {
+      matched.el.click();
+    }
+    await sleep(500);
+
+    var selected = "";
+    for (var v = 0; v < 10; v += 1) {
+      selected = readComboboxSelectedText(control);
+      if (selected && normalizeText(selected) === "computer") {
+        await sleep(60);
+        continue;
+      }
+      if (selected && disciplineOptionMatches(saved, selected)) break;
+      await sleep(60);
+    }
+    if (
+      !selected ||
+      normalizeText(selected) === "computer" ||
+      !disciplineOptionMatches(saved, selected)
+    ) {
+      clearDisciplineSearch();
+      return { ok: false, status: "failed", reason: "Verification failed; selected discipline did not persist." };
     }
     return { ok: true, status: "filled", reason: "", value: selected };
   }
@@ -3520,16 +3839,7 @@
         );
       }
     } else if (kind === "education_start_month" || kind === "education_end_month") {
-      result = await selectEducationDropdownOption(
-        control,
-        function (options) {
-          return pickMonthOption(options, answer);
-        },
-        answer
-      );
-      if (result && result.status === "failed" && /no compatible/i.test(result.reason || "")) {
-        result = { ok: false, status: "skipped", reason: "No compatible education option.", value: "" };
-      }
+      result = await fillEducationMonthDropdown(control, answer);
     } else if (kind === "education_school") {
       result = await fillSchoolTypeahead(control, answer);
     } else if (kind === "education_degree") {
@@ -3555,26 +3865,7 @@
         result = { ok: false, status: "skipped", reason: "No compatible education option.", value: "" };
       }
     } else if (kind === "education_discipline") {
-      result = await selectCustomDropdownOption(
-        control,
-        function (optionLabel) {
-          return disciplineOptionMatches(answer, optionLabel);
-        },
-        answer
-      );
-      if (result && result.ok) {
-        var visibleDiscipline = trimText(result.value || "");
-        if (!disciplineOptionMatches(answer, visibleDiscipline)) {
-          result = {
-            ok: false,
-            status: "failed",
-            reason: "Verification failed; selected discipline did not persist.",
-            value: ""
-          };
-        }
-      } else if (result && /no matching dropdown option/i.test(result.reason || "")) {
-        result = { ok: false, status: "skipped", reason: "No compatible education option.", value: "" };
-      }
+      result = await fillDisciplineTypeahead(control, answer);
     } else if (kind === "education_anticipated_graduation") {
       result = await selectEducationDropdownOption(
         control,
@@ -3654,7 +3945,11 @@
 
     for (var i = 0; i < kinds.length; i += 1) {
       var kind = kinds[i];
-      var item = fields[kind];
+      var liveBlocks = getEducationBlocks(document);
+      var liveIndex = block && typeof block.index === "number" ? block.index : educationIndex;
+      var liveBlock = (liveBlocks && liveBlocks[liveIndex]) || block;
+      var liveFields = (liveBlock && liveBlock.fields) || {};
+      var item = liveFields[kind] || fields[kind];
       if (!item || !item.node) {
         skippedFields.push(kind);
         continue;
@@ -3674,7 +3969,9 @@
       else skippedFields.push(kind);
     }
 
-    var values = readEducationBlockValues(block);
+    var values = readEducationBlockValues(
+      (getEducationBlocks(document)[(block && typeof block.index === "number" ? block.index : educationIndex)] || block)
+    );
     var schoolOk =
       !record.institution ||
       (values.school &&
