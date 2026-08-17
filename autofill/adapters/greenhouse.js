@@ -1249,6 +1249,172 @@
     return { ok: true, status: "filled", reason: "", value: matchedLabel };
   }
 
+  function looksLikeStateSuffix(value) {
+    var text = trimText(value).replace(/\./g, "");
+    return /^[A-Za-z]{2}$/.test(text);
+  }
+
+  function splitPreferredLocations(raw) {
+    var text = String(raw == null ? "" : raw).trim();
+    if (!text) return [];
+    var chunks;
+    if (/[;\n|]/.test(text)) {
+      chunks = text.split(/[;\n|]+/);
+    } else {
+      var parts = text.split(",").map(function (part) {
+        return trimText(part);
+      }).filter(Boolean);
+      chunks = [];
+      var i;
+      for (i = 0; i < parts.length; i += 1) {
+        if (i + 1 < parts.length && looksLikeStateSuffix(parts[i + 1])) {
+          chunks.push(parts[i] + ", " + parts[i + 1]);
+          i += 1;
+        } else {
+          chunks.push(parts[i]);
+        }
+      }
+      return chunks;
+    }
+    return chunks.map(function (part) {
+      return trimText(part);
+    }).filter(Boolean);
+  }
+
+  function parsePreferredLocation(value) {
+    var raw = trimText(value);
+    if (!raw) return null;
+    var match = raw.match(/^(.*),\s*([^,]+)$/);
+    if (match) {
+      return {
+        city: normalizeText(match[1]),
+        region: normalizeText(match[2]),
+        full: normalizeText(raw)
+      };
+    }
+    return {
+      city: normalizeText(raw),
+      region: "",
+      full: normalizeText(raw)
+    };
+  }
+
+  function preferredLocationMatches(saved, optionLabel) {
+    var want = parsePreferredLocation(saved);
+    var got = parsePreferredLocation(optionLabel);
+    if (!want || !got || !want.city || !got.city) return false;
+    if (want.full === got.full) return true;
+    if (want.city !== got.city) return false;
+    if (!want.region || !got.region) return true;
+    return want.region === got.region;
+  }
+
+  function checkboxGroupQuestionLabel(el) {
+    if (!el || !el.closest) return "";
+    var fieldset = el.closest("fieldset");
+    if (fieldset) {
+      var legend = fieldset.querySelector("legend");
+      var legendText = trimText(legend && (legend.innerText || legend.textContent));
+      if (legendText) return legendText;
+      var labelledBy = trimText(fieldset.getAttribute("aria-labelledby") || "");
+      if (labelledBy) {
+        var texts = labelledBy.split(/\s+/).map(function (id) {
+          var node = document.getElementById(id);
+          return node ? trimText(node.innerText || node.textContent || "") : "";
+        });
+        var joined = trimText(texts.join(" "));
+        if (joined) return joined;
+      }
+      var aria = trimText(fieldset.getAttribute("aria-label") || "");
+      if (aria) return aria;
+    }
+    var container = fieldContainer(el);
+    if (container) {
+      var labels = container.querySelectorAll("label");
+      var i;
+      for (i = 0; i < labels.length; i += 1) {
+        if (labels[i].querySelector('input[type="checkbox"]')) continue;
+        var text = trimText(labels[i].innerText || labels[i].textContent || "");
+        if (text) return text;
+      }
+    }
+    return "";
+  }
+
+  function collectPreferredLocationCheckboxes(el) {
+    var name = trimText(el && el.name);
+    var root =
+      (el && el.closest && el.closest("fieldset")) ||
+      (el && el.closest && el.closest(".field")) ||
+      (el && el.form) ||
+      document;
+    var boxes = [];
+    Array.prototype.forEach.call(root.querySelectorAll('input[type="checkbox"]'), function (box) {
+      if (!box || box.disabled) return;
+      if (name) {
+        if (trimText(box.name || "") !== name) return;
+      } else if (box !== el) {
+        return;
+      }
+      boxes.push(box);
+    });
+    if (!boxes.length && el && normalizeText(el.type || "") === "checkbox") boxes = [el];
+    return boxes;
+  }
+
+  function fillPreferredLocationsCheckboxGroup(el, answer, handledElements) {
+    if (!el || normalizeText(el.type || "") !== "checkbox") {
+      return { ok: false, status: "skipped", reason: "Not a checkbox field." };
+    }
+    var boxes = collectPreferredLocationCheckboxes(el);
+    var i;
+    for (i = 0; i < boxes.length; i += 1) {
+      markHandled(handledElements, boxes[i]);
+    }
+    var saved = trimText(answer);
+    if (!saved) {
+      return { ok: false, status: "skipped", reason: "No saved preferred locations." };
+    }
+    var wanted = splitPreferredLocations(saved);
+    if (!wanted.length) {
+      return { ok: false, status: "skipped", reason: "No saved preferred locations." };
+    }
+    var matched = [];
+    for (i = 0; i < boxes.length; i += 1) {
+      var box = boxes[i];
+      var optionLabel = trimText(findLabelText(box) || getOptionLabelForInput(box) || "");
+      var hit = false;
+      var w;
+      for (w = 0; w < wanted.length; w += 1) {
+        if (preferredLocationMatches(wanted[w], optionLabel)) {
+          hit = true;
+          break;
+        }
+      }
+      if (hit) matched.push({ el: box, label: optionLabel });
+    }
+    if (!matched.length) {
+      return { ok: false, status: "skipped", reason: "No preferred location options matched." };
+    }
+    var selected = [];
+    for (i = 0; i < matched.length; i += 1) {
+      var item = matched[i];
+      if (!item.el.checked && typeof item.el.click === "function") {
+        item.el.click();
+      }
+      if (item.el.checked) selected.push(item.label);
+    }
+    if (!selected.length) {
+      return { ok: false, status: "failed", reason: "Verification failed." };
+    }
+    return {
+      ok: true,
+      status: "filled",
+      reason: "",
+      value: selected.join(", ")
+    };
+  }
+
   function fillCheckboxGroup(el, category, answer) {
     if (!el || normalizeText(el.type || "") !== "checkbox") {
       return { ok: false, status: "skipped", reason: "Not a checkbox field." };
@@ -1358,7 +1524,8 @@
       referral_source: true,
       project_highlight: true,
       additional_information: true,
-      availability: true
+      availability: true,
+      preferred_locations: true
     };
   }
 
@@ -1442,6 +1609,28 @@
         };
       }
       return null;
+    }
+
+    if (type === "checkbox") {
+      var groupQuestion = checkboxGroupQuestionLabel(el);
+      if (groupQuestion) {
+        var groupDetected = detectCategoryFromMeta({
+          tagName: "input",
+          inputType: "checkbox",
+          type: "checkbox",
+          label: groupQuestion,
+          ariaLabel: meta.ariaLabel || "",
+          name: meta.name || "",
+          id: meta.id || "",
+          nearby: "",
+          autocomplete: "",
+          optionLabels: []
+        });
+        if (groupDetected.category === "preferred_locations") {
+          category = "preferred_locations";
+          label = groupQuestion;
+        }
+      }
     }
 
     if (!cats[category]) return null;
@@ -1539,7 +1728,10 @@
       }
       answer = countryName || countryCode;
     }
-    if (!trimText(answer)) {
+    if (
+      !(type === "checkbox" && category === "preferred_locations") &&
+      !trimText(answer)
+    ) {
       markHandled(handledElements, el);
       return {
         category: category,
@@ -1568,6 +1760,24 @@
     }
 
     if (type === "checkbox") {
+      if (category === "preferred_locations") {
+        var prefLocKey = "cbgroup:" + trimText(el.name || label);
+        if (seenRadioNames[prefLocKey]) return null;
+        seenRadioNames[prefLocKey] = true;
+        var prefLocResult = fillPreferredLocationsCheckboxGroup(
+          el,
+          trimText((inventory && inventory.preferred_locations) || ""),
+          handledElements
+        );
+        return {
+          category: "preferred_locations",
+          label: label,
+          status: prefLocResult.status,
+          reason: prefLocResult.reason || "",
+          ok: Boolean(prefLocResult.ok),
+          value: prefLocResult.ok ? prefLocResult.value || "" : ""
+        };
+      }
       var boxKey = trimText(el.name || "") + "::" + normalizeOptionText(getOptionLabelForInput(el));
       if (seenRadioNames[boxKey]) return null;
       seenRadioNames[boxKey] = true;

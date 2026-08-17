@@ -26,6 +26,7 @@
     "availability",
     "salary",
     "relocation",
+    "preferred_locations",
     "veteran_status",
     "disability_status",
     "gender",
@@ -71,6 +72,7 @@
     availability: "Availability",
     salary: "Salary",
     relocation: "Relocation",
+    preferred_locations: "Preferred locations",
     veteran_status: "Veteran status",
     disability_status: "Disability status",
     gender: "Gender",
@@ -647,6 +649,31 @@
     return false;
   }
 
+  function looksLikePreferredLocationsQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\bcurrent\s+location\b/.test(text)) return false;
+    if (/\blocation\s*\(?\s*city\s*\)?/.test(text)) return false;
+    if (/\bhome\s+address\b/.test(text) || /\bstreet\s+address\b/.test(text) || /\bmailing\s+address\b/.test(text)) {
+      return false;
+    }
+    if (/\bjob\s+location\b/.test(text)) return false;
+    if (/\bphone\b/.test(text) && /\bcountry\b/.test(text)) return false;
+    if (/\bwhere\s+are\s+you\s+located\b/.test(text)) return false;
+    if (/\bwilling\s+to\s+relocate\b/.test(text) && !/\blocations?\b/.test(text) && !/\boffices?\b/.test(text)) {
+      return false;
+    }
+    if (/\brelocatem?\b/.test(text) && !/\blocations?\b/.test(text) && !/\boffices?\b/.test(text)) {
+      return false;
+    }
+    if (/\bpreferred\s+(work\s+)?locations?\b/.test(text)) return true;
+    if (/\bselect\s+all\s+locations\b/.test(text)) return true;
+    if (/\bopen\s+to\s+being\s+placed\b/.test(text)) return true;
+    if (/\blocations?\b/.test(text) && /\bopen\s+to\b/.test(text)) return true;
+    if (/\boffices?\b/.test(text) && /\bwork\s+from\b/.test(text)) return true;
+    return false;
+  }
+
   function looksLikeLocationCityField(blob) {
     var text = normalizeText(blob);
     if (!text) return false;
@@ -821,6 +848,15 @@
 
     if (/\bgpa\b/.test(ownLabel) || /\bgrade\s+point\s+average\b/.test(ownLabel)) {
       return validateDetection({ category: "education_gpa", confidence: 0.98 }, inputType);
+    }
+
+    if (
+      (inputType === "checkbox" ||
+        inputType === "select" ||
+        inputType === "select-multiple") &&
+      looksLikePreferredLocationsQuestion(ownLabel)
+    ) {
+      return validateDetection({ category: "preferred_locations", confidence: 0.98 }, inputType);
     }
 
     if (inputType === "date") {
@@ -1502,6 +1538,7 @@
       available_start_date: trimText(prefs.availableStartDate || ""),
       salary: trimText(common.salaryExpectation || ""),
       relocation: trimText(prefs.willingToRelocate || ""),
+      preferred_locations: trimText(prefs.preferredLocations || ""),
       // Sensitive demographics: only locally saved values — never inferred.
       veteran_status: trimText(demo.veteranStatus || ""),
       disability_status: trimText(
@@ -1578,7 +1615,8 @@
       },
       applicationPreferences: {
         availableStartDate: trimText(prefs.availableStartDate || ""),
-        willingToRelocate: trimText(prefs.willingToRelocate || "")
+        willingToRelocate: trimText(prefs.willingToRelocate || ""),
+        preferredLocations: trimText(prefs.preferredLocations || "")
       },
       workAuthorization: {
         legallyAuthorizedToWork: trimText(work.legallyAuthorizedToWork || ""),
