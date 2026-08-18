@@ -966,6 +966,31 @@
     return out;
   }
 
+  function refreshLiveComboboxControl(control) {
+    if (!control) return null;
+    if (control.id) {
+      var live = document.getElementById(control.id);
+      if (live) return findComboboxControl(live) || live;
+    }
+    if (document.documentElement && document.documentElement.contains(control)) {
+      return control;
+    }
+    return null;
+  }
+
+  function findLiveComboboxByCategory(root, wantedCategory, handledElements) {
+    var comboboxes = collectCustomComboboxControls(root);
+    var i;
+    for (i = 0; i < comboboxes.length; i += 1) {
+      var control = refreshLiveComboboxControl(comboboxes[i]);
+      if (!control) continue;
+      if (wasHandled(handledElements, control)) continue;
+      var classified = classifyCombobox(control);
+      if (classified && classified.category === wantedCategory) return control;
+    }
+    return null;
+  }
+
   function classifyCombobox(control) {
     var label = labelForCombobox(control);
     var meta = {
@@ -4837,29 +4862,27 @@
       results.push(gpaTextRows[gpt]);
     }
 
-    var comboboxes = collectCustomComboboxControls(root);
-    for (var c = 0; c < comboboxes.length; c += 1) {
-      var control = comboboxes[c];
-      if (wasHandled(handledElements, control)) continue;
+    var dropdownCategories = [
+      "work_authorization",
+      "sponsorship_now",
+      "sponsorship_later",
+      "hispanic_latino",
+      "transgender",
+      "gender",
+      "race_ethnicity",
+      "veteran_status",
+      "disability_status"
+    ];
+    var d;
+    for (d = 0; d < dropdownCategories.length; d += 1) {
+      var category = dropdownCategories[d];
+      var control = findLiveComboboxByCategory(root, category, handledElements);
+      if (!control) continue;
       var classified = classifyCombobox(control);
-      var category = classified.category || "unknown";
-      if (
-        category !== "work_authorization" &&
-        category !== "sponsorship_now" &&
-        category !== "sponsorship_later" &&
-        category !== "hispanic_latino" &&
-        category !== "transgender" &&
-        category !== "gender" &&
-        category !== "race_ethnicity" &&
-        category !== "veteran_status" &&
-        category !== "disability_status"
-      ) {
-        continue;
-      }
       var answer = getInventoryAnswer(category, inventory, options);
       if (category === "gender") {
         handledElements.push(control);
-        var genderLabel = classified.label || labelForCombobox(control) || category;
+        var genderLabel = (classified && classified.label) || labelForCombobox(control) || category;
         var genderResult = await selectCustomDropdownOption(
           control,
           function (optionLabel) {
@@ -4875,11 +4898,12 @@
           ok: Boolean(genderResult.ok),
           value: genderResult.ok ? genderResult.value || answer : ""
         });
+        if (genderResult.ok) await sleep(120);
         continue;
       }
       if (category === "transgender") {
         handledElements.push(control);
-        var transgenderLabel = classified.label || labelForCombobox(control) || category;
+        var transgenderLabel = (classified && classified.label) || labelForCombobox(control) || category;
         var transgenderResult = await selectCustomDropdownOption(
           control,
           function (optionLabel) {
@@ -4895,11 +4919,12 @@
           ok: Boolean(transgenderResult.ok),
           value: transgenderResult.ok ? transgenderResult.value || answer : ""
         });
+        if (transgenderResult.ok) await sleep(120);
         continue;
       }
       if (category === "race_ethnicity") {
         handledElements.push(control);
-        var raceLabel = classified.label || labelForCombobox(control) || category;
+        var raceLabel = (classified && classified.label) || labelForCombobox(control) || category;
         var raceResult = await selectCustomDropdownOption(
           control,
           function (optionLabel) {
@@ -4915,11 +4940,12 @@
           ok: Boolean(raceResult.ok),
           value: raceResult.ok ? raceResult.value || answer : ""
         });
+        if (raceResult.ok) await sleep(120);
         continue;
       }
       if (category === "veteran_status") {
         handledElements.push(control);
-        var veteranLabel = classified.label || labelForCombobox(control) || category;
+        var veteranLabel = (classified && classified.label) || labelForCombobox(control) || category;
         var veteranResult = await selectCustomDropdownOption(
           control,
           function (optionLabel) {
@@ -4935,11 +4961,12 @@
           ok: Boolean(veteranResult.ok),
           value: veteranResult.ok ? veteranResult.value || answer : ""
         });
+        if (veteranResult.ok) await sleep(120);
         continue;
       }
       if (category === "disability_status") {
         handledElements.push(control);
-        var disabilityLabel = classified.label || labelForCombobox(control) || category;
+        var disabilityLabel = (classified && classified.label) || labelForCombobox(control) || category;
         var disabilityResult = await selectCustomDropdownOption(
           control,
           function (optionLabel) {
@@ -4955,10 +4982,12 @@
           ok: Boolean(disabilityResult.ok),
           value: disabilityResult.ok ? disabilityResult.value || answer : ""
         });
+        if (disabilityResult.ok) await sleep(120);
         continue;
       }
       var row = await fillLabeledYesNoDropdown(control, category, answer, handledElements);
       if (row) results.push(row);
+      if (row && row.ok && category === "hispanic_latino") await sleep(120);
     }
 
     var educationRows = await fillEducationFields(root, inventory, options.profile, handledElements);
