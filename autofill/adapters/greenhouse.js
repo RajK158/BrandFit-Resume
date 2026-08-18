@@ -3123,6 +3123,13 @@
       return { kind: "upper", max: numbers[0], inclusive: false };
     }
 
+    var outOfFour = lower.match(/^(\d+(?:\.\d+)?)\s+out\s+of\s+4(?:\.0+)?$/);
+    if (outOfFour) {
+      var exactValue = Number(outOfFour[1]);
+      if (!isFinite(exactValue)) return null;
+      return { kind: "exact_scale", value: exactValue, scale: 4 };
+    }
+
     if (numbers.length !== 1) return null;
     return { kind: "exact", value: numbers[0] };
   }
@@ -3130,6 +3137,7 @@
   function gpaOptionContains(interpreted, gpa) {
     if (!interpreted || !isFinite(gpa)) return false;
     if (interpreted.kind === "exact") return gpa === interpreted.value;
+    if (interpreted.kind === "exact_scale") return gpa === interpreted.value;
     if (interpreted.kind === "closed") {
       return gpa >= interpreted.min && gpa <= interpreted.max;
     }
@@ -3154,7 +3162,7 @@
       var interpreted = interpretGpaOption(label);
       if (!interpreted) return;
       if (!gpaOptionContains(interpreted, gpa)) return;
-      if (interpreted.kind === "exact") exact.push(opt);
+      if (interpreted.kind === "exact" || interpreted.kind === "exact_scale") exact.push(opt);
       else if (interpreted.kind === "closed") closed.push(opt);
       else bound.push(opt);
     });
@@ -3163,33 +3171,352 @@
     if (closed.length === 1) return closed[0];
     if (closed.length > 1) return null;
     if (bound.length === 1) return bound[0];
+    return pickRoundedTenthGpaOption(options, gpa);
+  }
+
+  function isOneDecimal(value) {
+    if (!isFinite(value)) return false;
+    return Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
+  }
+
+  function pickRoundedTenthGpaOption(options, gpa) {
+    if (!isFinite(gpa)) return null;
+    var distinct = [];
+    var scaleOpts = [];
+    (options || []).forEach(function (opt) {
+      var label = trimText(opt && opt.label);
+      if (!label) return;
+      var interpreted = interpretGpaOption(label);
+      if (!interpreted || interpreted.kind !== "exact_scale") return;
+      if (interpreted.scale !== 4) return;
+      if (!isOneDecimal(interpreted.value)) return;
+      scaleOpts.push({ opt: opt, value: interpreted.value });
+      if (distinct.indexOf(interpreted.value) === -1) distinct.push(interpreted.value);
+    });
+    if (distinct.length < 5) return null;
+    var rounded = Number((Math.round(gpa * 10) / 10).toFixed(1));
+    var matches = [];
+    var i;
+    for (i = 0; i < scaleOpts.length; i += 1) {
+      if (Math.abs(scaleOpts[i].value - rounded) < 1e-9) matches.push(scaleOpts[i].opt);
+    }
+    if (matches.length === 1) return matches[0];
     return null;
+  }
+
+  function gpaCategoryForLabel(label) {
+    var text = normalizeText(label);
+    if (
+      /\bundergraduate\b/.test(text) ||
+      /\bundergrad\b/.test(text) ||
+      /\bbachelor/.test(text)
+    ) {
+      return "education_gpa_undergraduate";
+    }
+    if (
+      /\bdoctorate\b/.test(text) ||
+      /\bdoctoral\b/.test(text) ||
+      /\bphd\b/.test(text) ||
+      /\bph\.d/.test(text)
+    ) {
+      return "education_gpa_doctorate";
+    }
+    if (/\bgraduate\b/.test(text) || /\bmaster/.test(text)) {
+      return "education_gpa_graduate";
+    }
+    return "education_gpa";
+  }
+
+  function gpaAnswerForLabel(label, inventory, profile) {
+    var category = gpaCategoryForLabel(label);
+    var inv = inventory || {};
+    if (category === "education_gpa_undergraduate") {
+      return trimText(inv.education_gpa_undergraduate || "");
+    }
+    if (category === "education_gpa_graduate") {
+      return trimText(inv.education_gpa_graduate || "");
+    }
+    if (category === "education_gpa_doctorate") {
+      return trimText(inv.education_gpa_doctorate || "");
+    }
+    var education = resolvePrimaryEducation(inv, profile);
+    if (education && education.gpa) return String(education.gpa).trim();
+    return trimText(inv.education_gpa || "");
+  }
+
+  function looksLikeGpaQuestion(label) {
+    var blob = normalizeText(label);
+    return /\bgpa\b/.test(blob) || blob.indexOf("grade point average") !== -1;
+  }
+
+  function isGpaCategory(category) {
+    return (
+      category === "education_gpa" ||
+      category === "education_gpa_undergraduate" ||
+      category === "education_gpa_graduate" ||
+      category === "education_gpa_doctorate"
+    );
+  }
+
+  function gpaSelectRoot(node) {
+    if (!node) return null;
+    if (node.closest) {
+      var scoped =
+        node.closest(".select__container") ||
+        node.closest("[class*='select__container']") ||
+        node.closest("[class*='select-container']");
+      if (scoped) return scoped;
+    }
+    return comboboxRoot(node) || node;
+  }
+
+  function canonicalGpaComboboxInput(node) {
+    if (!node) return null;
+    var root = gpaSelectRoot(node) || node;
+    var input = null;
+    if (root && root.querySelector) {
+      input =
+        root.querySelector("input[role='combobox'].select__input") ||
+        root.querySelector("input.select__input[role='combobox']") ||
+        root.querySelector("input[role='combobox']");
+    }
+    if (input) return input;
+    if (node.matches && node.matches("input[role='combobox']")) return node;
+    if (node.getAttribute && node.getAttribute("role") === "combobox") return node;
+    return node;
+  }
+
+  function findGpaDropdownIndicatorSvg(root) {
+    if (!root || !root.querySelector) return null;
+    var svg =
+      root.querySelector("[class*='dropdown-indicator'] svg") ||
+      root.querySelector("[class*='DropdownIndicator'] svg");
+    if (svg) return svg;
+    var control =
+      root.querySelector("[class*='select__control']") ||
+      root.querySelector("[class*='Select-control']");
+    if (!control || !control.querySelector) return null;
+    svg =
+      control.querySelector("[class*='dropdown-indicator'] svg") ||
+      control.querySelector("[class*='DropdownIndicator'] svg");
+    if (svg) return svg;
+    var indicators =
+      control.querySelector("[class*='select__indicators']") ||
+      control.querySelector("[class*='IndicatorsContainer']") ||
+      control.querySelector("[class*='indicatorContainer']");
+    if (indicators && indicators.querySelector) {
+      svg = indicators.querySelector("svg");
+      if (svg) return svg;
+    }
+    return null;
+  }
+
+  function dispatchGpaIndicatorMouseSequence(svg) {
+    if (!svg) return false;
+    var opts = { bubbles: true, cancelable: true, view: global, button: 0 };
+    try {
+      svg.dispatchEvent(new MouseEvent("mousedown", opts));
+      svg.dispatchEvent(new MouseEvent("mouseup", opts));
+      svg.dispatchEvent(new MouseEvent("click", opts));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findReactSelectGpaListbox(comboInput) {
+    var id = trimText(comboInput && comboInput.id);
+    if (!id) return null;
+    var box = document.getElementById("react-select-" + id + "-listbox");
+    if (!box) return null;
+    if (!isListboxOpen(box)) return null;
+    if (!(box.querySelectorAll("[role='option']") || []).length) return null;
+    return box;
+  }
+
+  async function pollGpaListbox(control) {
+    var listbox = null;
+    var attempt;
+    for (attempt = 0; attempt < 10; attempt += 1) {
+      listbox = findReactSelectGpaListbox(control);
+      if (!listbox) listbox = findListboxForControl(control);
+      if (!listbox) listbox = findVisibleListbox();
+      if (listbox && collectListboxOptions(listbox).length) return listbox;
+      await sleep(60);
+    }
+    return listbox;
+  }
+
+  async function selectGpaDropdownOption(control, savedGpa) {
+    if (!control) {
+      return { ok: false, status: "skipped", reason: "Dropdown control not found." };
+    }
+    var saved = String(savedGpa == null ? "" : savedGpa).trim();
+    if (!saved || parseSavedGpa(saved) == null) {
+      return { ok: false, status: "skipped", reason: "No saved GPA for this education level." };
+    }
+
+    var comboInput = canonicalGpaComboboxInput(control) || control;
+    var selectRoot = gpaSelectRoot(comboInput) || gpaSelectRoot(control) || comboInput;
+
+    function liveControl() {
+      var id = trimText((comboInput && comboInput.id) || (control && control.id));
+      if (id) {
+        var byId = document.getElementById(id);
+        if (byId) return byId;
+      }
+      return comboInput || control;
+    }
+
+    var currentControl = liveControl();
+    if (isComboboxAlreadyFilled(currentControl)) {
+      var current = readComboboxSelectedText(currentControl);
+      if (current && pickGpaDropdownOption([{ label: current }], saved)) {
+        return { ok: true, status: "filled", reason: "", value: current };
+      }
+      return { ok: false, status: "skipped", reason: "Field is already completed." };
+    }
+
+    var indicatorSvg = findGpaDropdownIndicatorSvg(selectRoot);
+    var listbox = null;
+
+    if (indicatorSvg) {
+      try {
+        if (comboInput && typeof comboInput.focus === "function") comboInput.focus();
+      } catch (_) {}
+      dispatchGpaIndicatorMouseSequence(indicatorSvg);
+      await sleep(80);
+      listbox = await pollGpaListbox(liveControl());
+    }
+
+    if (!listbox) {
+      var clickTarget =
+        (selectRoot &&
+          selectRoot.querySelector &&
+          (selectRoot.querySelector("[class*='select__control']") ||
+            selectRoot.querySelector("[class*='Select-control']"))) ||
+        currentControl;
+      try {
+        if (comboInput && typeof comboInput.focus === "function") comboInput.focus();
+      } catch (_) {}
+      try {
+        clickTarget.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            cancelable: true,
+            view: global,
+            button: 0
+          })
+        );
+      } catch (_) {}
+      await sleep(80);
+      listbox = await pollGpaListbox(liveControl());
+    }
+
+    if (!listbox) {
+      try {
+        if (comboInput) {
+          comboInput.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "ArrowDown",
+              code: "ArrowDown",
+              keyCode: 40,
+              which: 40,
+              bubbles: true,
+              cancelable: true
+            })
+          );
+        }
+      } catch (_) {}
+      await sleep(80);
+      listbox = await pollGpaListbox(liveControl());
+    }
+
+    if (!listbox) {
+      try {
+        if (typeof currentControl.click === "function") currentControl.click();
+      } catch (_) {}
+      await sleep(80);
+      listbox = await pollGpaListbox(liveControl());
+    }
+
+    if (!listbox) {
+      return { ok: false, status: "failed", reason: "Dropdown listbox did not open." };
+    }
+
+    var options = collectListboxOptions(listbox);
+    var matched = pickGpaDropdownOption(options, saved);
+    if (!matched) {
+      try {
+        if (comboInput) {
+          comboInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        }
+      } catch (_) {}
+      return { ok: false, status: "skipped", reason: "No compatible GPA option." };
+    }
+
+    if (matched.el && typeof matched.el.click === "function") {
+      matched.el.click();
+    }
+    await sleep(500);
+
+    var selected = "";
+    var v;
+    for (v = 0; v < 10; v += 1) {
+      currentControl = liveControl();
+      selected = readComboboxSelectedText(currentControl);
+      if (selected && pickGpaDropdownOption([{ label: selected }], saved)) break;
+      if (selected && matched && normalizeText(selected) === normalizeText(matched.label)) break;
+      await sleep(60);
+    }
+
+    if (
+      !selected ||
+      !(
+        pickGpaDropdownOption([{ label: selected }], saved) ||
+        (matched && normalizeText(selected) === normalizeText(matched.label))
+      )
+    ) {
+      return { ok: false, status: "failed", reason: "Verification failed; selected option did not persist." };
+    }
+    return { ok: true, status: "filled", reason: "", value: selected };
   }
 
   async function fillStandaloneGpaDropdown(root, inventory, profile, handledElements) {
     var results = [];
-    var education = resolvePrimaryEducation(inventory, profile);
-    var saved = education && education.gpa ? String(education.gpa).trim() : "";
-    if (!saved || parseSavedGpa(saved) == null) return results;
-
     var comboboxes = collectCustomComboboxControls(root);
+    var seenInputs = [];
+    var seenIds = {};
     var i;
     for (i = 0; i < comboboxes.length; i += 1) {
       var control = comboboxes[i];
-      if (wasHandled(handledElements, control)) continue;
-      var label = labelForCombobox(control);
-      var blob = normalizeText(label);
-      if (!/\bgpa\b/.test(blob) && blob.indexOf("grade point average") === -1) continue;
-      handledElements.push(control);
-      var result = await selectEducationDropdownOption(
-        control,
-        function (opts) {
-          return pickGpaDropdownOption(opts, saved);
-        },
-        saved
-      );
+      var comboInput = canonicalGpaComboboxInput(control) || control;
+      if (wasHandled(handledElements, control) || wasHandled(handledElements, comboInput)) continue;
+      if (seenInputs.indexOf(comboInput) !== -1) continue;
+      var inputId = trimText(comboInput && comboInput.id);
+      if (inputId && seenIds[inputId]) continue;
+      var label = labelForCombobox(comboInput) || labelForCombobox(control);
+      if (!looksLikeGpaQuestion(label)) continue;
+      seenInputs.push(comboInput);
+      if (inputId) seenIds[inputId] = true;
+      markHandled(handledElements, control);
+      markHandled(handledElements, comboInput);
+      var category = gpaCategoryForLabel(label);
+      var saved = gpaAnswerForLabel(label, inventory, profile);
+      if (!saved || parseSavedGpa(saved) == null) {
+        results.push({
+          category: category,
+          label: label || "GPA",
+          status: "skipped",
+          reason: "No saved GPA for this education level.",
+          ok: false,
+          value: ""
+        });
+        continue;
+      }
+      var result = await selectGpaDropdownOption(comboInput, saved);
       results.push({
-        category: "education_gpa",
+        category: category,
         label: label || "GPA",
         status: result.status,
         reason: result.reason || "",
@@ -3231,11 +3558,6 @@
 
   function fillStandaloneGpaTextFields(root, inventory, profile, handledElements) {
     var results = [];
-    var education = resolvePrimaryEducation(inventory, profile);
-    var saved = education && education.gpa ? String(education.gpa).trim() : "";
-    var parsedGpa = parseSavedGpa(saved);
-    if (parsedGpa == null) return results;
-    var written = String(parsedGpa);
     var doc = root || document;
     var nodes = [];
     try {
@@ -3251,21 +3573,36 @@
       var meta = fieldMeta(el);
       var own = normalizeText([meta.label, meta.ariaLabel].join(" "));
       var detected = classifyField(el);
+      var label = meta.label || meta.ariaLabel || "GPA";
       if (
-        !/\bgpa\b/.test(own) &&
-        own.indexOf("grade point average") === -1 &&
-        !(detected && detected.category === "education_gpa")
+        !looksLikeGpaQuestion(own) &&
+        !looksLikeGpaQuestion(label) &&
+        !isGpaCategory(detected && detected.category)
       ) {
         continue;
       }
+      var category = gpaCategoryForLabel(label);
+      var saved = gpaAnswerForLabel(label, inventory, profile);
       markHandled(handledElements, el);
-      var label = meta.label || meta.ariaLabel || "GPA";
+      if (!saved || parseSavedGpa(saved) == null) {
+        results.push({
+          category: category,
+          label: label,
+          status: "skipped",
+          reason: "No saved GPA for this education level.",
+          ok: false,
+          value: ""
+        });
+        continue;
+      }
+      var parsedGpa = parseSavedGpa(saved);
+      var written = String(parsedGpa);
       var current = readValue(el);
       if (isFilledValue(current)) {
         var currentParsed = parseSavedGpa(current);
         if (currentParsed != null && currentParsed === parsedGpa) {
           results.push({
-            category: "education_gpa",
+            category: category,
             label: label,
             status: "filled",
             reason: "",
@@ -3274,7 +3611,7 @@
           });
         } else {
           results.push({
-            category: "education_gpa",
+            category: category,
             label: label,
             status: "skipped",
             reason: "Field is already completed.",
@@ -3286,7 +3623,7 @@
       }
       if (!setNativeValue(el, written)) {
         results.push({
-          category: "education_gpa",
+          category: category,
           label: label,
           status: "failed",
           reason: "Could not set field value.",
@@ -3298,7 +3635,7 @@
       var after = parseSavedGpa(readValue(el));
       if (after == null || after !== parsedGpa) {
         results.push({
-          category: "education_gpa",
+          category: category,
           label: label,
           status: "failed",
           reason: "Verification failed.",
@@ -3308,7 +3645,7 @@
         continue;
       }
       results.push({
-        category: "education_gpa",
+        category: category,
         label: label,
         status: "filled",
         reason: "",

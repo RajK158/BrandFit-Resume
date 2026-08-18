@@ -34,6 +34,9 @@
     "transgender",
     "race_ethnicity",
     "education_gpa",
+    "education_gpa_undergraduate",
+    "education_gpa_graduate",
+    "education_gpa_doctorate",
     "education_anticipated_graduation",
     "education_start_month",
     "education_end_month",
@@ -63,6 +66,9 @@
     portfolio: "Portfolio",
     url: "URL",
     education_gpa: "GPA",
+    education_gpa_undergraduate: "Undergraduate GPA",
+    education_gpa_graduate: "Graduate GPA",
+    education_gpa_doctorate: "Doctorate GPA",
     education_anticipated_graduation: "Graduation date",
     education_start_month: "Education start month",
     education_end_month: "Education end month",
@@ -802,6 +808,58 @@
     return valid;
   }
 
+  function educationDegreeLevel(value) {
+    var text = String(value == null ? "" : value)
+      .toLowerCase()
+      .replace(/['’`]/g, "")
+      .replace(/\./g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return "";
+    var undergraduate =
+      /\bbachelor(?:s)?\b/.test(text) ||
+      /\bbs\b/.test(text) ||
+      /\bbe\b/.test(text) ||
+      /\bbeng\b/.test(text) ||
+      /\bbtech\b/.test(text);
+    var graduate =
+      /\bmaster(?:s)?\b/.test(text) ||
+      /\bms\b/.test(text) ||
+      /\bmeng\b/.test(text) ||
+      /\bmtech\b/.test(text);
+    var doctorate =
+      /\bdoctorate\b/.test(text) ||
+      /\bdoctoral\b/.test(text) ||
+      /\bphd\b/.test(text) ||
+      /\bdoctor of philosophy\b/.test(text);
+    var count = (undergraduate ? 1 : 0) + (graduate ? 1 : 0) + (doctorate ? 1 : 0);
+    if (count !== 1) return "";
+    if (undergraduate) return "undergraduate";
+    if (graduate) return "graduate";
+    return "doctorate";
+  }
+
+  function educationGpaForLevel(educationList, level) {
+    if (level !== "undergraduate" && level !== "graduate" && level !== "doctorate") return "";
+    var valid = listValidEducationRecords(educationList);
+    var gpas = [];
+    var i;
+    for (i = 0; i < valid.length; i += 1) {
+      var row = valid[i];
+      if (educationDegreeLevel(row.degree) !== level) continue;
+      var gpa = trimText(row.gpa);
+      if (!gpa) continue;
+      gpas.push(gpa);
+    }
+    if (!gpas.length) return "";
+    var first = gpas[0];
+    for (i = 1; i < gpas.length; i += 1) {
+      if (gpas[i] !== first) return "";
+    }
+    return first;
+  }
+
   function selectPrimaryEducation(educationList) {
     var valid = listValidEducationRecords(educationList);
     if (!valid.length) return null;
@@ -888,6 +946,12 @@
     }
 
     var ownLabel = normalizeText([label, ariaLabel].join(" "));
+    var ownWebsiteExact = (normalizeText(label) || normalizeText(ariaLabel))
+      .replace(/\s*\*+\s*$/g, "")
+      .trim();
+    if (ownWebsiteExact === "website" || ownWebsiteExact === "personal website") {
+      return validateDetection({ category: "portfolio", confidence: 0.96 }, inputType);
+    }
     if (/\bstart\s+date\s+month\b/.test(ownLabel) || /\beducation\s+start\s+month\b/.test(ownLabel)) {
       return validateDetection({ category: "education_start_month", confidence: 0.98 }, inputType);
     }
@@ -912,6 +976,33 @@
     }
 
     if (/\bgpa\b/.test(ownLabel) || /\bgrade\s+point\s+average\b/.test(ownLabel)) {
+      if (
+        /\bundergraduate\b/.test(ownLabel) ||
+        /\bundergrad\b/.test(ownLabel) ||
+        /\bbachelor/.test(ownLabel)
+      ) {
+        return validateDetection(
+          { category: "education_gpa_undergraduate", confidence: 0.99 },
+          inputType
+        );
+      }
+      if (
+        /\bdoctorate\b/.test(ownLabel) ||
+        /\bdoctoral\b/.test(ownLabel) ||
+        /\bphd\b/.test(ownLabel) ||
+        /\bph\.d/.test(ownLabel)
+      ) {
+        return validateDetection(
+          { category: "education_gpa_doctorate", confidence: 0.99 },
+          inputType
+        );
+      }
+      if (/\bgraduate\b/.test(ownLabel) || /\bmaster/.test(ownLabel)) {
+        return validateDetection(
+          { category: "education_gpa_graduate", confidence: 0.99 },
+          inputType
+        );
+      }
       return validateDetection({ category: "education_gpa", confidence: 0.98 }, inputType);
     }
 
@@ -1593,6 +1684,9 @@
       education_end_month: educationAnswers.education_end_month,
       education_anticipated_graduation: educationAnswers.education_anticipated_graduation,
       education_gpa: educationAnswers.education_gpa,
+      education_gpa_undergraduate: educationGpaForLevel(data.education, "undergraduate"),
+      education_gpa_graduate: educationGpaForLevel(data.education, "graduate"),
+      education_gpa_doctorate: educationGpaForLevel(data.education, "doctorate"),
       experience: Array.isArray(data.experience) && data.experience.length ? "Saved in profile" : "",
       skills: Array.isArray(data.skills) && data.skills.length ? data.skills.join(", ") : "",
       work_authorization: trimText(work.legallyAuthorizedToWork || ""),
@@ -2558,6 +2652,9 @@
         looksLikeEducationDateField(labelCue) ||
         category === "education" ||
         category === "education_gpa" ||
+        category === "education_gpa_undergraduate" ||
+        category === "education_gpa_graduate" ||
+        category === "education_gpa_doctorate" ||
         category === "education_anticipated_graduation" ||
         category === "education_start_month" ||
         category === "education_end_month"
@@ -2739,6 +2836,8 @@
     extractYearFromEducationDate: extractYearFromEducationDate,
     extractMonthFromEducationDate: extractMonthFromEducationDate,
     listValidEducationRecords: listValidEducationRecords,
+    educationDegreeLevel: educationDegreeLevel,
+    educationGpaForLevel: educationGpaForLevel,
     selectPrimaryEducation: selectPrimaryEducation,
     buildPrimaryEducationAnswers: buildPrimaryEducationAnswers,
     detectActiveAtsHost: detectActiveAtsHost,
