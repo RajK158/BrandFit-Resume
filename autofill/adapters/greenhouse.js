@@ -642,8 +642,45 @@
     return null;
   }
 
+  function canonicalReactSelectComboboxInput(node) {
+    if (!node) return null;
+    var tag = (node.tagName || "").toLowerCase();
+    if (tag === "input" && node.getAttribute && node.getAttribute("role") === "combobox") {
+      return node;
+    }
+    var root = null;
+    if (node.closest) {
+      root =
+        node.closest(".select__container") ||
+        node.closest("[class*='select__container']") ||
+        node.closest("[class*='select-container']");
+    }
+    if (!root) root = comboboxRoot(node) || node;
+    var input = null;
+    if (root && root.querySelector) {
+      input =
+        root.querySelector("input[role='combobox'].select__input") ||
+        root.querySelector("input.select__input[role='combobox']") ||
+        root.querySelector("input[role='combobox']");
+    }
+    if (input) return input;
+    if (node.getAttribute && node.getAttribute("role") === "combobox") return node;
+    return null;
+  }
+
+  function findExactReactSelectListbox(control) {
+    var input = canonicalReactSelectComboboxInput(control);
+    var id = trimText(input && input.id);
+    if (!id) return null;
+    var box = document.getElementById("react-select-" + id + "-listbox");
+    if (!box) return null;
+    if (!isListboxOpen(box)) return null;
+    if (!(box.querySelectorAll("[role='option']") || []).length) return null;
+    return box;
+  }
+
   function findListboxForControl(control) {
-    if (!control) return findVisibleListbox();
+    if (!control) return null;
 
     var owned =
       trimText(control.getAttribute && control.getAttribute("aria-controls")) ||
@@ -661,14 +698,108 @@
       }
     }
 
+    var comboInput = canonicalReactSelectComboboxInput(control);
+    if (comboInput && comboInput !== control) {
+      var inputOwned =
+        trimText(comboInput.getAttribute && comboInput.getAttribute("aria-controls")) ||
+        trimText(comboInput.getAttribute && comboInput.getAttribute("aria-owns")) ||
+        "";
+      if (inputOwned) {
+        var inputIds = inputOwned.split(/\s+/);
+        var n;
+        for (n = 0; n < inputIds.length; n += 1) {
+          var ownedBox = document.getElementById(inputIds[n]);
+          if (isListboxOpen(ownedBox)) return ownedBox;
+          if (ownedBox) {
+            var ownedNested =
+              ownedBox.getAttribute && ownedBox.getAttribute("role") === "listbox"
+                ? ownedBox
+                : ownedBox.querySelector("[role='listbox']");
+            if (isListboxOpen(ownedNested)) return ownedNested;
+          }
+        }
+      }
+    }
+
     var root = comboboxRoot(control);
     if (root) {
       var local = root.querySelector("[role='listbox']");
       if (isListboxOpen(local)) return local;
     }
 
-    // Fallback: the currently open menu after clicking this control.
-    return findVisibleListbox();
+    return null;
+  }
+
+  async function waitForListboxForControl(control, attempts, delay) {
+    var max = attempts == null ? 10 : attempts;
+    var waitMs = delay == null ? 60 : delay;
+    var comboInput = canonicalReactSelectComboboxInput(control);
+    var allowGlobal = !trimText(comboInput && comboInput.id);
+    var listbox = null;
+    var i;
+    for (i = 0; i < max; i += 1) {
+      listbox = findExactReactSelectListbox(control);
+      if (!listbox) listbox = findListboxForControl(control);
+      if (!listbox && allowGlobal) listbox = findVisibleListbox();
+      if (listbox && collectListboxOptions(listbox).length) return listbox;
+      await sleep(waitMs);
+    }
+    return listbox && collectListboxOptions(listbox).length ? listbox : null;
+  }
+
+  function closeReactSelectMenu(control) {
+    var input = canonicalReactSelectComboboxInput(control) || control;
+    try {
+      if (input) {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+        );
+      }
+    } catch (_) {}
+  }
+
+  async function openEducationDropdown(control) {
+    var input = canonicalReactSelectComboboxInput(control);
+    if (!input) return null;
+    var existing = findExactReactSelectListbox(input);
+    if (existing) return existing;
+
+    var root = null;
+    if (input.closest) {
+      root =
+        input.closest(".select__container") ||
+        input.closest("[class*='select__container']") ||
+        input.closest("[class*='select-container']");
+    }
+    if (!root) root = comboboxRoot(input) || input;
+
+    var inputContainer = null;
+    if (root && root.querySelector) {
+      inputContainer =
+        root.querySelector(".select__input-container") ||
+        root.querySelector("[class*='select__input-container']");
+    }
+    if (!inputContainer) return null;
+
+    var opts = { bubbles: true, cancelable: true, view: global, button: 0 };
+    try {
+      if (typeof PointerEvent === "function") {
+        inputContainer.dispatchEvent(new PointerEvent("pointerdown", opts));
+      }
+      inputContainer.dispatchEvent(new MouseEvent("mousedown", opts));
+    } catch (_) {}
+    try {
+      if (typeof input.focus === "function") input.focus();
+    } catch (_) {}
+    try {
+      if (typeof PointerEvent === "function") {
+        inputContainer.dispatchEvent(new PointerEvent("pointerup", opts));
+      }
+      inputContainer.dispatchEvent(new MouseEvent("mouseup", opts));
+      inputContainer.dispatchEvent(new MouseEvent("click", opts));
+    } catch (_) {}
+
+    return waitForListboxForControl(input, 14, 70);
   }
 
   function optionLabelText(opt) {
@@ -779,7 +910,7 @@
     return optionMatches("work_authorization", answer, optionLabel);
   }
 
-  async function selectCustomDropdownOption(control, matchFn, expectedVisibleHint) {
+  async function selectCustomDropdownOption(control, matchFn, expectedVisibleHint, selectOptions) {
     if (!control) {
       return { ok: false, status: "failed", reason: "Dropdown control not found." };
     }
@@ -791,20 +922,18 @@
       return { ok: false, status: "skipped", reason: "Field is already completed." };
     }
 
-    clickElement(control);
-    await sleep(120);
-
     var listbox = null;
-    for (var attempt = 0; attempt < 10; attempt += 1) {
-      listbox = findListboxForControl(control);
-      if (listbox) break;
-      await sleep(60);
+    if (selectOptions && selectOptions.educationDropdown) {
+      listbox = await openEducationDropdown(control);
+    } else {
+      clickElement(control);
+      await sleep(120);
+      listbox = await waitForListboxForControl(control, 10, 60);
     }
     if (!listbox) {
       return { ok: false, status: "failed", reason: "Dropdown listbox did not open." };
     }
 
-    // Search every option in this control's opened menu (including off-viewport rows).
     var options = collectListboxOptions(listbox);
     var matched = null;
     for (var i = 0; i < options.length; i += 1) {
@@ -814,9 +943,7 @@
       }
     }
     if (!matched) {
-      try {
-        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      } catch (_) {}
+      closeReactSelectMenu(control);
       return { ok: false, status: "failed", reason: "No matching dropdown option." };
     }
 
@@ -854,10 +981,10 @@
             valuesMatch(expectedVisibleHint, selected))));
 
     if (!selectedMatches) {
+      closeReactSelectMenu(control);
       return { ok: false, status: "failed", reason: "Verification failed; selected option did not persist." };
     }
 
-    // Dispatch input/change only when a native input is wired into the control.
     var root = comboboxRoot(control) || control;
     var hiddenInput = root.querySelector("input[type='hidden'], input.select__input, input[role='combobox']");
     if (hiddenInput) {
@@ -2441,15 +2568,7 @@
       return { ok: true, status: "filled", reason: "", value: current };
     }
 
-    clickElement(control);
-    await sleep(120);
-
-    var listbox = null;
-    for (var attempt = 0; attempt < 12; attempt += 1) {
-      listbox = findEducationMonthListbox(control, savedMonth);
-      if (listbox && collectListboxOptions(listbox).length) break;
-      await sleep(60);
-    }
+    var listbox = await openEducationDropdown(control);
     if (!listbox) {
       return { ok: false, status: "failed", reason: "Dropdown listbox did not open." };
     }
@@ -2464,9 +2583,7 @@
       }
     }
     if (!matched) {
-      try {
-        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      } catch (_) {}
+      closeReactSelectMenu(control);
       return { ok: false, status: "skipped", reason: "No compatible education option." };
     }
 
@@ -2482,6 +2599,7 @@
       await sleep(60);
     }
     if (!selected || monthIndexFromLabel(selected) !== want) {
+      closeReactSelectMenu(control);
       return { ok: false, status: "failed", reason: "Verification failed." };
     }
     return { ok: true, status: "filled", reason: "", value: selected };
@@ -2550,15 +2668,7 @@
       return { ok: false, status: "skipped", reason: "Field is already completed." };
     }
 
-    clickElement(control);
-    await sleep(120);
-
-    var listbox = null;
-    for (var attempt = 0; attempt < 10; attempt += 1) {
-      listbox = findVisibleListbox();
-      if (listbox) break;
-      await sleep(60);
-    }
+    var listbox = await openEducationDropdown(control);
     if (!listbox) {
       return { ok: false, status: "failed", reason: "Dropdown listbox did not open." };
     }
@@ -2566,9 +2676,7 @@
     var options = collectListboxOptions(listbox);
     var matched = pickerFn(options);
     if (!matched) {
-      try {
-        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      } catch (_) {}
+      closeReactSelectMenu(control);
       return { ok: false, status: "skipped", reason: "No compatible education option." };
     }
 
@@ -2586,6 +2694,7 @@
     }
 
     if (!selected || !pickerFn([{ label: selected, el: null }])) {
+      closeReactSelectMenu(control);
       return { ok: false, status: "failed", reason: "Verification failed; selected option did not persist." };
     }
     return { ok: true, status: "filled", reason: "", value: selected };
@@ -2604,33 +2713,23 @@
       return { ok: false, status: "skipped", reason: "Field is already completed." };
     }
 
-    clickElement(control);
-    await sleep(120);
-
-    var listbox = null;
-    for (var attempt = 0; attempt < 10; attempt += 1) {
-      listbox = findVisibleListbox();
-      if (listbox) break;
-      await sleep(60);
-    }
+    var listbox = await openEducationDropdown(control);
+    var searchInput =
+      canonicalReactSelectComboboxInput(control) || findSearchInputNear(control, listbox);
 
     var queries = schoolSearchQueries(saved);
     var matched = null;
     var options = [];
 
     for (var q = 0; q < queries.length; q += 1) {
-      var searchInput = findSearchInputNear(control, listbox);
+      searchInput =
+        canonicalReactSelectComboboxInput(control) || findSearchInputNear(control, listbox) || searchInput;
       if (searchInput) {
         typeIntoSearchInput(searchInput, queries[q]);
         await sleep(350);
       }
 
-      listbox = null;
-      for (var wait = 0; wait < 12; wait += 1) {
-        listbox = findVisibleListbox();
-        if (listbox && collectListboxOptions(listbox).length) break;
-        await sleep(80);
-      }
+      listbox = await waitForListboxForControl(control, 12, 80);
       if (!listbox) continue;
 
       options = collectListboxOptions(listbox);
@@ -2639,16 +2738,14 @@
     }
 
     if (!listbox) {
+      closeReactSelectMenu(control);
       return { ok: false, status: "failed", reason: "School dropdown listbox did not open." };
     }
     if (!matched) {
-      try {
-        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      } catch (_) {}
+      closeReactSelectMenu(control);
       return { ok: false, status: "skipped", reason: "No compatible school option." };
     }
 
-    // Always click the visible Greenhouse option (never rely on typed text alone).
     clickElement(matched.el);
     await sleep(500);
 
@@ -2661,6 +2758,7 @@
       await sleep(50);
     }
     if (!selected || !(schoolsMatchNormalized(selected, saved) || pickSchoolOption([{ label: selected }], saved))) {
+      closeReactSelectMenu(control);
       return { ok: false, status: "failed", reason: "Verification failed; selected school did not persist." };
     }
     return { ok: true, status: "filled", reason: "", value: selected };
@@ -2681,32 +2779,20 @@
       }
     }
 
-    clickElement(control);
-    await sleep(120);
-
-    var listbox = null;
-    var searchInput = null;
-    for (var attempt = 0; attempt < 10; attempt += 1) {
-      listbox = findVisibleListbox();
-      if (listbox) break;
-      await sleep(60);
-    }
-    searchInput = findSearchInputNear(control, listbox) || searchInput;
+    var listbox = await openEducationDropdown(control);
+    var searchInput =
+      canonicalReactSelectComboboxInput(control) || findSearchInputNear(control, listbox);
 
     var options = listbox ? collectListboxOptions(listbox) : [];
     var matched = pickDisciplineOption(options, saved);
 
     if (!matched) {
-      searchInput = findSearchInputNear(control, listbox) || searchInput;
+      searchInput =
+        canonicalReactSelectComboboxInput(control) || findSearchInputNear(control, listbox) || searchInput;
       if (searchInput) {
         typeIntoSearchInput(searchInput, saved);
         await sleep(350);
-        listbox = null;
-        for (var wait = 0; wait < 12; wait += 1) {
-          listbox = findVisibleListbox();
-          if (listbox && collectListboxOptions(listbox).length) break;
-          await sleep(80);
-        }
+        listbox = await waitForListboxForControl(control, 12, 80);
         if (listbox) {
           options = collectListboxOptions(listbox);
           matched = pickDisciplineOption(options, saved);
@@ -2715,16 +2801,12 @@
     }
 
     if (!matched && isComputerRelatedDiscipline(saved)) {
-      searchInput = findSearchInputNear(control, listbox) || searchInput;
+      searchInput =
+        canonicalReactSelectComboboxInput(control) || findSearchInputNear(control, listbox) || searchInput;
       if (searchInput) {
         typeIntoSearchInput(searchInput, "computer");
         await sleep(350);
-        listbox = null;
-        for (var wait2 = 0; wait2 < 12; wait2 += 1) {
-          listbox = findVisibleListbox();
-          if (listbox && collectListboxOptions(listbox).length) break;
-          await sleep(80);
-        }
+        listbox = await waitForListboxForControl(control, 12, 80);
         if (listbox) {
           options = collectListboxOptions(listbox);
           matched = pickDisciplineOption(options, saved);
@@ -2738,9 +2820,7 @@
           setNativeValue(searchInput, "");
         } catch (_) {}
       }
-      try {
-        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      } catch (_) {}
+      closeReactSelectMenu(control);
     }
 
     if (
@@ -3360,16 +3440,7 @@
   }
 
   async function pollGpaListbox(control) {
-    var listbox = null;
-    var attempt;
-    for (attempt = 0; attempt < 10; attempt += 1) {
-      listbox = findReactSelectGpaListbox(control);
-      if (!listbox) listbox = findListboxForControl(control);
-      if (!listbox) listbox = findVisibleListbox();
-      if (listbox && collectListboxOptions(listbox).length) return listbox;
-      await sleep(60);
-    }
-    return listbox;
+    return waitForListboxForControl(control, 10, 60);
   }
 
   async function selectGpaDropdownOption(control, savedGpa) {
@@ -3502,6 +3573,7 @@
         (matched && normalizeText(selected) === normalizeText(matched.label))
       )
     ) {
+      closeReactSelectMenu(currentControl || comboInput || control);
       return { ok: false, status: "failed", reason: "Verification failed; selected option did not persist." };
     }
     return { ok: true, status: "filled", reason: "", value: selected };
@@ -4211,7 +4283,8 @@
         function (optionLabel) {
           return degreeOptionMatches(answer, optionLabel);
         },
-        degreeTarget
+        degreeTarget,
+        { educationDropdown: true }
       );
       if (result && result.ok) {
         var visibleDegree = trimText(result.value || "");
