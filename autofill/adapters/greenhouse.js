@@ -355,6 +355,18 @@
     );
   }
 
+  function skippedSensitiveDemographicNoMatch(category, result) {
+    if (!isSensitive(category) || !result) return result;
+    if (result.status !== "failed") return result;
+    if (String(result.reason || "") !== "No matching dropdown option.") return result;
+    return {
+      ok: false,
+      status: "skipped",
+      reason: "No compatible explicit saved demographic option.",
+      value: ""
+    };
+  }
+
   function collectOptionLabels(el) {
     var labels = [];
     if (!el) return labels;
@@ -1687,6 +1699,12 @@
   function markHandled(handledElements, el) {
     if (!el || !handledElements) return;
     if (handledElements.indexOf(el) === -1) handledElements.push(el);
+  }
+
+  function markDemographicComboboxHandled(handledElements, control) {
+    markHandled(handledElements, control);
+    var comboInput = canonicalReactSelectComboboxInput(control);
+    if (comboInput) markHandled(handledElements, comboInput);
   }
 
   function wasHandled(handledElements, el) {
@@ -5091,118 +5109,145 @@
     var d;
     for (d = 0; d < dropdownCategories.length; d += 1) {
       var category = dropdownCategories[d];
-      var control = findLiveComboboxByCategory(root, category, handledElements);
-      if (!control) continue;
-      var classified = classifyCombobox(control);
-      var answer = getInventoryAnswer(category, inventory, options);
-      if (category === "gender") {
-        handledElements.push(control);
-        var genderLabel = (classified && classified.label) || labelForCombobox(control) || category;
-        var genderResult = await selectCustomDropdownOption(
-          control,
-          function (optionLabel) {
-            return optionMatches("gender", answer, optionLabel);
-          },
-          answer
-        );
-        results.push({
-          category: category,
-          label: genderLabel,
-          status: genderResult.status,
-          reason: genderResult.reason || "",
-          ok: Boolean(genderResult.ok),
-          value: genderResult.ok ? genderResult.value || answer : ""
-        });
-        if (genderResult.ok) await sleep(120);
-        continue;
+      var attempts = 0;
+      while (attempts < 12) {
+        var control = findLiveComboboxByCategory(root, category, handledElements);
+        if (!control) break;
+        attempts += 1;
+        var classified = classifyCombobox(control);
+        var answer = getInventoryAnswer(category, inventory, options);
+        if (category === "gender") {
+          markDemographicComboboxHandled(handledElements, control);
+          var genderLabel = (classified && classified.label) || labelForCombobox(control) || category;
+          var genderResult = skippedSensitiveDemographicNoMatch(
+            category,
+            await selectCustomDropdownOption(
+              control,
+              function (optionLabel) {
+                return optionMatches("gender", answer, optionLabel);
+              },
+              answer
+            )
+          );
+          results.push({
+            category: category,
+            label: genderLabel,
+            status: genderResult.status,
+            reason: genderResult.reason || "",
+            ok: Boolean(genderResult.ok),
+            value: genderResult.ok ? genderResult.value || answer : ""
+          });
+          if (genderResult.ok) await sleep(120);
+          continue;
+        }
+        if (category === "transgender") {
+          markDemographicComboboxHandled(handledElements, control);
+          var transgenderLabel = (classified && classified.label) || labelForCombobox(control) || category;
+          var transgenderResult = skippedSensitiveDemographicNoMatch(
+            category,
+            await selectCustomDropdownOption(
+              control,
+              function (optionLabel) {
+                return optionMatches("transgender", answer, optionLabel);
+              },
+              answer
+            )
+          );
+          results.push({
+            category: category,
+            label: transgenderLabel,
+            status: transgenderResult.status,
+            reason: transgenderResult.reason || "",
+            ok: Boolean(transgenderResult.ok),
+            value: transgenderResult.ok ? transgenderResult.value || answer : ""
+          });
+          if (transgenderResult.ok) await sleep(120);
+          continue;
+        }
+        if (category === "race_ethnicity") {
+          markDemographicComboboxHandled(handledElements, control);
+          var raceLabel = (classified && classified.label) || labelForCombobox(control) || category;
+          var raceResult = skippedSensitiveDemographicNoMatch(
+            category,
+            await selectCustomDropdownOption(
+              control,
+              function (optionLabel) {
+                return optionMatches("race_ethnicity", answer, optionLabel);
+              },
+              answer
+            )
+          );
+          results.push({
+            category: category,
+            label: raceLabel,
+            status: raceResult.status,
+            reason: raceResult.reason || "",
+            ok: Boolean(raceResult.ok),
+            value: raceResult.ok ? raceResult.value || answer : ""
+          });
+          if (raceResult.ok) await sleep(120);
+          continue;
+        }
+        if (category === "veteran_status") {
+          markDemographicComboboxHandled(handledElements, control);
+          var veteranLabel = (classified && classified.label) || labelForCombobox(control) || category;
+          var veteranResult = skippedSensitiveDemographicNoMatch(
+            category,
+            await selectCustomDropdownOption(
+              control,
+              function (optionLabel) {
+                return optionMatches("veteran_status", answer, optionLabel);
+              },
+              answer
+            )
+          );
+          results.push({
+            category: category,
+            label: veteranLabel,
+            status: veteranResult.status,
+            reason: veteranResult.reason || "",
+            ok: Boolean(veteranResult.ok),
+            value: veteranResult.ok ? veteranResult.value || answer : ""
+          });
+          if (veteranResult.ok) await sleep(120);
+          continue;
+        }
+        if (category === "disability_status") {
+          markDemographicComboboxHandled(handledElements, control);
+          var disabilityLabel = (classified && classified.label) || labelForCombobox(control) || category;
+          var disabilityResult = skippedSensitiveDemographicNoMatch(
+            category,
+            await selectCustomDropdownOption(
+              control,
+              function (optionLabel) {
+                return optionMatches("disability_status", answer, optionLabel);
+              },
+              answer
+            )
+          );
+          results.push({
+            category: category,
+            label: disabilityLabel,
+            status: disabilityResult.status,
+            reason: disabilityResult.reason || "",
+            ok: Boolean(disabilityResult.ok),
+            value: disabilityResult.ok ? disabilityResult.value || answer : ""
+          });
+          if (disabilityResult.ok) await sleep(120);
+          continue;
+        }
+        var row = await fillLabeledYesNoDropdown(control, category, answer, handledElements);
+        markDemographicComboboxHandled(handledElements, control);
+        if (row) {
+          var convertedRow = skippedSensitiveDemographicNoMatch(category, row);
+          row.status = convertedRow.status;
+          row.reason = convertedRow.reason || "";
+          row.ok = Boolean(convertedRow.ok);
+          row.value = convertedRow.ok ? convertedRow.value || answer : "";
+          results.push(row);
+        }
+        if (row && row.ok && category === "hispanic_latino") await sleep(120);
       }
-      if (category === "transgender") {
-        handledElements.push(control);
-        var transgenderLabel = (classified && classified.label) || labelForCombobox(control) || category;
-        var transgenderResult = await selectCustomDropdownOption(
-          control,
-          function (optionLabel) {
-            return optionMatches("transgender", answer, optionLabel);
-          },
-          answer
-        );
-        results.push({
-          category: category,
-          label: transgenderLabel,
-          status: transgenderResult.status,
-          reason: transgenderResult.reason || "",
-          ok: Boolean(transgenderResult.ok),
-          value: transgenderResult.ok ? transgenderResult.value || answer : ""
-        });
-        if (transgenderResult.ok) await sleep(120);
-        continue;
-      }
-      if (category === "race_ethnicity") {
-        handledElements.push(control);
-        var raceLabel = (classified && classified.label) || labelForCombobox(control) || category;
-        var raceResult = await selectCustomDropdownOption(
-          control,
-          function (optionLabel) {
-            return optionMatches("race_ethnicity", answer, optionLabel);
-          },
-          answer
-        );
-        results.push({
-          category: category,
-          label: raceLabel,
-          status: raceResult.status,
-          reason: raceResult.reason || "",
-          ok: Boolean(raceResult.ok),
-          value: raceResult.ok ? raceResult.value || answer : ""
-        });
-        if (raceResult.ok) await sleep(120);
-        continue;
-      }
-      if (category === "veteran_status") {
-        handledElements.push(control);
-        var veteranLabel = (classified && classified.label) || labelForCombobox(control) || category;
-        var veteranResult = await selectCustomDropdownOption(
-          control,
-          function (optionLabel) {
-            return optionMatches("veteran_status", answer, optionLabel);
-          },
-          answer
-        );
-        results.push({
-          category: category,
-          label: veteranLabel,
-          status: veteranResult.status,
-          reason: veteranResult.reason || "",
-          ok: Boolean(veteranResult.ok),
-          value: veteranResult.ok ? veteranResult.value || answer : ""
-        });
-        if (veteranResult.ok) await sleep(120);
-        continue;
-      }
-      if (category === "disability_status") {
-        handledElements.push(control);
-        var disabilityLabel = (classified && classified.label) || labelForCombobox(control) || category;
-        var disabilityResult = await selectCustomDropdownOption(
-          control,
-          function (optionLabel) {
-            return optionMatches("disability_status", answer, optionLabel);
-          },
-          answer
-        );
-        results.push({
-          category: category,
-          label: disabilityLabel,
-          status: disabilityResult.status,
-          reason: disabilityResult.reason || "",
-          ok: Boolean(disabilityResult.ok),
-          value: disabilityResult.ok ? disabilityResult.value || answer : ""
-        });
-        if (disabilityResult.ok) await sleep(120);
-        continue;
-      }
-      var row = await fillLabeledYesNoDropdown(control, category, answer, handledElements);
-      if (row) results.push(row);
-      if (row && row.ok && category === "hispanic_latino") await sleep(120);
     }
 
     var educationRows = await fillEducationFields(root, inventory, options.profile, handledElements);
