@@ -4526,15 +4526,21 @@
     var values = readEducationBlockValues(
       (getEducationBlocks(document)[(block && typeof block.index === "number" ? block.index : educationIndex)] || block)
     );
+    var hasSchoolField = Boolean(block && block.fields && block.fields.education_school);
+    var hasDegreeField = Boolean(block && block.fields && block.fields.education_degree);
+    var hasDisciplineField = Boolean(block && block.fields && block.fields.education_discipline);
     var schoolOk =
+      !hasSchoolField ||
       !record.institution ||
       (values.school &&
         (schoolsMatchNormalized(values.school, record.institution) ||
           Boolean(pickSchoolOption([{ label: values.school }], record.institution))));
     var degreeOk =
+      !hasDegreeField ||
       !record.degree ||
       (values.degree && degreeOptionMatches(record.degree, values.degree));
     var disciplineOk =
+      !hasDisciplineField ||
       !record.field ||
       (values.discipline && disciplineOptionMatches(record.field, values.discipline));
     var success = Boolean(schoolOk && degreeOk && disciplineOk && failedFields.length === 0);
