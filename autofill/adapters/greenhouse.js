@@ -3276,7 +3276,67 @@
     if (closed.length === 1) return closed[0];
     if (closed.length > 1) return null;
     if (bound.length === 1) return bound[0];
+    var gridPick = pickPlainNumericGridGpaOption(options, gpa);
+    if (gridPick) return gridPick;
     return pickRoundedTenthGpaOption(options, gpa);
+  }
+
+  function getPlainNumericGpaGrid(options) {
+    var entries = [];
+    var distinct = [];
+    (options || []).forEach(function (opt) {
+      var label = trimText(opt && opt.label);
+      if (!/^\d+(?:\.\d+)?$/.test(label)) return;
+      var interpreted = interpretGpaOption(label);
+      if (!interpreted || interpreted.kind !== "exact") return;
+      entries.push({ opt: opt, value: interpreted.value });
+      if (distinct.indexOf(interpreted.value) === -1) distinct.push(interpreted.value);
+    });
+    if (distinct.length < 10) return null;
+    distinct.sort(function (a, b) {
+      return a - b;
+    });
+    var i;
+    var steps = [];
+    for (i = 1; i < distinct.length; i += 1) {
+      var step = distinct[i] - distinct[i - 1];
+      if (!(step > 0) || step > 0.1 + 1e-6) return null;
+      steps.push(step);
+    }
+    var base = steps[0];
+    for (i = 1; i < steps.length; i += 1) {
+      if (Math.abs(steps[i] - base) > 1e-6) return null;
+    }
+    return {
+      entries: entries,
+      min: distinct[0],
+      max: distinct[distinct.length - 1],
+      step: base
+    };
+  }
+
+  function pickPlainNumericGridGpaOption(options, gpa) {
+    if (!isFinite(gpa)) return null;
+    var grid = getPlainNumericGpaGrid(options);
+    if (!grid) return null;
+    if (gpa < grid.min - 1e-9 || gpa > grid.max + 1e-9) return null;
+    var i;
+    var exact = [];
+    for (i = 0; i < grid.entries.length; i += 1) {
+      if (Math.abs(grid.entries[i].value - gpa) < 1e-9) exact.push(grid.entries[i].opt);
+    }
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return null;
+    var best = null;
+    var bestVal = Number.NEGATIVE_INFINITY;
+    for (i = 0; i < grid.entries.length; i += 1) {
+      var value = grid.entries[i].value;
+      if (value <= gpa + 1e-9 && value > bestVal) {
+        bestVal = value;
+        best = grid.entries[i].opt;
+      }
+    }
+    return best;
   }
 
   function isOneDecimal(value) {
@@ -3551,7 +3611,11 @@
       return { ok: false, status: "skipped", reason: "No compatible GPA option." };
     }
 
-    if (matched.el && typeof matched.el.click === "function") {
+    var plainGrid = getPlainNumericGpaGrid(options);
+    var matchedLabel = trimText(matched.label);
+    if (plainGrid && /^\d+(?:\.\d+)?$/.test(matchedLabel)) {
+      dispatchGpaOptionMouseSequence(matched.el);
+    } else if (matched.el && typeof matched.el.click === "function") {
       matched.el.click();
     }
     await sleep(500);
@@ -3576,7 +3640,28 @@
       closeReactSelectMenu(currentControl || comboInput || control);
       return { ok: false, status: "failed", reason: "Verification failed; selected option did not persist." };
     }
+    currentControl = liveControl();
+    if (
+      currentControl &&
+      currentControl.getAttribute &&
+      currentControl.getAttribute("aria-expanded") === "true"
+    ) {
+      closeReactSelectMenu(currentControl);
+    }
     return { ok: true, status: "filled", reason: "", value: selected };
+  }
+
+  function dispatchGpaOptionMouseSequence(option) {
+    if (!option) return false;
+    var opts = { bubbles: true, cancelable: true, view: global, button: 0 };
+    try {
+      option.dispatchEvent(new MouseEvent("mousedown", opts));
+      option.dispatchEvent(new MouseEvent("mouseup", opts));
+      option.dispatchEvent(new MouseEvent("click", opts));
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   async function fillStandaloneGpaDropdown(root, inventory, profile, handledElements) {
