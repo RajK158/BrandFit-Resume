@@ -2714,6 +2714,7 @@
     }
 
     var listbox = await openEducationDropdown(control);
+    var dropdownOpened = Boolean(listbox);
     var searchInput =
       canonicalReactSelectComboboxInput(control) || findSearchInputNear(control, listbox);
 
@@ -2730,6 +2731,7 @@
       }
 
       listbox = await waitForListboxForControl(control, 12, 80);
+      if (listbox) dropdownOpened = true;
       if (!listbox) continue;
 
       options = collectListboxOptions(listbox);
@@ -2737,13 +2739,22 @@
       if (matched) break;
     }
 
-    if (!listbox) {
-      closeReactSelectMenu(control);
-      return { ok: false, status: "failed", reason: "School dropdown listbox did not open." };
-    }
     if (!matched) {
-      closeReactSelectMenu(control);
-      return { ok: false, status: "skipped", reason: "No compatible school option." };
+      if (!dropdownOpened) {
+        closeReactSelectMenu(control);
+        return { ok: false, status: "failed", reason: "School dropdown listbox did not open." };
+      }
+      searchInput =
+        canonicalReactSelectComboboxInput(control) || searchInput || findSearchInputNear(control, listbox);
+      if (searchInput) {
+        typeIntoSearchInput(searchInput, saved);
+        await sleep(100);
+      }
+      return {
+        ok: false,
+        status: "skipped",
+        reason: "No compatible school option; saved school left typed for manual selection."
+      };
     }
 
     clickElement(matched.el);
@@ -4962,6 +4973,52 @@
     };
   }
 
+  async function restoreFinalManualSchoolText(root, educationRows, inventory, profile) {
+    var pending = [];
+    (educationRows || []).forEach(function (row) {
+      if (!row || row.category !== "education_school") return;
+      if (row.status !== "skipped") return;
+      if (String(row.reason || "").indexOf("saved school left typed for manual selection") === -1) {
+        return;
+      }
+      pending.push(row);
+    });
+    if (!pending.length) return;
+
+    var records = resolveEducationRecords(inventory, profile);
+    var blocks = getEducationBlocks(root);
+    var candidates = [];
+    var p;
+    for (p = 0; p < pending.length; p += 1) {
+      var row = pending[p];
+      var idx = typeof row.educationIndex === "number" ? row.educationIndex : -1;
+      var record = idx >= 0 ? records[idx] : null;
+      if (!record || !trimText(record.institution)) continue;
+      var matchedBlock = null;
+      var b;
+      for (b = 0; b < blocks.length; b += 1) {
+        if (!educationBlockMatchesRecord(blocks[b], record)) continue;
+        matchedBlock = blocks[b];
+        break;
+      }
+      if (!matchedBlock) continue;
+      var schoolField = matchedBlock.fields && matchedBlock.fields.education_school;
+      var node = schoolField && schoolField.node;
+      if (!node) continue;
+      var control = findComboboxControl(node) || node;
+      if (isComboboxAlreadyFilled(control)) continue;
+      candidates.push({ record: record, control: control });
+    }
+    if (!candidates.length) return;
+    var target = candidates[candidates.length - 1];
+    var searchInput =
+      canonicalReactSelectComboboxInput(target.control) ||
+      findSearchInputNear(target.control, null);
+    if (!searchInput) return;
+    typeIntoSearchInput(searchInput, target.record.institution);
+    await sleep(100);
+  }
+
   async function fillSupportedFields(context) {
     var ctx = context || {};
     if (!isSupportedPage()) return emptyReport();
@@ -5188,6 +5245,8 @@
       var filled = fillOneField(el, inventory, options, resume, seenRadioNames, handledElements);
       if (filled) results.push(filled);
     }
+
+    await restoreFinalManualSchoolText(root, educationRows, inventory, options.profile);
 
     return summarize(results, handledElements);
   }
