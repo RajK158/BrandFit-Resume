@@ -263,7 +263,12 @@
       return canon;
     }
     if (category === "veteran_status") {
-      if (canon.indexOf("not a veteran") !== -1 || canon === "i am not a protected veteran") {
+      if (
+        canon.indexOf("not a veteran") !== -1 ||
+        canon === "i am not a protected veteran" ||
+        (/\bdo(?:n\s*t| not)\s+fall\s+into\b/.test(canon) &&
+          /\bcategories?\s+of\s+protected\s+veterans?\b/.test(canon))
+      ) {
         return "not a veteran";
       }
       if (canon.indexOf("protected veteran") !== -1) return "protected veteran";
