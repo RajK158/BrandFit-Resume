@@ -520,6 +520,130 @@
     return results;
   }
 
+  function classifyExportControlOption(label) {
+    var text = normalizeText(label);
+    if (!text) return "";
+    if (/\bforeign\s+person\b/.test(text)) return "foreign";
+    if (/\bu\.s\.\s+person\b/.test(text) || /\bus\s+person\b/.test(text)) return "us";
+    return "";
+  }
+
+  function looksLikeExportControlSelect(questionText, optionLabels) {
+    var blob = normalizeText(questionText + " " + (optionLabels || []).join(" "));
+    if (!blob) return false;
+    return (
+      /\bexport\b/.test(blob) ||
+      /\bitar\b/.test(blob) ||
+      /\bear\b/.test(blob) ||
+      /\bu\.s\.\s+person\b/.test(blob) ||
+      /\bus\s+person\b/.test(blob) ||
+      /\bforeign\s+person\b/.test(blob)
+    );
+  }
+
+  function exportControlSideFromSaved(saved) {
+    var text = normalizeText(saved);
+    if (!text) return "";
+    if (text === "prefer not to answer") return "";
+    if (text === "none of the above") return "foreign";
+    if (text === "a united states citizen or national") return "us";
+    if (text === "a lawful permanent resident of the united states (green card holder)") return "us";
+    if (text === "a person admitted as a refugee to the united states") return "us";
+    if (text === "a person admitted as an asylee to the united states") return "us";
+    if (classifyExportControlOption(text) === "us") return "us";
+    if (classifyExportControlOption(text) === "foreign") return "foreign";
+    return "";
+  }
+
+  function savedExportControlStatus(inventory, profile, workAuthorization) {
+    var fromInv = trimText(
+      (inventory && (inventory.export_control_status || inventory.exportControlStatus)) || ""
+    );
+    if (fromInv) return fromInv;
+    var work = (profile && profile.workAuthorization) || workAuthorization || {};
+    return trimText(work.exportControlStatus || "");
+  }
+
+  function findExportControlPair(select) {
+    var usOpts = [];
+    var foreignOpts = [];
+    var labels = [];
+    Array.prototype.forEach.call((select && select.options) || [], function (opt) {
+      if (!opt || opt.disabled) return;
+      if (isPlaceholderSelectOption(opt)) return;
+      var label = selectOptionLabel(opt);
+      labels.push(label);
+      var side = classifyExportControlOption(label);
+      if (side === "us") usOpts.push(opt);
+      if (side === "foreign") foreignOpts.push(opt);
+    });
+    if (usOpts.length !== 1 || foreignOpts.length !== 1) return null;
+    return { us: usOpts[0], foreign: foreignOpts[0], labels: labels };
+  }
+
+  function fillExportControlSelects(inventory, profile, workAuthorization, handledElements) {
+    var results = [];
+    var wrappers = document.querySelectorAll(
+      "#application-form .application-question.custom-question"
+    );
+    var saved = savedExportControlStatus(inventory, profile, workAuthorization);
+
+    Array.prototype.forEach.call(wrappers, function (wrapper) {
+      var selects = wrapper.querySelectorAll("select");
+      Array.prototype.forEach.call(selects, function (select) {
+        if (!select) return;
+        var name = trimText(select.name || "");
+        if (eeoCategoryForName(name)) return;
+        if (normalizeText(name).indexOf("signature") !== -1) return;
+        if (normalizeText(name).indexOf("surveysresponses") !== -1) return;
+        if (handledElements.indexOf(select) !== -1) return;
+
+        var pair = findExportControlPair(select);
+        if (!pair) return;
+        var questionText = questionTextFromWrapper(wrapper);
+        if (!looksLikeExportControlSelect(questionText, pair.labels)) return;
+
+        markHandled(handledElements, select);
+
+        if (isSelectAlreadyFilled(select)) {
+          results.push(
+            resultRow("export_control_status", questionText, "skipped", "Field is already completed.", false, "")
+          );
+          return;
+        }
+
+        var side = exportControlSideFromSaved(saved);
+        if (!side) {
+          results.push(
+            resultRow("export_control_status", questionText, "skipped", "No saved answer.", false, "")
+          );
+          return;
+        }
+
+        var matched = side === "us" ? pair.us : pair.foreign;
+        if (!applySelectOption(select, matched)) {
+          results.push(
+            resultRow(
+              "export_control_status",
+              questionText,
+              "failed",
+              "Verification failed; selected option did not persist.",
+              false,
+              ""
+            )
+          );
+          return;
+        }
+
+        results.push(
+          resultRow("export_control_status", questionText, "filled", "", true, selectOptionLabel(matched))
+        );
+      });
+    });
+
+    return results;
+  }
+
   function fillSupportedFields(context) {
     var ctx = context || {};
     var handledElements = ctx.handledElements || [];
@@ -528,6 +652,14 @@
     if (isSupportedPage()) {
       results = fillYesNoRadioGroups(ctx.inventory || {}, handledElements);
       results = results.concat(fillEeoSelects(ctx.inventory || {}, handledElements));
+      results = results.concat(
+        fillExportControlSelects(
+          ctx.inventory || {},
+          ctx.profile || null,
+          ctx.workAuthorization || null,
+          handledElements
+        )
+      );
     }
 
     return Promise.resolve(summarize(results, handledElements));
