@@ -1867,8 +1867,10 @@
       location: trimText(personal.location || ""),
       current_location: trimText(personal.location || ""),
       city: trimText(personal.location || ""),
-      state: "",
-      postal_code: "",
+      address_line_1: trimText(personal.addressLine1 || ""),
+      address_line_2: trimText(personal.addressLine2 || ""),
+      state: trimText(personal.state || ""),
+      postal_code: trimText(personal.postalCode || ""),
       country: trimText(work.countryApplyingIn || ""),
       linkedin: trimText(links.linkedin || ""),
       github: trimText(links.github || ""),
@@ -1964,7 +1966,12 @@
         phone: trimText(personal.phone || ""),
         phoneCountry: trimText(personal.phoneCountry || ""),
         phoneCountryCode: trimText(personal.phoneCountryCode || ""),
-        location: trimText(personal.location || "")
+        location: trimText(personal.location || ""),
+        addressLine1: trimText(personal.addressLine1 || ""),
+        addressLine2: trimText(personal.addressLine2 || ""),
+        city: trimText(personal.city || ""),
+        state: trimText(personal.state || ""),
+        postalCode: trimText(personal.postalCode || "")
       },
       links: {
         linkedin: trimText(links.linkedin || ""),

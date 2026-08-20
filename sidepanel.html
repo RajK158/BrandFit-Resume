@@ -89,6 +89,26 @@
       <label for="location">Current location (City)</label>
       <input type="text" id="location" placeholder="Long Beach, California, United States" autocomplete="address-level2">
 
+      <label for="addressLine1">Address Line 1</label>
+      <input type="text" id="addressLine1" placeholder="Street address" autocomplete="address-line1">
+
+      <label for="addressLine2">Address Line 2 <span class="optional-tag">optional</span></label>
+      <input type="text" id="addressLine2" placeholder="Apt, suite, unit" autocomplete="address-line2">
+
+      <div class="row">
+        <div>
+          <label for="city">City</label>
+          <input type="text" id="city" placeholder="City" autocomplete="address-level2">
+        </div>
+        <div>
+          <label for="state">State</label>
+          <input type="text" id="state" placeholder="CA or California" autocomplete="address-level1">
+        </div>
+      </div>
+
+      <label for="postalCode">Postal Code</label>
+      <input type="text" id="postalCode" placeholder="Postal or ZIP code" autocomplete="postal-code">
+
       <button id="saveBtn" class="action btn-secondary" type="button">Save Core Profile</button>
 
       <div id="masterProfilePanel" class="master-profile-panel">

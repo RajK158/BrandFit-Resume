@@ -58,6 +58,17 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.myworkdayjobs.com/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/workday.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
     }
   ]
 }

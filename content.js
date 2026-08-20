@@ -178,6 +178,10 @@
     if (Lever && typeof Lever.isSupportedPage === "function" && Lever.isSupportedPage()) {
       return "lever";
     }
+    var Workday = window.ImpulsoWorkdayAdapter;
+    if (Workday && typeof Workday.isSupportedPage === "function" && Workday.isSupportedPage()) {
+      return "workday";
+    }
     return "generic";
   }
 
@@ -324,6 +328,22 @@
           tabId: opts.tabId
         });
         report = mergeReport(report, leverReport);
+      }
+    } else if (ats === "workday") {
+      var Workday = window.ImpulsoWorkdayAdapter;
+      if (Workday && typeof Workday.fillSupportedFields === "function") {
+        var workdayReport = await Workday.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, workdayReport);
       }
     }
 

@@ -464,6 +464,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       const locationEl = document.getElementById("location");
       if (locationEl) locationEl.value = personal.location;
     }
+    const addressLine1El = document.getElementById("addressLine1");
+    if (addressLine1El) addressLine1El.value = personal.addressLine1 || "";
+    const addressLine2El = document.getElementById("addressLine2");
+    if (addressLine2El) addressLine2El.value = personal.addressLine2 || "";
+    const cityEl = document.getElementById("city");
+    if (cityEl) cityEl.value = personal.city || "";
+    const stateEl = document.getElementById("state");
+    if (stateEl) stateEl.value = personal.state || "";
+    const postalCodeEl = document.getElementById("postalCode");
+    if (postalCodeEl) postalCodeEl.value = personal.postalCode || "";
 
     if (window.ImpulsoResume) {
       await window.ImpulsoResume.init();
@@ -495,6 +505,16 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
   const phoneCountryCode = phoneCountryCodeEl ? phoneCountryCodeEl.value : "";
   const locationEl = document.getElementById("location");
   const location = locationEl ? locationEl.value : "";
+  const addressLine1El = document.getElementById("addressLine1");
+  const addressLine1 = addressLine1El ? addressLine1El.value : "";
+  const addressLine2El = document.getElementById("addressLine2");
+  const addressLine2 = addressLine2El ? addressLine2El.value : "";
+  const cityEl = document.getElementById("city");
+  const city = cityEl ? cityEl.value : "";
+  const stateEl = document.getElementById("state");
+  const state = stateEl ? stateEl.value : "";
+  const postalCodeEl = document.getElementById("postalCode");
+  const postalCode = postalCodeEl ? postalCodeEl.value : "";
 
   try {
     if (email.trim() && !window.ImpulsoStorage.isValidEmailFormat(email)) {
@@ -516,7 +536,12 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
         phone: phone,
         phoneCountry: phoneCountry,
         phoneCountryCode: phoneCountryCode,
-        location: location
+        location: location,
+        addressLine1: addressLine1,
+        addressLine2: addressLine2,
+        city: city,
+        state: state,
+        postalCode: postalCode
       }
     };
 
@@ -606,6 +631,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         "autofill.js",
         "autofill/adapters/ashby.js",
         "autofill/adapters/lever.js",
+        "autofill/adapters/workday.js",
         "content.js"
       ]
     });

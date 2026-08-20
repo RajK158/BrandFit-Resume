@@ -325,7 +325,12 @@
         phoneCountry: "",
         phoneCountryCode: "",
         location: "",
-        preferredName: ""
+        preferredName: "",
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        state: "",
+        postalCode: ""
       },
       links: {
         linkedin: "",
@@ -1812,7 +1817,18 @@
     const draft = parsedDraft || {};
     const conflicts = [];
 
-    const personalFields = ["firstName", "lastName", "email", "phone", "location"];
+    const personalFields = [
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "location",
+      "addressLine1",
+      "addressLine2",
+      "city",
+      "state",
+      "postalCode"
+    ];
     personalFields.forEach((field) => {
       const existingValue = (master.personal && master.personal[field]) || "";
       const parsedValue = (draft.personal && draft.personal[field]) || "";
@@ -1932,6 +1948,31 @@
           master.personal && master.personal.location,
           draft.personal && draft.personal.location,
           choices["personal.location"]
+        ),
+        addressLine1: _pickScalar(
+          master.personal && master.personal.addressLine1,
+          draft.personal && draft.personal.addressLine1,
+          choices["personal.addressLine1"]
+        ),
+        addressLine2: _pickScalar(
+          master.personal && master.personal.addressLine2,
+          draft.personal && draft.personal.addressLine2,
+          choices["personal.addressLine2"]
+        ),
+        city: _pickScalar(
+          master.personal && master.personal.city,
+          draft.personal && draft.personal.city,
+          choices["personal.city"]
+        ),
+        state: _pickScalar(
+          master.personal && master.personal.state,
+          draft.personal && draft.personal.state,
+          choices["personal.state"]
+        ),
+        postalCode: _pickScalar(
+          master.personal && master.personal.postalCode,
+          draft.personal && draft.personal.postalCode,
+          choices["personal.postalCode"]
         )
       },
       links: {
