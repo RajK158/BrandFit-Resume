@@ -273,6 +273,7 @@
 
       var groups = collectNamedRadioGroups(wrapper);
       groups.forEach(function (group) {
+        if (isSurveysResponsesName(group.name)) return;
         if (!isExactYesNoGroup(group.radios)) return;
         markGroupHandled(handledElements, group.radios);
 
@@ -315,6 +316,241 @@
 
         results.push(
           resultRow(category, questionText, "filled", "", true, answer === "yes" ? "Yes" : "No")
+        );
+      });
+    });
+    return results;
+  }
+
+  function looksLikeWorkAuthorizationQuestion(questionText) {
+    var classified = classifyQuestion(questionText);
+    if ((classified && classified.category) === "work_authorization") return true;
+    var text = normalizeText(questionText);
+    if (!text) return false;
+    if (/\brelocatem?\b/.test(text) || /\bsponsor/.test(text)) return false;
+    if (/\binternship\b/.test(text) || /\bsemester\b/.test(text) || /\bacademic\b/.test(text)) return false;
+    if (looksLikeExportControl(questionText)) return false;
+    return (
+      /\blegally\s+authorized\b/.test(text) ||
+      /\bauthorized\s+to\s+work\b/.test(text) ||
+      /\bauthorization\s+to\s+work\b/.test(text) ||
+      /\bwork\s+authorization\b/.test(text) ||
+      /\beligible\s+to\s+work\b/.test(text) ||
+      /\blegally\s+eligible\s+to\s+work\b/.test(text)
+    );
+  }
+
+  function selectOptionYesNoToken(opt) {
+    if (!opt) return "";
+    var text = normalizeText(selectOptionLabel(opt) || opt.value || "");
+    if (text === "yes" || text === "no") return text;
+    return "";
+  }
+
+  function findYesNoSelectPair(select) {
+    var yesOpts = [];
+    var noOpts = [];
+    Array.prototype.forEach.call((select && select.options) || [], function (opt) {
+      if (!opt || opt.disabled) return;
+      if (isPlaceholderSelectOption(opt)) return;
+      var token = selectOptionYesNoToken(opt);
+      if (token === "yes") yesOpts.push(opt);
+      if (token === "no") noOpts.push(opt);
+    });
+    if (yesOpts.length !== 1 || noOpts.length !== 1) return null;
+    return { yes: yesOpts[0], no: noOpts[0] };
+  }
+
+  function classifyCompositeWorkAuthOption(label) {
+    var text = normalizeText(label);
+    if (!text) return "";
+    if (
+      /\bwithout\s+sponsorship\b/.test(text) ||
+      /\bno\s+sponsorship\b/.test(text) ||
+      /\bnot\s+require.{0,40}sponsor/.test(text) ||
+      /\bdo\s+not\s+require.{0,40}sponsor/.test(text)
+    ) {
+      return "authorized_no_sponsorship";
+    }
+    if (/\bsponsor/.test(text) && (/\bfuture\b/.test(text) || /\blater\b/.test(text))) {
+      return "future_sponsorship";
+    }
+    if (
+      /\bsponsor/.test(text) &&
+      (/\bimmediate\b/.test(text) || /\bnow\b/.test(text) || /\bcurrent(?:ly)?\b/.test(text))
+    ) {
+      return "immediate_sponsorship";
+    }
+    return "";
+  }
+
+  function findCompositeWorkAuthOptions(select) {
+    var buckets = {
+      authorized_no_sponsorship: [],
+      future_sponsorship: [],
+      immediate_sponsorship: []
+    };
+    Array.prototype.forEach.call((select && select.options) || [], function (opt) {
+      if (!opt || opt.disabled) return;
+      if (isPlaceholderSelectOption(opt)) return;
+      var kind = classifyCompositeWorkAuthOption(selectOptionLabel(opt));
+      if (kind && buckets[kind]) buckets[kind].push(opt);
+    });
+    if (
+      buckets.authorized_no_sponsorship.length === 1 &&
+      buckets.future_sponsorship.length === 1 &&
+      buckets.immediate_sponsorship.length === 1
+    ) {
+      return {
+        authorized_no_sponsorship: buckets.authorized_no_sponsorship[0],
+        future_sponsorship: buckets.future_sponsorship[0],
+        immediate_sponsorship: buckets.immediate_sponsorship[0]
+      };
+    }
+    return null;
+  }
+
+  function resolveCompositeWorkAuthChoice(inventory) {
+    var inv = inventory || {};
+    var auth = explicitYesNo(inv.work_authorization);
+    var now = explicitYesNo(inv.sponsorship_now);
+    var later = explicitYesNo(inv.sponsorship_later);
+
+    if (now === "yes") return "immediate_sponsorship";
+    if (now === "no" && later === "yes" && auth !== "no") return "future_sponsorship";
+    if (auth === "yes" && now === "no" && later === "no") return "authorized_no_sponsorship";
+    return "";
+  }
+
+  function fillWorkAuthorizationSelects(inventory, handledElements) {
+    var results = [];
+    var wrappers = document.querySelectorAll(
+      "#application-form .application-question.custom-question"
+    );
+    Array.prototype.forEach.call(wrappers, function (wrapper) {
+      var questionText = questionTextFromWrapper(wrapper);
+      if (!looksLikeWorkAuthorizationQuestion(questionText)) return;
+
+      var selects = wrapper.querySelectorAll("select");
+      Array.prototype.forEach.call(selects, function (select) {
+        if (!select) return;
+        var name = trimText(select.name || "");
+        if (eeoCategoryForName(name)) return;
+        if (isSurveysResponsesName(name)) return;
+        if (normalizeText(name).indexOf("signature") !== -1) return;
+        if (handledElements.indexOf(select) !== -1) return;
+
+        var composite = findCompositeWorkAuthOptions(select);
+        var pair = composite ? null : findYesNoSelectPair(select);
+        if (!composite && !pair) return;
+
+        markHandled(handledElements, select);
+
+        if (isSelectAlreadyFilled(select)) {
+          results.push(
+            resultRow("work_authorization", questionText, "skipped", "Field is already completed.", false, "")
+          );
+          return;
+        }
+
+        var matched = null;
+        if (composite) {
+          var choice = resolveCompositeWorkAuthChoice(inventory);
+          if (!choice) {
+            results.push(
+              resultRow(
+                "work_authorization",
+                questionText,
+                "skipped",
+                "Saved work-authorization and sponsorship answers are incomplete or contradictory.",
+                false,
+                ""
+              )
+            );
+            return;
+          }
+          matched = composite[choice];
+        } else {
+          var answer = explicitYesNo(inventory && inventory.work_authorization);
+          if (!answer) {
+            results.push(
+              resultRow("work_authorization", questionText, "skipped", "No saved answer.", false, "")
+            );
+            return;
+          }
+          matched = answer === "yes" ? pair.yes : pair.no;
+        }
+
+        if (!matched) {
+          results.push(
+            resultRow(
+              "work_authorization",
+              questionText,
+              "skipped",
+              "No safe matching work-authorization option.",
+              false,
+              ""
+            )
+          );
+          return;
+        }
+
+        if (!applySelectOption(select, matched)) {
+          results.push(
+            resultRow(
+              "work_authorization",
+              questionText,
+              "failed",
+              "Verification failed; selected option did not persist.",
+              false,
+              ""
+            )
+          );
+          return;
+        }
+
+        results.push(
+          resultRow("work_authorization", questionText, "filled", "", true, selectOptionLabel(matched))
+        );
+      });
+    });
+    return results;
+  }
+
+  function looksLikeReferralQuestion(questionText) {
+    var engine = af();
+    if (engine && typeof engine.looksLikeReferralSource === "function") {
+      if (engine.looksLikeReferralSource(questionText)) return true;
+    }
+    var classified =
+      engine && typeof engine.classifyLabel === "function"
+        ? engine.classifyLabel(questionText, "textarea")
+        : { category: "unknown" };
+    return Boolean(classified && classified.category === "referral_source");
+  }
+
+  function skipReferralSourceFields(handledElements) {
+    var results = [];
+    var wrappers = document.querySelectorAll(
+      "#application-form .application-question.custom-question"
+    );
+    Array.prototype.forEach.call(wrappers, function (wrapper) {
+      var questionText = questionTextFromWrapper(wrapper);
+      if (!looksLikeReferralQuestion(questionText)) return;
+      var fields = wrapper.querySelectorAll("textarea, input, select");
+      Array.prototype.forEach.call(fields, function (el) {
+        if (!el) return;
+        if (isSurveysResponsesName(el.name || "")) return;
+        if (normalizeText(el.name || "").indexOf("signature") !== -1) return;
+        markHandled(handledElements, el);
+        if (trimText(el.value)) {
+          results.push(
+            resultRow("referral_source", questionText, "skipped", "Field is already completed.", false, "")
+          );
+          return;
+        }
+        results.push(
+          resultRow("referral_source", questionText, "skipped", "Referral source is left manual.", false, "")
         );
       });
     });
@@ -440,6 +676,61 @@
     return false;
   }
 
+  function collectSelectOptionLabels(select) {
+    var labels = [];
+    Array.prototype.forEach.call((select && select.options) || [], function (opt) {
+      if (!opt || opt.disabled) return;
+      if (isPlaceholderSelectOption(opt)) return;
+      var label = selectOptionLabel(opt);
+      if (label) labels.push(label);
+    });
+    return labels;
+  }
+
+  function isProtectedVeteranOptionSet(labels) {
+    return (labels || []).some(function (label) {
+      return /\bprotected\s+veteran\b/.test(normalizeText(label));
+    });
+  }
+
+  function isGeneralVeteranOptionSet(labels) {
+    if (isProtectedVeteranOptionSet(labels)) return false;
+    var seen = {};
+    (labels || []).forEach(function (label) {
+      seen[normalizeText(label)] = true;
+    });
+    return Boolean(seen["i am a veteran"] && seen["i am not a veteran"]);
+  }
+
+  function optionMatchesGeneralVeteran(savedGeneral, savedProtected, optionLabel) {
+    var optNorm = normalizeText(optionLabel);
+    var general = normalizeText(savedGeneral);
+    var prot = normalizeText(savedProtected);
+    if (!optNorm) return false;
+
+    if (general === "i am a veteran" && optNorm === "i am a veteran") return true;
+    if (general === "i am not a veteran" && optNorm === "i am not a veteran") return true;
+    if (general && isPreferNotToAnswer(general) && optNorm === "decline to self-identify") return true;
+
+    if (!general) {
+      if (prot === "i identify as a protected veteran" && optNorm === "i am a veteran") return true;
+      if (prot && isPreferNotToAnswer(prot) && optNorm === "decline to self-identify") return true;
+    }
+    return false;
+  }
+
+  function findGeneralVeteranOption(select, savedGeneral, savedProtected) {
+    var matches = [];
+    Array.prototype.forEach.call((select && select.options) || [], function (opt) {
+      if (!opt || opt.disabled) return;
+      if (isPlaceholderSelectOption(opt)) return;
+      if (optionMatchesGeneralVeteran(savedGeneral, savedProtected, selectOptionLabel(opt))) {
+        matches.push(opt);
+      }
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   function findEeoOption(select, category, saved) {
     var matches = [];
     Array.prototype.forEach.call(select.options || [], function (opt) {
@@ -473,11 +764,12 @@
     return Boolean(selected && selected === option);
   }
 
-  function fillEeoSelects(inventory, handledElements) {
+  function fillEeoSelects(inventory, handledElements, demographics) {
     var results = [];
     var form = document.querySelector("#application-form") || document.querySelector("form.application-form");
     if (!form || !form.querySelectorAll) return results;
     var inv = inventory || {};
+    var demo = demographics || {};
 
     Array.prototype.forEach.call(form.querySelectorAll("select"), function (select) {
       var name = trimText(select && select.name);
@@ -493,13 +785,33 @@
         return;
       }
 
-      var saved = trimText(inv[category] || "");
-      if (!saved) {
-        results.push(resultRow(category, name, "skipped", "No saved answer.", false, ""));
-        return;
+      var matched = null;
+      if (category === "veteran_status") {
+        var labels = collectSelectOptionLabels(select);
+        var generalSaved = trimText(demo.generalVeteranStatus || inv.general_veteran_status || "");
+        var protectedSaved = trimText(inv.veteran_status || demo.veteranStatus || "");
+        if (isGeneralVeteranOptionSet(labels)) {
+          if (!generalSaved && !protectedSaved) {
+            results.push(resultRow(category, name, "skipped", "No saved answer.", false, ""));
+            return;
+          }
+          matched = findGeneralVeteranOption(select, generalSaved, protectedSaved);
+        } else {
+          if (!protectedSaved) {
+            results.push(resultRow(category, name, "skipped", "No saved answer.", false, ""));
+            return;
+          }
+          matched = findEeoOption(select, category, protectedSaved);
+        }
+      } else {
+        var saved = trimText(inv[category] || "");
+        if (!saved) {
+          results.push(resultRow(category, name, "skipped", "No saved answer.", false, ""));
+          return;
+        }
+        matched = findEeoOption(select, category, saved);
       }
 
-      var matched = findEeoOption(select, category, saved);
       if (!matched) {
         results.push(
           resultRow(category, name, "skipped", "No safe matching dropdown option.", false, "")
@@ -644,14 +956,672 @@
     return results;
   }
 
+  var AGE_RANGE_OPTIONS = {
+    "17 or younger": true,
+    "18-20": true,
+    "21-29": true,
+    "30-39": true,
+    "40-49": true,
+    "50-59": true,
+    "60 or older": true
+  };
+
+  var ETHNICITY_SURVEY_MAP = {
+    white: "white / caucasian",
+    "hispanic or latino": "hispanic, latino, or spanish origin",
+    "black or african american": "black or african american",
+    asian: "asian",
+    "native hawaiian or pacific islander": "native hawaiian or other pacific islander",
+    "american indian or alaska native":
+      "indigenous peoples, first nations, native american, or alaska native",
+    "middle eastern or north african": "middle eastern or north african"
+  };
+
+  function isSurveysResponsesName(name) {
+    return /^surveysresponses\[/i.test(trimText(name));
+  }
+
+  function isProtectedSurveyControl(el) {
+    if (!el) return true;
+    var name = trimText(el.name || "");
+    var nameNorm = normalizeText(name);
+    if (!nameNorm) return false;
+    if (eeoCategoryForName(name)) return true;
+    if (nameNorm.indexOf("signature") !== -1) return true;
+    if (nameNorm.indexOf("candidateselectedlocation") !== -1) return true;
+    if (nameNorm.indexOf("disabilitysignature") !== -1) return true;
+    return false;
+  }
+
+  function wrapperHasSurveysResponses(wrapper) {
+    if (!wrapper || !wrapper.querySelectorAll) return false;
+    var nodes = wrapper.querySelectorAll("input, select, textarea");
+    var i;
+    for (i = 0; i < nodes.length; i += 1) {
+      if (isSurveysResponsesName(nodes[i].name || "")) return true;
+    }
+    return false;
+  }
+
+  function normalizeQuestion(value) {
+    return normalizeText(value)
+      .replace(/[*]/g, " ")
+      .replace(/\boptional\b/g, " ")
+      .replace(/\brequired\b/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function choiceOptionLabel(el) {
+    if (!el) return "";
+    var labelText = "";
+    if (el.id) {
+      try {
+        var byFor = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+        if (byFor) labelText = trimText(byFor.innerText || byFor.textContent || "");
+      } catch (_) {}
+    }
+    if (!labelText) {
+      var parentLabel = el.closest && el.closest("label");
+      if (parentLabel) {
+        labelText = trimText(parentLabel.innerText || parentLabel.textContent || "");
+      }
+    }
+    if (!labelText) {
+      labelText = trimText(el.getAttribute && el.getAttribute("aria-label"));
+    }
+    return labelText;
+  }
+
+  function collectChoiceLabels(elements) {
+    return (elements || [])
+      .map(function (el) {
+        return choiceOptionLabel(el);
+      })
+      .filter(Boolean);
+  }
+
+  function collectNamedCheckboxGroups(wrapper) {
+    var groups = [];
+    var seen = {};
+    var boxes = wrapper.querySelectorAll('input[type="checkbox"]');
+    Array.prototype.forEach.call(boxes, function (box) {
+      var name = trimText(box && box.name);
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      var members = [];
+      Array.prototype.forEach.call(boxes, function (candidate) {
+        if (trimText(candidate.name) === name) members.push(candidate);
+      });
+      groups.push({ name: name, boxes: members });
+    });
+    return groups;
+  }
+
+  function looksLikeAgeRangeQuestion(questionText, optionLabels) {
+    var question = normalizeQuestion(questionText);
+    if (question.indexOf("what is your age range") === -1) return false;
+    var hits = 0;
+    (optionLabels || []).forEach(function (label) {
+      if (AGE_RANGE_OPTIONS[normalizeText(label)]) hits += 1;
+    });
+    return hits >= 3;
+  }
+
+  function looksLikeEthnicityQuestion(questionText, optionLabels) {
+    var question = normalizeQuestion(questionText);
+    if (question.indexOf("i identify my ethnicity as") === -1) return false;
+    var hits = 0;
+    (optionLabels || []).forEach(function (label) {
+      var text = normalizeText(label);
+      if (
+        text === "white / caucasian" ||
+        text === "hispanic, latino, or spanish origin" ||
+        text === "black or african american" ||
+        text === "asian" ||
+        text === "native hawaiian or other pacific islander" ||
+        text === "indigenous peoples, first nations, native american, or alaska native" ||
+        text === "middle eastern or north african"
+      ) {
+        hits += 1;
+      }
+    });
+    return hits >= 3;
+  }
+
+  function looksLikeGenderQuestion(questionText, optionLabels) {
+    var question = normalizeQuestion(questionText);
+    if (question.indexOf("what gender do you identify as") === -1) return false;
+    var seen = {};
+    (optionLabels || []).forEach(function (label) {
+      seen[normalizeText(label)] = true;
+    });
+    return Boolean(seen.female && seen.male);
+  }
+
+  function savedAgeRange(demographics, profile) {
+    var demo = demographics || (profile && profile.demographics) || {};
+    return trimText(demo.ageRange || "");
+  }
+
+  function savedRaceEthnicity(demographics, profile) {
+    var demo = demographics || (profile && profile.demographics) || {};
+    return trimText(demo.raceEthnicity || "");
+  }
+
+  function savedGender(demographics, profile) {
+    var demo = demographics || (profile && profile.demographics) || {};
+    return trimText(demo.gender || "");
+  }
+
+  function mapSurveyAgeRange(saved) {
+    var text = trimText(saved);
+    if (!text || isPreferNotToAnswer(text)) return "";
+    return AGE_RANGE_OPTIONS[normalizeText(text)] ? text : "";
+  }
+
+  function mapSurveyEthnicity(saved) {
+    var text = normalizeText(saved);
+    if (!text || isPreferNotToAnswer(text)) return "";
+    if (text === "two or more races" || text === "self-describe") return "";
+    return ETHNICITY_SURVEY_MAP[text] || "";
+  }
+
+  function mapSurveyGender(saved) {
+    var text = normalizeText(saved);
+    if (!text || isPreferNotToAnswer(text)) return "";
+    if (text === "self-describe") return "";
+    if (text === "man" || text === "male") return "male";
+    if (text === "woman" || text === "female") return "female";
+    if (text === "non-binary" || text === "nonbinary" || text === "non binary") return "non-binary";
+    return "";
+  }
+
+  function findExactChoice(elements, wantedNorm) {
+    if (!wantedNorm) return null;
+    var matches = [];
+    (elements || []).forEach(function (el) {
+      if (normalizeText(choiceOptionLabel(el)) === wantedNorm) matches.push(el);
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function selectSurveyRadio(radio) {
+    return selectExactYesNoRadio(radio);
+  }
+
+  function checkSurveyCheckbox(box) {
+    if (!box) return false;
+    if (box.checked) return true;
+    try {
+      if (typeof box.scrollIntoView === "function") {
+        box.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    } catch (_) {}
+    try {
+      var label = box.closest && box.closest("label");
+      if (label && typeof label.click === "function") label.click();
+      else if (typeof box.click === "function") box.click();
+    } catch (_) {}
+    try {
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (_) {}
+    try {
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {}
+    if (!box.checked) {
+      try {
+        box.checked = true;
+      } catch (_) {}
+      try {
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (_) {}
+      try {
+        box.dispatchEvent(new Event("change", { bubbles: true }));
+      } catch (_) {}
+    }
+    return Boolean(box.checked);
+  }
+
+  function fillDemographicSurvey(profile, demographics, handledElements, fillDemographics) {
+    var results = [];
+    if (fillDemographics === false) return results;
+
+    var wrappers = document.querySelectorAll("#application-form .application-question");
+    Array.prototype.forEach.call(wrappers, function (wrapper) {
+      if (!wrapperHasSurveysResponses(wrapper)) return;
+      var questionText = questionTextFromWrapper(wrapper);
+
+      var radioGroups = collectNamedRadioGroups(wrapper);
+      radioGroups.forEach(function (group) {
+        if (!isSurveysResponsesName(group.name)) return;
+        if (group.radios.some(isProtectedSurveyControl)) return;
+        var labels = collectChoiceLabels(group.radios);
+        if (looksLikeAgeRangeQuestion(questionText, labels)) {
+          fillSurveyAgeRange(group, questionText, demographics, profile, handledElements, results);
+          return;
+        }
+        if (looksLikeGenderQuestion(questionText, labels)) {
+          fillSurveyGender(group, questionText, demographics, profile, handledElements, results);
+        }
+      });
+
+      var checkboxGroups = collectNamedCheckboxGroups(wrapper);
+      checkboxGroups.forEach(function (group) {
+        if (!isSurveysResponsesName(group.name)) return;
+        if (group.boxes.some(isProtectedSurveyControl)) return;
+        var labels = collectChoiceLabels(group.boxes);
+        if (!looksLikeEthnicityQuestion(questionText, labels)) return;
+        fillSurveyEthnicity(group, questionText, demographics, profile, handledElements, results);
+      });
+    });
+
+    return results;
+  }
+
+  function fillSurveyAgeRange(group, questionText, demographics, profile, handledElements, results) {
+    markGroupHandled(handledElements, group.radios);
+    if (groupAlreadySelected(group.radios)) {
+      results.push(resultRow("age_range", questionText, "skipped", "Field is already completed.", false, ""));
+      return;
+    }
+    var saved = savedAgeRange(demographics, profile);
+    if (!saved) {
+      results.push(resultRow("age_range", questionText, "skipped", "No saved age range.", false, ""));
+      return;
+    }
+    if (isPreferNotToAnswer(saved)) {
+      results.push(
+        resultRow("age_range", questionText, "skipped", "Prefer not to answer left manual.", false, "")
+      );
+      return;
+    }
+    var mapped = mapSurveyAgeRange(saved);
+    if (!mapped) {
+      results.push(
+        resultRow("age_range", questionText, "skipped", "Unsupported age range left manual.", false, "")
+      );
+      return;
+    }
+    var matched = findExactChoice(group.radios, normalizeText(mapped));
+    if (!matched) {
+      results.push(
+        resultRow("age_range", questionText, "skipped", "No exact matching age-range option.", false, "")
+      );
+      return;
+    }
+    if (!selectSurveyRadio(matched) || !matched.checked) {
+      results.push(
+        resultRow(
+          "age_range",
+          questionText,
+          "failed",
+          "Verification failed; selected radio did not remain checked.",
+          false,
+          ""
+        )
+      );
+      return;
+    }
+    results.push(resultRow("age_range", questionText, "filled", "", true, choiceOptionLabel(matched)));
+  }
+
+  function fillSurveyGender(group, questionText, demographics, profile, handledElements, results) {
+    markGroupHandled(handledElements, group.radios);
+    if (groupAlreadySelected(group.radios)) {
+      results.push(resultRow("gender", questionText, "skipped", "Field is already completed.", false, ""));
+      return;
+    }
+    var saved = savedGender(demographics, profile);
+    if (!saved) {
+      results.push(resultRow("gender", questionText, "skipped", "No saved gender.", false, ""));
+      return;
+    }
+    if (isPreferNotToAnswer(saved) || normalizeText(saved) === "self-describe") {
+      results.push(
+        resultRow("gender", questionText, "skipped", "No safe matching gender option.", false, "")
+      );
+      return;
+    }
+    var mapped = mapSurveyGender(saved);
+    if (!mapped) {
+      results.push(
+        resultRow("gender", questionText, "skipped", "No safe matching gender option.", false, "")
+      );
+      return;
+    }
+    var matched = findExactChoice(group.radios, mapped);
+    if (!matched) {
+      results.push(
+        resultRow("gender", questionText, "skipped", "No safe matching gender option.", false, "")
+      );
+      return;
+    }
+    if (!selectSurveyRadio(matched) || !matched.checked) {
+      results.push(
+        resultRow(
+          "gender",
+          questionText,
+          "failed",
+          "Verification failed; selected radio did not remain checked.",
+          false,
+          ""
+        )
+      );
+      return;
+    }
+    results.push(resultRow("gender", questionText, "filled", "", true, choiceOptionLabel(matched)));
+  }
+
+  function fillSurveyEthnicity(group, questionText, demographics, profile, handledElements, results) {
+    group.boxes.forEach(function (box) {
+      markHandled(handledElements, box);
+    });
+    var saved = savedRaceEthnicity(demographics, profile);
+    if (!saved) {
+      results.push(
+        resultRow("race_ethnicity", questionText, "skipped", "No saved ethnicity.", false, "")
+      );
+      return;
+    }
+    var mapped = mapSurveyEthnicity(saved);
+    if (!mapped) {
+      results.push(
+        resultRow("race_ethnicity", questionText, "skipped", "No safe ethnicity mapping.", false, "")
+      );
+      return;
+    }
+    var matched = findExactChoice(group.boxes, mapped);
+    if (!matched) {
+      results.push(
+        resultRow("race_ethnicity", questionText, "skipped", "No safe matching ethnicity option.", false, "")
+      );
+      return;
+    }
+    if (matched.checked) {
+      results.push(
+        resultRow("race_ethnicity", questionText, "skipped", "Field is already completed.", false, "")
+      );
+      return;
+    }
+    if (!checkSurveyCheckbox(matched) || !matched.checked) {
+      results.push(
+        resultRow(
+          "race_ethnicity",
+          questionText,
+          "failed",
+          "Verification failed; selected checkbox did not remain checked.",
+          false,
+          ""
+        )
+      );
+      return;
+    }
+    results.push(
+      resultRow("race_ethnicity", questionText, "filled", "", true, choiceOptionLabel(matched))
+    );
+  }
+
+  function applicationForm() {
+    return document.querySelector("#application-form") || document.querySelector("form.application-form");
+  }
+
+  function exactNamedInput(form, name) {
+    if (!form || !form.querySelector) return null;
+    try {
+      return form.querySelector('input[name="' + name + '"]');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function savedFullName(inventory, profile) {
+    var fromInv = trimText(inventory && inventory.full_name);
+    if (fromInv) return fromInv;
+    var personal = (profile && profile.personal) || {};
+    var first = trimText(personal.firstName);
+    var last = trimText(personal.lastName);
+    if (first && last) return trimText(first + " " + last);
+    return "";
+  }
+
+  function todaysDateMmDdYyyy() {
+    var now = new Date();
+    var month = String(now.getMonth() + 1);
+    var day = String(now.getDate());
+    var year = String(now.getFullYear());
+    if (month.length < 2) month = "0" + month;
+    if (day.length < 2) day = "0" + day;
+    return month + "/" + day + "/" + year;
+  }
+
+  function applyInputValue(el, value) {
+    if (!el) return false;
+    try {
+      if (typeof el.scrollIntoView === "function") {
+        el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    } catch (_) {}
+    try {
+      el.value = value;
+    } catch (_) {
+      return false;
+    }
+    try {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {}
+    return trimText(el.value) === trimText(value);
+  }
+
+  function fillDisabilitySignatureFields(inventory, profile, handledElements) {
+    var results = [];
+    var form = applicationForm();
+    if (!form) return results;
+
+    var nameInput = exactNamedInput(form, "eeo[disabilitySignature]");
+    if (nameInput) {
+      markHandled(handledElements, nameInput);
+      if (trimText(nameInput.value)) {
+        results.push(
+          resultRow(
+            "disability_signature",
+            "eeo[disabilitySignature]",
+            "skipped",
+            "Field is already completed.",
+            false,
+            ""
+          )
+        );
+      } else {
+        var fullName = savedFullName(inventory, profile);
+        if (!fullName) {
+          results.push(
+            resultRow(
+              "disability_signature",
+              "eeo[disabilitySignature]",
+              "skipped",
+              "No saved full name.",
+              false,
+              ""
+            )
+          );
+        } else if (!applyInputValue(nameInput, fullName)) {
+          results.push(
+            resultRow(
+              "disability_signature",
+              "eeo[disabilitySignature]",
+              "failed",
+              "Verification failed; name did not persist.",
+              false,
+              ""
+            )
+          );
+        } else {
+          results.push(
+            resultRow(
+              "disability_signature",
+              "eeo[disabilitySignature]",
+              "filled",
+              "",
+              true,
+              fullName
+            )
+          );
+        }
+      }
+    }
+
+    var dateInput = exactNamedInput(form, "eeo[disabilitySignatureDate]");
+    if (dateInput) {
+      markHandled(handledElements, dateInput);
+      if (trimText(dateInput.value)) {
+        results.push(
+          resultRow(
+            "disability_signature_date",
+            "eeo[disabilitySignatureDate]",
+            "skipped",
+            "Field is already completed.",
+            false,
+            ""
+          )
+        );
+      } else {
+        var today = todaysDateMmDdYyyy();
+        if (!applyInputValue(dateInput, today)) {
+          results.push(
+            resultRow(
+              "disability_signature_date",
+              "eeo[disabilitySignatureDate]",
+              "failed",
+              "Verification failed; date did not persist.",
+              false,
+              ""
+            )
+          );
+        } else {
+          results.push(
+            resultRow(
+              "disability_signature_date",
+              "eeo[disabilitySignatureDate]",
+              "filled",
+              "",
+              true,
+              today
+            )
+          );
+        }
+      }
+    }
+
+    return results;
+  }
+
+  function isCustomQuestionTextControl(el) {
+    if (!el || el.disabled) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    if (tag === "textarea") return true;
+    if (tag !== "input") return false;
+    var type = normalizeText(el.type || "text");
+    return !type || type === "text" || type === "search";
+  }
+
+  function fillProjectHighlightFields(inventory, handledElements) {
+    var results = [];
+    var engine = af();
+    var answer = trimText(inventory && inventory.project_highlight);
+    var wrappers = document.querySelectorAll(
+      "#application-form .application-question.custom-question"
+    );
+
+    Array.prototype.forEach.call(wrappers, function (wrapper) {
+      var questionText = questionTextFromWrapper(wrapper);
+      if (!questionText) return;
+
+      var classified =
+        engine && typeof engine.classifyLabel === "function"
+          ? engine.classifyLabel(questionText, "textarea")
+          : { category: "unknown" };
+      if (!classified || classified.category !== "project_highlight") return;
+
+      var fields = wrapper.querySelectorAll("textarea, input");
+      Array.prototype.forEach.call(fields, function (el) {
+        if (!isCustomQuestionTextControl(el)) return;
+        if (isSurveysResponsesName(el.name || "")) return;
+        if (normalizeText(el.name || "").indexOf("signature") !== -1) return;
+
+        markHandled(handledElements, el);
+
+        if (trimText(el.value)) {
+          results.push(
+            resultRow("project_highlight", questionText, "skipped", "Field is already completed.", false, "")
+          );
+          return;
+        }
+        if (!answer) {
+          results.push(
+            resultRow("project_highlight", questionText, "skipped", "No saved project highlight.", false, "")
+          );
+          return;
+        }
+
+        var ok = false;
+        if (engine && typeof engine.fillTextElement === "function") {
+          var fillResult = engine.fillTextElement(el, answer);
+          if (fillResult && fillResult.status === "skipped") {
+            results.push(
+              resultRow(
+                "project_highlight",
+                questionText,
+                "skipped",
+                fillResult.reason || "Field is already completed.",
+                false,
+                ""
+              )
+            );
+            return;
+          }
+          ok = Boolean(fillResult && fillResult.ok);
+        } else {
+          ok = applyInputValue(el, answer);
+        }
+
+        if (!ok) {
+          results.push(
+            resultRow(
+              "project_highlight",
+              questionText,
+              "failed",
+              "Verification failed; project text did not persist.",
+              false,
+              ""
+            )
+          );
+          return;
+        }
+        results.push(resultRow("project_highlight", questionText, "filled", "", true, answer));
+      });
+    });
+
+    return results;
+  }
+
   function fillSupportedFields(context) {
     var ctx = context || {};
     var handledElements = ctx.handledElements || [];
     var results = [];
 
     if (isSupportedPage()) {
-      results = fillYesNoRadioGroups(ctx.inventory || {}, handledElements);
-      results = results.concat(fillEeoSelects(ctx.inventory || {}, handledElements));
+      results = results.concat(fillYesNoRadioGroups(ctx.inventory || {}, handledElements));
+      results = results.concat(fillWorkAuthorizationSelects(ctx.inventory || {}, handledElements));
+      results = results.concat(skipReferralSourceFields(handledElements));
+      results = results.concat(fillProjectHighlightFields(ctx.inventory || {}, handledElements));
+      results = results.concat(
+        fillEeoSelects(ctx.inventory || {}, handledElements, ctx.demographics || null)
+      );
       results = results.concat(
         fillExportControlSelects(
           ctx.inventory || {},
@@ -659,6 +1629,17 @@
           ctx.workAuthorization || null,
           handledElements
         )
+      );
+      results = results.concat(
+        fillDemographicSurvey(
+          ctx.profile || null,
+          ctx.demographics || null,
+          handledElements,
+          ctx.fillDemographics
+        )
+      );
+      results = results.concat(
+        fillDisabilitySignatureFields(ctx.inventory || {}, ctx.profile || null, handledElements)
       );
     }
 

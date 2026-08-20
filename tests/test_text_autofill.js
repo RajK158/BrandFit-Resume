@@ -297,11 +297,100 @@ assert.strictEqual(AF.classifyLabel("Email", "email").category, "email");
 assert.strictEqual(AF.classifyLabel("Phone Number", "tel").category, "phone");
 assert.strictEqual(AF.classifyLabel("Phone Number", "text").category, "phone");
 assert.strictEqual(AF.classifyLabel("Website / Portfolio", "url").category, "portfolio");
-assert.strictEqual(AF.classifyLabel("How did you hear about this job?", "text").category, "referral_source");
+assert.strictEqual(
+  AF.classifyLabel("How did you hear about this job?", "text").category,
+  "referral_source"
+);
+assert.strictEqual(
+  AF.classifyLabel(
+    "How did you come to learn about us? We're delighted to know more about your journey to discovering our company. (Events, Friends, LinkedIn etc.)",
+    "textarea"
+  ).category,
+  "referral_source"
+);
+assert.strictEqual(
+  AF.classifyLabel(
+    "How did you hear about us? LinkedIn, Indeed, referral, career fair, etc.",
+    "textarea"
+  ).category,
+  "referral_source"
+);
+assert.strictEqual(AF.classifyLabel("LinkedIn profile", "url").category, "linkedin");
+assert.strictEqual(AF.classifyLabel("LinkedIn URL", "url").category, "linkedin");
+assert.strictEqual(AF.classifyLabel("Please provide your LinkedIn", "url").category, "linkedin");
+assert.strictEqual(AF.classifyLabel("LinkedIn", "url").category, "linkedin");
+assert.strictEqual(
+  AF.classifyLabel(
+    "Are you legally authorized to work in the location where this role is based?",
+    "select"
+  ).category,
+  "work_authorization"
+);
+assert.strictEqual(
+  AF.classifyLabel("Are you authorized to work in the United States?", "radio").category,
+  "work_authorization"
+);
+assert.strictEqual(
+  AF.classifyLabel("Are you legally eligible to work in this country?", "select").category,
+  "work_authorization"
+);
+assert.strictEqual(
+  AF.classifyLabel(
+    "Do you have authorization to work where this position is located?",
+    "select"
+  ).category,
+  "work_authorization"
+);
+assert.notStrictEqual(
+  AF.classifyLabel(
+    "Are you willing to relocate to the location where this role is based, if required?",
+    "select"
+  ).category,
+  "work_authorization"
+);
 assert.strictEqual(
   AF.classifyLabel("Tell us about a project you are proud of", "textarea").category,
   "project_highlight"
 );
+[
+  "What's something hard you built recently, and why did you build it?",
+  "Tell us about a technically challenging project.",
+  "Describe a project you're particularly proud of.",
+  "What is the most complex software project you've worked on?",
+  "Tell us about a difficult engineering problem you solved.",
+  "What have you built that best demonstrates your technical skills?"
+].forEach(function (question) {
+  assert.strictEqual(
+    AF.classifyLabel(question, "textarea").category,
+    "project_highlight",
+    question
+  );
+});
+[
+  ["GitHub URL", "url", "github"],
+  ["Website / Portfolio", "url", "portfolio"],
+  ["LinkedIn", "url", "linkedin"],
+  ["Why do you want to work here?", "textarea", "unknown"],
+  ["Why are you interested in this role?", "textarea", "additional_information"],
+  ["Tell us about yourself", "textarea", "unknown"],
+  ["Employment history", "textarea", "experience"],
+  ["How many internships have you completed?", "text", "unknown"],
+  ["Years of experience", "text", "unknown"],
+  ["When are you available to start?", "text", "unknown"],
+  ["Are you legally authorized to work in the United States?", "radio", "work_authorization"],
+  ["Will you now or in the future require sponsorship?", "radio", "sponsorship_now"],
+  ["How did you hear about this job?", "text", "referral_source"],
+  ["Project", "textarea", "unknown"]
+].forEach(function (row) {
+  assert.notStrictEqual(
+    AF.classifyLabel(row[0], row[1]).category,
+    "project_highlight",
+    row[0]
+  );
+  if (row[2] !== "unknown") {
+    assert.strictEqual(AF.classifyLabel(row[0], row[1]).category, row[2], row[0] + " -> " + row[2]);
+  }
+});
 console.log("ok - text field classification");
 
 const legal = addField("Legal Name (First Name Last Name)", "input", "text", "legalName");
@@ -323,6 +412,24 @@ console.log("ok - Preferred Name -> Raj");
 console.log("ok - Email -> rajkundur58@gmail.com");
 console.log("ok - Phone Number -> saved phone");
 console.log("ok - Website/Portfolio -> saved portfolio URL");
+
+const linkedinUrl = addField("LinkedIn URL", "input", "url", "linkedinUrl");
+const referralJourney = addField(
+  "How did you come to learn about us? We're delighted to know more about your journey to discovering our company. (Events, Friends, LinkedIn etc.)",
+  "textarea",
+  "textarea",
+  "referralJourney"
+);
+const referralFill = AF.fillBasicTextFields(doc, inventory);
+assert.strictEqual(linkedinUrl.value, "https://linkedin.com/in/raj", "LinkedIn URL field still fills");
+assert.strictEqual(referralJourney.value, "", "referral/source question stays empty");
+assert.ok(
+  (referralFill.results || []).some(function (row) {
+    return row.category === "referral_source" && row.status === "skipped";
+  }),
+  "referral source is reported skipped"
+);
+console.log("ok - referral source stays manual; LinkedIn URL still fills");
 
 legal.value = "Already Set";
 const again = AF.fillTextElement(legal, "Raj Kundur");

@@ -135,7 +135,12 @@
       category: "linkedin",
       confidence: 0.95,
       include: [/\blinkedin\b/],
-      exclude: []
+      exclude: [
+        /\bhow\s+did\s+you\s+(come\s+to\s+)?(hear|learn|find|discover)\b/,
+        /\bwhere\s+did\s+you\s+(hear|learn|find|discover)\b/,
+        /\breferral\s+source\b/,
+        /\brecruiting\s+source\b/
+      ]
     },
     {
       category: "github",
@@ -162,7 +167,17 @@
         /\bwebsite\s+url\b/,
         /\bportfolio\s+link\b/,
         /\bwebsite\s+or\s+portfolio\b/,
-        /\bportfolio\s+or\s+website\b/
+        /\bportfolio\s+or\s+website\b/,
+        /\bgithub\b/,
+        /\blinkedin\b/,
+        /\bpersonal\s+website\b/,
+        /\bwhy\s+(this|our)\s+(company|role|position|job)\b/,
+        /\btell\s+us\s+about\s+yourself\b/,
+        /\bemployment\s+history\b/,
+        /\binternships?\b/,
+        /\byears?\s+of\s+experience\b/,
+        /\bwork\s+authorization\b/,
+        /\bsponsor/
       ]
     },
     {
@@ -212,13 +227,18 @@
       confidence: 0.93,
       include: [
         /\bhow\s+did\s+you\s+hear\b/,
-        /\bwhere\s+did\s+you\s+hear\b/,
-        /\bhear\s+about\s+(this\s+)?(job|role|position|opportunity)\b/,
+        /\bhow\s+did\s+you\s+(come\s+to\s+)?(learn|find|discover)\b/,
+        /\bwhere\s+did\s+you\s+(hear|learn|find|discover)\b/,
+        /\bhear\s+about\s+(this\s+)?(job|role|position|opportunity|company|us)\b/,
+        /\blearn\s+about\s+(this\s+)?(job|role|position|opportunity|company|us)\b/,
+        /\bcome\s+to\s+learn\s+about\b/,
+        /\bjourney\s+to\s+discover/,
         /\breferral\s+source\b/,
+        /\brecruiting\s+source\b/,
         /\bsource\s+of\s+hire\b/,
         /\bhow\s+did\s+you\s+find\b/
       ],
-      exclude: [/\bcover\s*letter\b/, /\bproject\b/]
+      exclude: [/\bcover\s*letter\b/, /\bproject\b/, /\blinkedin\s+(profile|url|link)\b/]
     },
     {
       category: "sponsorship_later",
@@ -260,13 +280,21 @@
       include: [
         /\blegally\s+authorized\b/,
         /\bauthorized\s+to\s+work\b/,
+        /\bauthorization\s+to\s+work\b/,
         /\bwork\s+authorization\b/,
         /\beligible\s+to\s+work\b/,
+        /\blegally\s+eligible\s+to\s+work\b/,
         /\bunited\s+states\s+citizen\b/,
         /\bcitizen\s+or\s+national\b/,
         /\ba\s+united\s+states\s+citizen\b/
       ],
-      exclude: [/\bsponsor/, /\bexport\s+control\b/, /\bitar\b/, /\bu\.?\s*s\.?\s+person\b/]
+      exclude: [
+        /\bsponsor/,
+        /\bexport\s+control\b/,
+        /\bitar\b/,
+        /\bu\.?\s*s\.?\s+person\b/,
+        /\brelocatem?\b/
+      ]
     },
     {
       category: "veteran_status",
@@ -607,29 +635,128 @@
     return null;
   }
 
+  function looksLikeProjectHighlightExclusion(text) {
+    if (!text) return true;
+    if (/\blinkedin\b/.test(text)) return true;
+    if (/\bgithub\b/.test(text) && /\b(url|link|profile|username|handle|account)\b/.test(text)) {
+      return true;
+    }
+    if (
+      /\bgithub\b/.test(text) &&
+      !/\b(built|build|project|describe|tell|challeng|hard|complex|proud|problem|solved)\b/.test(text)
+    ) {
+      return true;
+    }
+    if (/\bportfolio\b/.test(text) && /\b(url|link|website)\b/.test(text)) return true;
+    if (/\bpersonal\s+website\b/.test(text)) return true;
+    if (/\b(project\s+url|live\s+url|demo\s+url|website\s+url|deployed\s+(url|link|site))\b/.test(text)) {
+      return true;
+    }
+    if (
+      /\b(url|link)\b/.test(text) &&
+      !/\b(describe|tell|share|explain|walk|proud|challeng|difficult|hard|complex)\b/.test(text)
+    ) {
+      return true;
+    }
+    if (/\bwhy\s+(this|our)\s+(company|role|position|job|team|opportunity)\b/.test(text)) return true;
+    if (/\bwhy\s+(do\s+you\s+)?want\s+to\s+(work|join|apply)\b/.test(text)) return true;
+    if (/\bwhy\s+(are\s+you\s+)?interested\s+in\s+(this|our|the)\s+(company|role|position|job)\b/.test(text)) {
+      return true;
+    }
+    if (/\btell\s+us\s+about\s+yourself\b/.test(text)) return true;
+    if (/\babout\s+yourself\b/.test(text) && !/\b(project|built|build|challenge)\b/.test(text)) return true;
+    if (/\bemployment\s+history\b/.test(text) || /\bwork\s+history\b/.test(text)) return true;
+    if (/\bprevious\s+(employment|employers?|jobs?|roles?)\b/.test(text)) return true;
+    if (/\binternships?\b/.test(text)) return true;
+    if (/\byears?\s+of\s+experience\b/.test(text) || /\bhow\s+many\s+years\b/.test(text)) return true;
+    if (/\bavailability\b/.test(text) || /\bnotice\s+period\b/.test(text)) return true;
+    if (/\bwork\s+authorization\b/.test(text) || /\blegally\s+authorized\b/.test(text)) return true;
+    if (/\bsponsor/.test(text)) return true;
+    if (/\bhow\s+many\s+projects\b/.test(text) || /\bnumber\s+of\s+projects\b/.test(text)) return true;
+    if (/\bproject\s+(name|title|url|link)\b/.test(text)) return true;
+    if (/\b(our|company|team)\s+mission\b/.test(text)) return true;
+    return false;
+  }
+
   function looksLikeProjectHighlight(blob) {
     var text = normalizeText(blob);
     if (!text) return false;
-    if (
-      /\bportfolio\s+url\b/.test(text) ||
-      /\bwebsite\s+url\b/.test(text) ||
-      /\bportfolio\s+link\b/.test(text) ||
-      /\bwebsite\s+or\s+portfolio\b/.test(text) ||
-      /\bportfolio\s+or\s+website\b/.test(text)
-    ) {
+    if (looksLikeProjectHighlightExclusion(text)) return false;
+
+    var hasProject = /\bprojects?\b/.test(text);
+    var hasBuild = /\b(built|build|building|developed|develop|created|create|creating|implemented|implement|implementation)\b/.test(
+      text
+    );
+    var hasChallenge = /\b(challenging|challenged|challenges?|difficult|difficulty|hard|complex|complexity|technical|technically)\b/.test(
+      text
+    );
+    var hasPride = /\b(proud|impressive|significant|favorite)\b/.test(text);
+    var hasProblem = /\b(problems?|solved|solve|solving|solution)\b/.test(text);
+    var hasEngineering = /\bengineering\b/.test(text);
+    var hasDemo =
+      /\bdemonstrat(?:e|es|ed|ing)?\b/.test(text) &&
+      /\b(technical|technically|skills?|ability|abilities)\b/.test(text);
+    var hasArch = /\b(architecture|implementation|challenges)\b/.test(text);
+    var hasNarrative =
+      /\b(describe|tell|share|explain|discuss|walk)\b/.test(text) ||
+      /\bwhat\b/.test(text) ||
+      /\bhighlight\b/.test(text) ||
+      /\bcontribution\b/.test(text);
+
+    if (hasBuild && hasChallenge) return true;
+    if (hasBuild && hasNarrative) return true;
+    if (hasBuild && hasDemo) return true;
+    if (hasProject && (hasChallenge || hasPride || hasArch)) return true;
+    if (hasProject && hasNarrative) return true;
+    if ((hasEngineering || hasChallenge) && hasProblem && (hasNarrative || /\bsolved\b/.test(text))) {
+      return true;
+    }
+    if (hasProject && /\b(contribution|highlight)\b/.test(text)) return true;
+    return false;
+  }
+
+  function looksLikeReferralSource(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (looksLikeLinkedInProfileField(text) && !/\bhow\s+did\s+you\b/.test(text) && !/\bhear\b/.test(text)) {
       return false;
     }
     return (
-      /\bproject\s+you\s+are\s+proud\b/.test(text) ||
-      /\bproud\s+of\b.*\bproject\b/.test(text) ||
-      /\bproject\b.*\bproud\s+of\b/.test(text) ||
-      /\bshare\s+a\s+project\b/.test(text) ||
-      /\bdescribe\s+(a\s+|one\s+|your\s+)?project\b/.test(text) ||
-      /\bproject\s+contribution\b/.test(text) ||
-      /\bproject\s+highlight\b/.test(text) ||
-      /\btell\s+us\s+about\s+(a\s+|one\s+|your\s+)?project\b/.test(text) ||
-      /\bfavorite\s+project\b/.test(text)
+      /\bhow\s+did\s+you\s+(come\s+to\s+)?(hear|learn|find|discover)\b/.test(text) ||
+      /\bwhere\s+did\s+you\s+(hear|learn|find|discover)\b/.test(text) ||
+      /\bhow\s+did\s+you\s+find\s+(out\s+)?(about|us)\b/.test(text) ||
+      /\bhow\s+did\s+you\s+hear\s+about\s+us\b/.test(text) ||
+      /\bcome\s+to\s+learn\s+about\b/.test(text) ||
+      /\b(hear|learn|find|discover(?:ing|ed)?)\s+about\s+(this|us|our|the)\b/.test(text) ||
+      /\bhear\s+about\s+(this\s+)?(job|role|position|opportunity|company)\b/.test(text) ||
+      /\blearn\s+about\s+(this\s+)?(job|role|position|opportunity|company|us)\b/.test(text) ||
+      /\bjourney\s+to\s+discover/.test(text) ||
+      /\breferral\s+source\b/.test(text) ||
+      /\brecruiting\s+source\b/.test(text) ||
+      /\bsource\s+of\s+hire\b/.test(text)
     );
+  }
+
+  function looksLikeLinkedInProfileField(blob) {
+    var text = normalizeText(blob);
+    if (!text || !/\blinkedin\b/.test(text)) return false;
+    if (
+      /\bhow\s+did\s+you\b/.test(text) ||
+      /\bwhere\s+did\s+you\b/.test(text) ||
+      /\b(hear|learn|find|discover)\s+about\b/.test(text) ||
+      /\breferral\b/.test(text) ||
+      /\brecruiting\s+source\b/.test(text) ||
+      /\bsource\s+of\s+hire\b/.test(text) ||
+      /\bjourney\s+to\s+discover/.test(text)
+    ) {
+      return false;
+    }
+    if (/\blinkedin\s+(profile|url|link)\b/.test(text)) return true;
+    if (/\b(profile|url|link)\s+.{0,20}\blinkedin\b/.test(text)) return true;
+    if (/\bplease\s+(enter|provide|add|share|paste)\s+(your\s+)?linkedin\b/.test(text)) return true;
+    if (/\byour\s+linkedin\b/.test(text) && text.length < 80) return true;
+    var compact = text.replace(/[^a-z]+/g, " ").replace(/\s+/g, " ").trim();
+    return compact === "linkedin" || compact === "linkedin profile" || compact === "linkedin url";
   }
 
   function looksLikePortfolioLink(blob) {
@@ -1094,9 +1221,22 @@
       return validateDetection({ category: "project_highlight", confidence: 0.94 }, inputType);
     }
 
+    if (
+      looksLikeReferralSource(ownLabel) ||
+      looksLikeReferralSource(questionBlob) ||
+      (looksLikeReferralSource(fullBlob) &&
+        !looksLikeLinkedInProfileField(ownLabel) &&
+        !looksLikeLinkedInProfileField(questionBlob))
+    ) {
+      return validateDetection({ category: "referral_source", confidence: 0.96 }, inputType);
+    }
+
     
     if (inputType === "url" || inputType === "text" || inputType === "search" || inputType === "textarea") {
-      if (/\blinkedin\b/.test(fullBlob)) {
+      if (looksLikeLinkedInProfileField(ownLabel) || looksLikeLinkedInProfileField(questionBlob)) {
+        return validateDetection({ category: "linkedin", confidence: 0.96 }, inputType);
+      }
+      if (/\blinkedin\b/.test(fullBlob) && !looksLikeReferralSource(fullBlob)) {
         return validateDetection({ category: "linkedin", confidence: 0.96 }, inputType);
       }
       if (/\bgithub\b/.test(fullBlob)) {
@@ -1152,7 +1292,17 @@
       return validateDetection({ category: "country", confidence: 0.93 }, inputType);
     }
     if (autocomplete === "url") {
-      if (/\blinkedin\b/.test(fullBlob)) {
+      if (
+        looksLikeReferralSource(ownLabel) ||
+        looksLikeReferralSource(questionBlob) ||
+        (looksLikeReferralSource(fullBlob) && !looksLikeLinkedInProfileField(ownLabel))
+      ) {
+        return validateDetection({ category: "referral_source", confidence: 0.96 }, inputType);
+      }
+      if (/\blinkedin\b/.test(fullBlob) && !looksLikeReferralSource(fullBlob)) {
+        return validateDetection({ category: "linkedin", confidence: 0.96 }, inputType);
+      }
+      if (/\blinkedin\b/.test(questionBlob) && looksLikeLinkedInProfileField(questionBlob)) {
         return validateDetection({ category: "linkedin", confidence: 0.96 }, inputType);
       }
       if (/\bgithub\b/.test(fullBlob)) {
@@ -2795,6 +2945,19 @@
 
       if (!isBasicTextElement(el)) return;
 
+      if (category === "referral_source" || looksLikeReferralSource(labelCue) || looksLikeReferralSource(label)) {
+        markSeen(el);
+        results.push({
+          category: "referral_source",
+          label: label,
+          status: "skipped",
+          reason: "Referral source is left manual.",
+          ok: false,
+          value: ""
+        });
+        return;
+      }
+
       if (!BASIC_TEXT_CATEGORIES[category]) {
         results.push({
           category: category,
@@ -2910,6 +3073,8 @@
     phoneDigitsOnly: phoneDigitsOnly,
     looksLikeEducationDateField: looksLikeEducationDateField,
     looksLikeLocationCityField: looksLikeLocationCityField,
+    looksLikeProjectHighlight: looksLikeProjectHighlight,
+    looksLikeReferralSource: looksLikeReferralSource,
     normalizeEducationRecord: normalizeEducationRecord,
     normalizeExperienceRecord: normalizeExperienceRecord,
     extractYearFromEducationDate: extractYearFromEducationDate,

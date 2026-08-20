@@ -305,7 +305,9 @@
       transgender: "",
       raceEthnicity: "",
       veteranStatus: "",
-      disabilityStatus: ""
+      generalVeteranStatus: "",
+      disabilityStatus: "",
+      ageRange: ""
     };
     return { ...base, ...(overrides || {}) };
   }

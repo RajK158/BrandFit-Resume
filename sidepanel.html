@@ -232,6 +232,19 @@
                 Optional demographic information is stored locally on this device, is never inferred from your resume, and can be left blank.
               </p>
 
+              <label class="app-info-field" for="appAgeRange">Age range</label>
+              <select id="appAgeRange" data-app-section="demographics" data-app-field="ageRange">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="17 or younger">17 or younger</option>
+                <option value="18-20">18-20</option>
+                <option value="21-29">21-29</option>
+                <option value="30-39">30-39</option>
+                <option value="40-49">40-49</option>
+                <option value="50-59">50-59</option>
+                <option value="60 or older">60 or older</option>
+              </select>
+
               <label class="app-info-field" for="appGender">Gender</label>
               <select id="appGender" data-app-section="demographics" data-app-field="gender">
                 <option value="">Leave blank</option>
@@ -273,7 +286,15 @@
                 <option value="Self-describe">Self-describe</option>
               </select>
 
-              <label class="app-info-field" for="appVeteranStatus">Veteran status</label>
+              <label class="app-info-field" for="appGeneralVeteranStatus">Veteran status</label>
+              <select id="appGeneralVeteranStatus" data-app-section="demographics" data-app-field="generalVeteranStatus">
+                <option value="">Leave blank</option>
+                <option value="I am a veteran">I am a veteran</option>
+                <option value="I am not a veteran">I am not a veteran</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+              </select>
+
+              <label class="app-info-field" for="appVeteranStatus">Protected veteran status</label>
               <select id="appVeteranStatus" data-app-section="demographics" data-app-field="veteranStatus">
                 <option value="">Leave blank</option>
                 <option value="Prefer not to answer">Prefer not to answer</option>
