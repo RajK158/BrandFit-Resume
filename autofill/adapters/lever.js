@@ -321,6 +321,205 @@
     return results;
   }
 
+  var EEO_SELECT_CATEGORIES = {
+    "eeo[gender]": "gender",
+    "eeo[race]": "race_ethnicity",
+    "eeo[veteran]": "veteran_status",
+    "eeo[disability]": "disability_status"
+  };
+
+  function eeoCategoryForName(name) {
+    return EEO_SELECT_CATEGORIES[normalizeText(name)] || "";
+  }
+
+  function isPreferNotToAnswer(value) {
+    var text = normalizeText(value);
+    return text === "prefer not to answer" || text === "decline to self-identify";
+  }
+
+  function isPlaceholderSelectOption(opt) {
+    if (!opt) return true;
+    var text = normalizeText(opt.text || opt.label || opt.value || "");
+    if (!text) return true;
+    if (text === "select" || text.indexOf("select ") === 0) return true;
+    if (text.indexOf("select...") === 0) return true;
+    return false;
+  }
+
+  function selectOptionLabel(opt) {
+    return trimText((opt && (opt.text || opt.label)) || "");
+  }
+
+  function isSelectAlreadyFilled(select) {
+    if (!select || !select.options || select.selectedIndex < 0) return false;
+    var opt = select.options[select.selectedIndex];
+    if (!opt || opt.disabled) return false;
+    if (isPlaceholderSelectOption(opt)) return false;
+    return Boolean(selectOptionLabel(opt) || trimText(opt.value || ""));
+  }
+
+  function optionMatchesEeo(category, saved, optionLabel) {
+    var savedNorm = normalizeText(saved);
+    var optNorm = normalizeText(optionLabel);
+    if (!savedNorm || !optNorm) return false;
+    if (savedNorm === optNorm) return true;
+
+    if (category === "gender") {
+      if ((savedNorm === "man" || savedNorm === "male") && optNorm === "male") return true;
+      if ((savedNorm === "woman" || savedNorm === "female") && optNorm === "female") return true;
+      if (isPreferNotToAnswer(savedNorm) && optNorm === "decline to self-identify") return true;
+      return false;
+    }
+
+    if (category === "race_ethnicity") {
+      if (isPreferNotToAnswer(savedNorm) && optNorm === "decline to self-identify") return true;
+      if (savedNorm === "hispanic or latino" && optNorm === "hispanic or latino") return true;
+      if (savedNorm === "asian" && optNorm === "asian (not hispanic or latino)") return true;
+      if (savedNorm === "white" && optNorm === "white (not hispanic or latino)") return true;
+      if (
+        savedNorm === "black or african american" &&
+        optNorm === "black or african american (not hispanic or latino)"
+      ) {
+        return true;
+      }
+      if (
+        (savedNorm === "native hawaiian or pacific islander" ||
+          savedNorm === "native hawaiian or other pacific islander") &&
+        optNorm === "native hawaiian or other pacific islander (not hispanic or latino)"
+      ) {
+        return true;
+      }
+      if (
+        savedNorm === "american indian or alaska native" &&
+        optNorm === "american indian or alaska native (not hispanic or latino)"
+      ) {
+        return true;
+      }
+      if (savedNorm === "two or more races" && optNorm === "two or more races (not hispanic or latino)") {
+        return true;
+      }
+      return false;
+    }
+
+    if (category === "veteran_status") {
+      if (
+        isPreferNotToAnswer(savedNorm) &&
+        optNorm === "i decline to self-identify for protected veteran status"
+      ) {
+        return true;
+      }
+      if (savedNorm === "i am not a protected veteran" && optNorm === "i am not a protected veteran") {
+        return true;
+      }
+      if (
+        savedNorm === "i identify as a protected veteran" &&
+        optNorm === "i identify as one or more of the classifications of protected veteran listed above"
+      ) {
+        return true;
+      }
+      return false;
+    }
+
+    if (category === "disability_status") {
+      if (isPreferNotToAnswer(savedNorm) && optNorm === "i do not want to answer") return true;
+      if (
+        savedNorm.indexOf("yes, i have a disability") === 0 &&
+        optNorm.indexOf("yes, i have a disability") === 0
+      ) {
+        return true;
+      }
+      if (
+        savedNorm.indexOf("no, i do not have a disability") === 0 &&
+        optNorm.indexOf("no, i do not have a disability") === 0
+      ) {
+        return true;
+      }
+      return false;
+    }
+
+    return false;
+  }
+
+  function findEeoOption(select, category, saved) {
+    var matches = [];
+    Array.prototype.forEach.call(select.options || [], function (opt) {
+      if (!opt || opt.disabled) return;
+      if (isPlaceholderSelectOption(opt)) return;
+      if (optionMatchesEeo(category, saved, selectOptionLabel(opt))) matches.push(opt);
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function applySelectOption(select, option) {
+    if (!select || !option) return false;
+    try {
+      if (typeof select.scrollIntoView === "function") {
+        select.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    } catch (_) {}
+    try {
+      select.value = option.value;
+      option.selected = true;
+    } catch (_) {
+      return false;
+    }
+    try {
+      select.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (_) {}
+    try {
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {}
+    var selected = select.options && select.selectedIndex >= 0 ? select.options[select.selectedIndex] : null;
+    return Boolean(selected && selected === option);
+  }
+
+  function fillEeoSelects(inventory, handledElements) {
+    var results = [];
+    var form = document.querySelector("#application-form") || document.querySelector("form.application-form");
+    if (!form || !form.querySelectorAll) return results;
+    var inv = inventory || {};
+
+    Array.prototype.forEach.call(form.querySelectorAll("select"), function (select) {
+      var name = trimText(select && select.name);
+      var category = eeoCategoryForName(name);
+      if (!category) return;
+      if (normalizeText(name).indexOf("signature") !== -1) return;
+      if (normalizeText(name).indexOf("surveysresponses") !== -1) return;
+
+      markHandled(handledElements, select);
+
+      if (isSelectAlreadyFilled(select)) {
+        results.push(resultRow(category, name, "skipped", "Field is already completed.", false, ""));
+        return;
+      }
+
+      var saved = trimText(inv[category] || "");
+      if (!saved) {
+        results.push(resultRow(category, name, "skipped", "No saved answer.", false, ""));
+        return;
+      }
+
+      var matched = findEeoOption(select, category, saved);
+      if (!matched) {
+        results.push(
+          resultRow(category, name, "skipped", "No safe matching dropdown option.", false, "")
+        );
+        return;
+      }
+
+      if (!applySelectOption(select, matched)) {
+        results.push(
+          resultRow(category, name, "failed", "Verification failed; selected option did not persist.", false, "")
+        );
+        return;
+      }
+
+      results.push(resultRow(category, name, "filled", "", true, selectOptionLabel(matched)));
+    });
+
+    return results;
+  }
+
   function fillSupportedFields(context) {
     var ctx = context || {};
     var handledElements = ctx.handledElements || [];
@@ -328,6 +527,7 @@
 
     if (isSupportedPage()) {
       results = fillYesNoRadioGroups(ctx.inventory || {}, handledElements);
+      results = results.concat(fillEeoSelects(ctx.inventory || {}, handledElements));
     }
 
     return Promise.resolve(summarize(results, handledElements));
