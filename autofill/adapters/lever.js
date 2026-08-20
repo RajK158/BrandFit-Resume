@@ -2,6 +2,60 @@
   "use strict";
 
   var LEVER_HOST_RE = /(?:^|\.)lever\.co$/i;
+  var ALLOWED_CATEGORIES = {
+    work_authorization: true,
+    sponsorship_now: true,
+    sponsorship_later: true
+  };
+
+  function af() {
+    return global.ImpulsoAutofill || null;
+  }
+
+  function trimText(value) {
+    return String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+  }
+
+  function normalizeText(value) {
+    return trimText(value).toLowerCase();
+  }
+
+  function explicitYesNo(value) {
+    var text = normalizeText(value);
+    if (text === "yes") return "yes";
+    if (text === "no") return "no";
+    return "";
+  }
+
+  function summarize(results, handledElements) {
+    return {
+      results: results || [],
+      handledElements: handledElements || [],
+      summary: {
+        attempted: (results || []).length,
+        filled: (results || []).filter(function (row) {
+          return row.status === "filled";
+        }).length,
+        skipped: (results || []).filter(function (row) {
+          return row.status === "skipped";
+        }).length,
+        failed: (results || []).filter(function (row) {
+          return row.status === "failed";
+        }).length
+      }
+    };
+  }
+
+  function markHandled(handledElements, el) {
+    if (!el || !handledElements) return;
+    if (handledElements.indexOf(el) === -1) handledElements.push(el);
+  }
+
+  function markGroupHandled(handledElements, radios) {
+    (radios || []).forEach(function (radio) {
+      markHandled(handledElements, radio);
+    });
+  }
 
   function isSupportedPage() {
     try {
@@ -18,19 +72,265 @@
     }
   }
 
+  function classifyQuestion(questionText) {
+    var engine = af();
+    if (!engine || typeof engine.classifyLabel !== "function") {
+      return { category: "unknown", confidence: 0 };
+    }
+    return (
+      engine.classifyLabel(questionText, "radio", { optionLabels: ["Yes", "No"] }) || {
+        category: "unknown",
+        confidence: 0
+      }
+    );
+  }
+
+  function looksLikeExportControl(questionText) {
+    var text = normalizeText(questionText);
+    if (!text) return false;
+    return (
+      /\bexport\s+control\b/.test(text) ||
+      /\bitar\b/.test(text) ||
+      /\bu\.?\s*s\.?\s+person\b/.test(text) ||
+      /\bus\s+person\b/.test(text)
+    );
+  }
+
+  function isCombinedSponsorshipQuestion(questionText) {
+    var text = normalizeText(questionText);
+    if (!text) return false;
+    if (!/\bsponsor/.test(text) && !/\bvisa\s+sponsorship\b/.test(text)) return false;
+    var hasNow = /\bnow\b/.test(text) || /\bcurrent(?:ly)?\b/.test(text);
+    var hasFuture = /\bfuture\b/.test(text) || /\blater\b/.test(text);
+    return hasNow && hasFuture;
+  }
+
+  function resolveCombinedSponsorship(inventory) {
+    var now = explicitYesNo(inventory && inventory.sponsorship_now);
+    var later = explicitYesNo(inventory && inventory.sponsorship_later);
+    if (now === "yes" || later === "yes") return "yes";
+    if (now === "no" && later === "no") return "no";
+    return "";
+  }
+
+  function resolveSavedAnswer(category, questionText, inventory) {
+    var inv = inventory || {};
+    if (category === "work_authorization") {
+      return explicitYesNo(inv.work_authorization);
+    }
+    if (category !== "sponsorship_now" && category !== "sponsorship_later") return "";
+    if (isCombinedSponsorshipQuestion(questionText)) {
+      return resolveCombinedSponsorship(inv);
+    }
+    if (category === "sponsorship_later") return explicitYesNo(inv.sponsorship_later);
+    return explicitYesNo(inv.sponsorship_now);
+  }
+
+  function questionTextFromWrapper(wrapper) {
+    if (!wrapper) return "";
+    var nodes = wrapper.querySelectorAll(
+      ".application-question-label, .application-label, .question-label, .text"
+    );
+    var i;
+    for (i = 0; i < nodes.length; i += 1) {
+      if (nodes[i].querySelector && nodes[i].querySelector("input")) continue;
+      var labeled = trimText(nodes[i].innerText || nodes[i].textContent || "");
+      if (labeled) return labeled;
+    }
+    var clone = wrapper.cloneNode(true);
+    Array.prototype.forEach.call(
+      clone.querySelectorAll("input, select, textarea, button, ul"),
+      function (node) {
+        if (node.parentNode) node.parentNode.removeChild(node);
+      }
+    );
+    return trimText(clone.innerText || clone.textContent || "").replace(/\b(yes|no)\s*$/i, "").trim();
+  }
+
+  function radioOptionToken(radio) {
+    if (!radio) return "";
+    var value = normalizeText(radio.value);
+    if (value === "yes" || value === "no") return value;
+    var aria = normalizeText(radio.getAttribute && radio.getAttribute("aria-label"));
+    if (aria === "yes" || aria === "no") return aria;
+    var labelText = "";
+    if (radio.id) {
+      try {
+        var byFor = document.querySelector('label[for="' + CSS.escape(radio.id) + '"]');
+        if (byFor) labelText = normalizeText(byFor.innerText || byFor.textContent || "");
+      } catch (_) {}
+    }
+    if (!labelText) {
+      var parentLabel = radio.closest && radio.closest("label");
+      if (parentLabel) labelText = normalizeText(parentLabel.innerText || parentLabel.textContent || "");
+    }
+    if (labelText === "yes" || labelText === "no") return labelText;
+    return "";
+  }
+
+  function isExactYesNoGroup(radios) {
+    if (!radios || radios.length !== 2) return false;
+    var seen = {};
+    var i;
+    for (i = 0; i < radios.length; i += 1) {
+      var token = radioOptionToken(radios[i]);
+      if (token !== "yes" && token !== "no") return false;
+      if (seen[token]) return false;
+      seen[token] = true;
+    }
+    return Boolean(seen.yes && seen.no);
+  }
+
+  function groupAlreadySelected(radios) {
+    return (radios || []).some(function (radio) {
+      return Boolean(radio && radio.checked);
+    });
+  }
+
+  function matchExactYesNoRadio(radios, answer) {
+    var want = explicitYesNo(answer);
+    if (!want) return null;
+    var i;
+    for (i = 0; i < (radios || []).length; i += 1) {
+      if (radioOptionToken(radios[i]) === want) return radios[i];
+    }
+    return null;
+  }
+
+  function selectExactYesNoRadio(radio) {
+    if (!radio) return false;
+    try {
+      if (typeof radio.scrollIntoView === "function") {
+        radio.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    } catch (_) {}
+    try {
+      var label = radio.closest && radio.closest("label");
+      if (label && typeof label.click === "function") label.click();
+      else if (typeof radio.click === "function") radio.click();
+    } catch (_) {}
+    try {
+      radio.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (_) {}
+    try {
+      radio.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {}
+    if (!radio.checked) {
+      try {
+        radio.checked = true;
+      } catch (_) {}
+      try {
+        radio.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (_) {}
+      try {
+        radio.dispatchEvent(new Event("change", { bubbles: true }));
+      } catch (_) {}
+    }
+    return Boolean(radio.checked);
+  }
+
+  function resultRow(category, label, status, reason, ok, value) {
+    return {
+      category: category,
+      label: label,
+      status: status,
+      reason: reason || "",
+      ok: Boolean(ok),
+      value: value || ""
+    };
+  }
+
+  function collectNamedRadioGroups(wrapper) {
+    var groups = [];
+    var seen = {};
+    var radios = wrapper.querySelectorAll('input[type="radio"]');
+    Array.prototype.forEach.call(radios, function (radio) {
+      var name = trimText(radio && radio.name);
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      var members = [];
+      Array.prototype.forEach.call(radios, function (candidate) {
+        if (trimText(candidate.name) === name) members.push(candidate);
+      });
+      groups.push({ name: name, radios: members });
+    });
+    return groups;
+  }
+
+  function fillYesNoRadioGroups(inventory, handledElements) {
+    var results = [];
+    var wrappers = document.querySelectorAll(
+      "#application-form .application-question.custom-question"
+    );
+    Array.prototype.forEach.call(wrappers, function (wrapper) {
+      var questionText = questionTextFromWrapper(wrapper);
+      var classified = classifyQuestion(questionText);
+      var category = (classified && classified.category) || "unknown";
+      if (looksLikeExportControl(questionText) || category === "export_control_status") {
+        return;
+      }
+      if (!ALLOWED_CATEGORIES[category]) return;
+
+      var groups = collectNamedRadioGroups(wrapper);
+      groups.forEach(function (group) {
+        if (!isExactYesNoGroup(group.radios)) return;
+        markGroupHandled(handledElements, group.radios);
+
+        if (groupAlreadySelected(group.radios)) {
+          results.push(
+            resultRow(category, questionText, "skipped", "Field is already completed.", false, "")
+          );
+          return;
+        }
+
+        var answer = resolveSavedAnswer(category, questionText, inventory);
+        if (!answer) {
+          results.push(
+            resultRow(category, questionText, "skipped", "No saved answer.", false, "")
+          );
+          return;
+        }
+
+        var matched = matchExactYesNoRadio(group.radios, answer);
+        if (!matched) {
+          results.push(
+            resultRow(category, questionText, "failed", "No exact Yes/No option matched.", false, "")
+          );
+          return;
+        }
+
+        if (!selectExactYesNoRadio(matched) || !matched.checked) {
+          results.push(
+            resultRow(
+              category,
+              questionText,
+              "failed",
+              "Verification failed; selected radio did not remain checked.",
+              false,
+              ""
+            )
+          );
+          return;
+        }
+
+        results.push(
+          resultRow(category, questionText, "filled", "", true, answer === "yes" ? "Yes" : "No")
+        );
+      });
+    });
+    return results;
+  }
+
   function fillSupportedFields(context) {
     var ctx = context || {};
+    var handledElements = ctx.handledElements || [];
+    var results = [];
 
-    return Promise.resolve({
-      results: [],
-      handledElements: ctx.handledElements || [],
-      summary: {
-        attempted: 0,
-        filled: 0,
-        skipped: 0,
-        failed: 0
-      }
-    });
+    if (isSupportedPage()) {
+      results = fillYesNoRadioGroups(ctx.inventory || {}, handledElements);
+    }
+
+    return Promise.resolve(summarize(results, handledElements));
   }
 
   global.ImpulsoLeverAdapter = {
