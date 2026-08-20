@@ -174,6 +174,10 @@
     if (Greenhouse && typeof Greenhouse.isSupportedPage === "function" && Greenhouse.isSupportedPage()) {
       return "greenhouse";
     }
+    var Lever = window.ImpulsoLeverAdapter;
+    if (Lever && typeof Lever.isSupportedPage === "function" && Lever.isSupportedPage()) {
+      return "lever";
+    }
     return "generic";
   }
 
@@ -304,6 +308,22 @@
           tabId: opts.tabId
         });
         report = mergeReport(report, greenhouseReport);
+      }
+    } else if (ats === "lever") {
+      var Lever = window.ImpulsoLeverAdapter;
+      if (Lever && typeof Lever.fillSupportedFields === "function") {
+        var leverReport = await Lever.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, leverReport);
       }
     }
 

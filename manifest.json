@@ -47,6 +47,17 @@
       ],
       "all_frames": true,
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://jobs.lever.co/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/lever.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
     }
   ]
 }
