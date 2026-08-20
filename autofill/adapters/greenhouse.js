@@ -64,6 +64,17 @@
     return want === got || want.endsWith(got) || got.endsWith(want);
   }
 
+  function greenhouseLocalPhoneMatch(expected, actual) {
+    var want = String(expected || "").replace(/\D/g, "");
+    var got = String(actual || "").replace(/\D/g, "");
+    if (!want || !got) return false;
+    if (want === got) return true;
+    if (Math.min(want.length, got.length) >= 7) {
+      return want.endsWith(got) || got.endsWith(want);
+    }
+    return false;
+  }
+
   function looksLikeEducationDateField(blob) {
     var engine = af();
     if (engine && typeof engine.looksLikeEducationDateField === "function") {
@@ -504,8 +515,17 @@
     if (engine && typeof engine.fillTextElement === "function") {
       var engineResult = engine.fillTextElement(el, value);
       if (engineResult && isPhoneLikeField(el, category, findLabelText(el))) {
-        if (engineResult.status === "failed" && phoneValuesMatch(value, readValue(el))) {
-          return { ok: true, status: "filled", reason: "" };
+        if (engineResult.status === "failed") {
+          var engineRead = readValue(el);
+          var directValue = trimText(el.value || "");
+          if (
+            phoneValuesMatch(value, engineRead) ||
+            phoneValuesMatch(value, directValue) ||
+            greenhouseLocalPhoneMatch(value, engineRead) ||
+            greenhouseLocalPhoneMatch(value, directValue)
+          ) {
+            return { ok: true, status: "filled", reason: "" };
+          }
         }
       }
       return engineResult;
@@ -1030,6 +1050,27 @@
       }
     }
     return null;
+  }
+
+  function reconcileFinalPhoneResult(root, inventory, results) {
+    var phoneInput = findPhoneInput(root);
+    if (!phoneInput) return;
+    var actual = trimText(phoneInput.value || "");
+    var savedPhone = getInventoryAnswer("phone", inventory, {});
+    var expected = nationalPhoneForGreenhouse(
+      savedPhone,
+      (inventory && inventory.phone_country_code) || ""
+    );
+    if (!greenhouseLocalPhoneMatch(expected, actual)) return;
+    (results || []).forEach(function (row) {
+      if (!row || row.category !== "phone") return;
+      if (row.status !== "failed") return;
+      if (String(row.reason || "").indexOf("Verification failed") === -1) return;
+      row.status = "filled";
+      row.ok = true;
+      row.reason = "";
+      row.value = actual;
+    });
   }
 
   function isAddressOrCitizenshipCountryCue(blob) {
@@ -3897,6 +3938,35 @@
     return "";
   }
 
+  function isGreenhouseExperienceControlIdentity(node) {
+    if (!node) return false;
+    var id = trimText(node.id || "");
+    var name = trimText(node.name || "");
+    return (
+      /^(company-name|title|start-date-month|start-date-year|end-date-month|end-date-year)-\d+$/.test(id) ||
+      /^current-role-\d+(?:_\d+)?$/.test(id) ||
+      /^current-role-\d+$/.test(name)
+    );
+  }
+
+  function isInsideGreenhouseExperienceForm(node) {
+    if (!node) return false;
+    if (isGreenhouseExperienceControlIdentity(node)) return true;
+    if (node.querySelector) {
+      var inner = node.querySelectorAll("input, select, textarea");
+      var i;
+      for (i = 0; i < inner.length; i += 1) {
+        if (isGreenhouseExperienceControlIdentity(inner[i])) return true;
+      }
+    }
+    if (node.closest) {
+      if (node.closest(".employment--form")) return true;
+      if (node.closest("[class*='employment--form']")) return true;
+      if (node.closest("[class*='experience--form']")) return true;
+    }
+    return false;
+  }
+
   function findEducationControls(root) {
     var doc = root || document;
     var found = [];
@@ -3909,12 +3979,14 @@
     }
 
     collectCustomComboboxControls(doc).forEach(function (control) {
+      if (isInsideGreenhouseExperienceForm(control)) return;
       var label = labelForCombobox(control);
       var kind = classifyEducationField(label + " " + (control.getAttribute("aria-label") || ""));
       if (kind) remember(kind, control, label || kind);
     });
 
     collectFields(doc).forEach(function (el) {
+      if (isInsideGreenhouseExperienceForm(el)) return;
       var meta = fieldMeta(el);
       var label = meta.label || meta.name || meta.id || "";
       var cue = [label, meta.ariaLabel, meta.name, meta.id, meta.placeholder].join(" ");
@@ -3930,7 +4002,6 @@
         else if (/\banticipated\b/.test(cueText)) kind = "education_anticipated_graduation";
       }
       if (!kind) return;
-      // Prefer combobox already captured for the same kind near this field.
       var nearbyControl = findComboboxControl(fieldContainer(el) || el);
       if (
         nearbyControl &&
@@ -4658,6 +4729,1384 @@
     return results;
   }
 
+  function isExplicitTrueFlag(value) {
+    return value === true || value === "true";
+  }
+
+  function normalizeExperienceRecord(item) {
+    var row = item && typeof item === "object" ? item : {};
+    return {
+      company: trimText(row.company || row.employer || row.companyName || row.company_name || ""),
+      title: trimText(row.title || row.role || row.position || row.job_title || ""),
+      startDate: trimText(row.startDate || row.start_date || ""),
+      endDate: trimText(row.endDate || row.end_date || ""),
+      current: Boolean(
+        isExplicitTrueFlag(row.current) ||
+          isExplicitTrueFlag(row.currentRole) ||
+          isExplicitTrueFlag(row.isCurrent)
+      )
+    };
+  }
+
+  function resolveExperienceRecords(inventory, profile) {
+    var raw = null;
+    if (inventory && Array.isArray(inventory.experience_records) && inventory.experience_records.length) {
+      raw = inventory.experience_records;
+    } else if (inventory && Array.isArray(inventory.experience) && inventory.experience.length) {
+      raw = inventory.experience;
+    } else if (profile && Array.isArray(profile.experience)) {
+      raw = profile.experience;
+    } else {
+      raw = [];
+    }
+    var out = [];
+    raw.forEach(function (item) {
+      var row = normalizeExperienceRecord(item);
+      if (
+        row.company ||
+        row.title ||
+        row.startDate ||
+        row.endDate ||
+        row.current
+      ) {
+        out.push(row);
+      }
+    });
+    return out;
+  }
+
+  function isExperienceSectionContext(blob, node) {
+    var name = node
+      ? normalizeText(String((node.name || "") + " " + (node.id || "")))
+      : "";
+    var text = normalizeText(blob);
+    var combined = trimText(text + " " + name);
+    if (!combined) return false;
+    if (/\beducations?_attributes\b/.test(name) || /\beducations?\b/.test(name)) {
+      if (!/\bemployments?\b/.test(name)) return false;
+    }
+    if (
+      /\bemployments?_attributes\b/.test(name) ||
+      /\bexperiences?_attributes\b/.test(name) ||
+      /\bemployments?\b/.test(name)
+    ) {
+      return true;
+    }
+    if (
+      /\beducation\b/.test(combined) &&
+      !/\b(employment|work\s+experience|work\s+history|employment\s+history)\b/.test(combined)
+    ) {
+      return false;
+    }
+    if (/\bemployment\s+history\b/.test(combined)) return true;
+    if (/\bwork\s+experience\b/.test(combined)) return true;
+    if (/\bwork\s+history\b/.test(combined)) return true;
+    if (/\bemployment\b/.test(combined)) return true;
+    if (/\bexperience\b/.test(combined)) {
+      if (/\byears?\s+of\s+experience\b/.test(combined)) return false;
+      if (/\bwork\s+authorization\b/.test(combined)) return false;
+      return true;
+    }
+    return false;
+  }
+
+  function experienceSectionBlob(node) {
+    if (!node) return "";
+    var parts = [getNearbySectionContext(node)];
+    var el = node;
+    var depth;
+    for (depth = 0; depth < 8 && el; depth += 1) {
+      parts.push(String((el.className && el.className.baseVal) || el.className || ""));
+      parts.push((el.getAttribute && el.getAttribute("data-testid")) || "");
+      var heading = el.querySelector && el.querySelector("h1, h2, h3, h4, legend");
+      if (heading) parts.push(visibleText(heading) || trimText(heading.textContent || ""));
+      el = el.parentElement;
+    }
+    return parts.join(" ");
+  }
+
+  function classifyExperienceField(labelBlob, node) {
+    var text = normalizeText(labelBlob);
+    if (!text) return "";
+    var fieldText = text.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    if (!node || !isExperienceSectionContext(experienceSectionBlob(node), node)) return "";
+    if (
+      /\bschool\b/.test(text) ||
+      /\buniversity\b/.test(text) ||
+      /\bcollege\b/.test(text) ||
+      /\bdegree\b/.test(text) ||
+      /\bdiscipline\b/.test(text) ||
+      /\bgpa\b/.test(text)
+    ) {
+      return "";
+    }
+    if (
+      /\bcurrent\s+role\b/.test(fieldText) ||
+      /\bi\s+currently\s+work\s+here\b/.test(fieldText) ||
+      /\bcurrently\s+employed\b/.test(fieldText) ||
+      /\bthis\s+is\s+my\s+current\s+role\b/.test(fieldText)
+    ) {
+      return "experience_current";
+    }
+    if (/\bstart\s+date\s+month\b/.test(fieldText) || /\bstart\s+month\b/.test(fieldText)) {
+      return "experience_start_month";
+    }
+    if (/\bend\s+date\s+month\b/.test(fieldText) || /\bend\s+month\b/.test(fieldText)) {
+      return "experience_end_month";
+    }
+    if (/\bstart\s+date\s+year\b/.test(fieldText) || /\bstart\s+year\b/.test(fieldText)) {
+      return "experience_start_year";
+    }
+    if (/\bend\s+date\s+year\b/.test(fieldText) || /\bend\s+year\b/.test(fieldText)) {
+      return "experience_end_year";
+    }
+    var nodeIdent = normalizeText(String((node.name || "") + " " + (node.id || "")))
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    var strongEmploymentMeta =
+      /\bemployments?\s+attributes\b/.test(fieldText) ||
+      /\bexperiences?\s+attributes\b/.test(fieldText) ||
+      /\bemployments?\s+attributes\b/.test(nodeIdent) ||
+      /\bexperiences?\s+attributes\b/.test(nodeIdent) ||
+      /\bemployments?\b/.test(nodeIdent);
+    if (
+      strongEmploymentMeta &&
+      (/\bcurrent\b/.test(fieldText) || /\bcurrent\b/.test(nodeIdent)) &&
+      !/\bstart\b/.test(fieldText) &&
+      !/\bend\b/.test(fieldText)
+    ) {
+      return "experience_current";
+    }
+    if (/\bwhy\b/.test(text) || /\bwebsite\b/.test(text) || /\blinkedin\b/.test(text)) return "";
+    if (
+      text === "company" ||
+      text === "company *" ||
+      /^company\s+name\b/.test(text) ||
+      text === "employer" ||
+      text === "employer *" ||
+      /^employer\s+name\b/.test(text)
+    ) {
+      return "experience_company";
+    }
+    if (
+      text === "title" ||
+      text === "title *" ||
+      text === "job title" ||
+      text === "job title *" ||
+      text === "position" ||
+      text === "position *" ||
+      /^title\b/.test(text) ||
+      /^job\s+title\b/.test(text) ||
+      /^position\b/.test(text)
+    ) {
+      return "experience_title";
+    }
+    return "";
+  }
+
+  function experienceNamesMatch(a, b) {
+    var left = normalizeText(a);
+    var right = normalizeText(b);
+    return Boolean(left && right && left === right);
+  }
+
+  function findExperienceControls(root) {
+    var doc = root || document;
+    var found = [];
+    var seen = [];
+
+    function remember(kind, node, label) {
+      if (!node || !kind || seen.indexOf(node) !== -1) return;
+      seen.push(node);
+      found.push({ kind: kind, node: node, label: label || kind });
+    }
+
+    collectFields(doc).forEach(function (el) {
+      var meta = fieldMeta(el);
+      var label = meta.label || meta.name || meta.id || "";
+      var cue = [label, meta.ariaLabel, meta.name, meta.id, meta.placeholder].join(" ");
+      var kind = classifyExperienceField(cue, el);
+      if (!kind) return;
+      var tag = (el.tagName || "").toLowerCase();
+      if (kind === "experience_start_month" || kind === "experience_end_month") {
+        if (tag === "select") {
+          remember(kind, el, label || kind);
+          return;
+        }
+        if (
+          tag === "input" &&
+          normalizeText(el.getAttribute("role") || "") === "combobox" &&
+          /^(start|end)-date-month-\d+$/.test(trimText(el.id || ""))
+        ) {
+          remember(kind, el, label || kind);
+          return;
+        }
+        var monthScope = fieldContainer(el) || el;
+        var monthSelect =
+          monthScope && monthScope.querySelector ? monthScope.querySelector("select") : null;
+        if (monthSelect) {
+          remember(kind, monthSelect, label || kind);
+          if (seen.indexOf(el) === -1) seen.push(el);
+          return;
+        }
+        var nearbyControl = findComboboxControl(monthScope);
+        if (nearbyControl) {
+          remember(kind, nearbyControl, label || kind);
+          if (seen.indexOf(el) === -1) seen.push(el);
+          return;
+        }
+        remember(kind, el, label || kind);
+        return;
+      }
+      if (kind === "experience_start_year" || kind === "experience_end_year") {
+        remember(kind, el, label || kind);
+        return;
+      }
+      if (kind === "experience_current") {
+        var box = el;
+        if (
+          normalizeText(el.type || "") === "checkbox" &&
+          (/^current-role-\d+$/.test(trimText(el.name || "")) ||
+            /^current-role-\d+(?:_\d+)?$/.test(trimText(el.id || "")))
+        ) {
+          remember(kind, el, label || kind);
+          return;
+        }
+        if (normalizeText(el.type || "") !== "checkbox") {
+          var boxScope =
+            (el.closest && (el.closest("label") || fieldContainer(el))) || el.parentElement || el;
+          box =
+            (boxScope && boxScope.querySelector
+              ? boxScope.querySelector("input[type='checkbox']")
+              : null) || el;
+        }
+        remember(kind, box, label || kind);
+        if (box !== el && seen.indexOf(el) === -1) seen.push(el);
+        return;
+      }
+      remember(kind, el, label || kind);
+    });
+
+    collectCustomComboboxControls(doc).forEach(function (control) {
+      var label = labelForCombobox(control);
+      var kind = classifyExperienceField(
+        [label, control.getAttribute("aria-label") || "", control.name || "", control.id || ""].join(" "),
+        control
+      );
+      if (!kind) return;
+      var node = control;
+      if (
+        (kind === "experience_start_month" || kind === "experience_end_month") &&
+        !(/^(start|end)-date-month-\d+$/.test(trimText((control && control.id) || "")))
+      ) {
+        var comboInput =
+          (control.querySelector &&
+            control.querySelector(
+              'input[role="combobox"][id^="start-date-month-"], input[role="combobox"][id^="end-date-month-"]'
+            )) ||
+          null;
+        if (comboInput && /^(start|end)-date-month-\d+$/.test(trimText(comboInput.id || ""))) {
+          node = comboInput;
+        } else {
+          var comboScope = fieldContainer(control) || control;
+          var nativeSelect =
+            comboScope && comboScope.querySelector ? comboScope.querySelector("select") : null;
+          if (nativeSelect) node = nativeSelect;
+        }
+      }
+      remember(kind, node, label || kind);
+    });
+
+    return found;
+  }
+
+  function countExperienceKindsIn(container) {
+    if (!container) return 0;
+    var kinds = {};
+    findExperienceControls(container).forEach(function (item) {
+      if (item && item.kind) kinds[item.kind] = true;
+    });
+    return Object.keys(kinds).length;
+  }
+
+  function greenhouseExperienceDomIndexFromNode(node) {
+    if (!node) return -1;
+    var id = trimText(node.id || "");
+    var name = trimText(node.name || "");
+    var match = id.match(
+      /^(?:company-name|title|start-date-month|start-date-year|end-date-month|end-date-year|current-role)-(\d+)(?:_\d+)?$/
+    );
+    if (match) return parseInt(match[1], 10);
+    match = name.match(/^current-role-(\d+)$/);
+    if (match) return parseInt(match[1], 10);
+    return -1;
+  }
+
+  function directExperienceFieldsForIndex(index) {
+    var n = String(index);
+    var fields = {};
+    function add(kind, node, label) {
+      if (!node) return;
+      fields[kind] = { kind: kind, node: node, label: label || kind };
+    }
+    add("experience_company", document.getElementById("company-name-" + n), "Company name");
+    add("experience_title", document.getElementById("title-" + n), "Title");
+    add("experience_start_month", document.getElementById("start-date-month-" + n), "Start date month");
+    add("experience_start_year", document.getElementById("start-date-year-" + n), "Start date year");
+    add("experience_end_month", document.getElementById("end-date-month-" + n), "End date month");
+    add("experience_end_year", document.getElementById("end-date-year-" + n), "End date year");
+    add(
+      "experience_current",
+      document.querySelector('input[type="checkbox"][name="current-role-' + n + '"]'),
+      "Current role"
+    );
+    return fields;
+  }
+
+  function mergeDirectExperienceFields(fields, node) {
+    var next = fields || {};
+    var domIndex = greenhouseExperienceDomIndexFromNode(node);
+    if (domIndex < 0) return next;
+    var directFields = directExperienceFieldsForIndex(domIndex);
+    Object.keys(directFields).forEach(function (kind) {
+      next[kind] = directFields[kind];
+    });
+    return next;
+  }
+
+  function greenhouseExperienceDomIndexes() {
+    var indexes = [];
+    var seen = {};
+    Array.prototype.forEach.call(document.querySelectorAll("[id]"), function (el) {
+      var idx = greenhouseExperienceDomIndexFromNode(el);
+      if (idx < 0 || seen[idx]) return;
+      seen[idx] = true;
+      indexes.push(idx);
+    });
+    indexes.sort(function (a, b) {
+      return a - b;
+    });
+    return indexes;
+  }
+
+  function blocksFromDirectExperienceIndexes(doc) {
+    var indexes = greenhouseExperienceDomIndexes();
+    var blocks = [];
+    indexes.forEach(function (domIndex, i) {
+      var fields = directExperienceFieldsForIndex(domIndex);
+      if (!Object.keys(fields).length) return;
+      var rootNode =
+        (fields.experience_company && fields.experience_company.node) ||
+        (fields.experience_title && fields.experience_title.node);
+      blocks.push({
+        index: i,
+        root: fieldContainer(rootNode) || rootNode || doc,
+        fields: fields
+      });
+    });
+    return blocks;
+  }
+
+  function findExperienceBlockContainer(anchorNode, nextAnchorNode) {
+    if (!anchorNode) return null;
+    var el = anchorNode;
+    var depth;
+    for (depth = 0; depth < 10 && el; depth += 1) {
+      var cls = String((el.className && el.className.baseVal) || el.className || "").toLowerCase();
+      var testid = normalizeText((el.getAttribute && el.getAttribute("data-testid")) || "");
+      var role = normalizeText((el.getAttribute && el.getAttribute("role")) || "");
+      var hint = cls + " " + testid + " " + role;
+      if (
+        (/\bemployment\b/.test(hint) ||
+          /\bexperience\b/.test(hint) ||
+          /\brepeat/.test(hint) ||
+          /\bfieldset\b/.test(hint) ||
+          (el.tagName || "").toLowerCase() === "fieldset") &&
+        countExperienceKindsIn(el) >= 1
+      ) {
+        if (!nextAnchorNode || !el.contains(nextAnchorNode)) return el;
+      }
+      el = el.parentElement;
+    }
+    return (
+      anchorNode.closest("fieldset") ||
+      anchorNode.closest("[class*='employment']") ||
+      anchorNode.closest("[class*='experience']") ||
+      fieldContainer(anchorNode) ||
+      anchorNode.parentElement
+    );
+  }
+
+  function getExperienceBlocks(root) {
+    var doc = root || document;
+    var pageControls = findExperienceControls(doc);
+    var anchors = pageControls.filter(function (item) {
+      return item.kind === "experience_company";
+    });
+    if (!anchors.length) {
+      anchors = pageControls.filter(function (item) {
+        return item.kind === "experience_title";
+      });
+    }
+
+    if (!anchors.length) {
+      var directBlocks = blocksFromDirectExperienceIndexes(doc);
+      if (directBlocks.length) return directBlocks;
+      if (!pageControls.length) return [];
+      return [
+        {
+          index: 0,
+          root: fieldContainer(pageControls[0].node) || doc,
+          fields: mergeDirectExperienceFields(indexEducationFields(pageControls), pageControls[0].node)
+        }
+      ];
+    }
+
+    var blocks = [];
+    var i;
+    for (i = 0; i < anchors.length; i += 1) {
+      var anchor = anchors[i];
+      var nextAnchor = anchors[i + 1] || null;
+      var container = findExperienceBlockContainer(anchor.node, nextAnchor && nextAnchor.node);
+      var inContainer = pageControls.filter(function (item) {
+        if (!item || !item.node) return false;
+        if (item.node === anchor.node) return true;
+        if (container && container.contains(item.node)) {
+          if (nextAnchor && nextAnchor.node && container.contains(nextAnchor.node)) {
+            return isBetweenDocumentNodes(anchor.node, item.node, nextAnchor.node);
+          }
+          return true;
+        }
+        return isBetweenDocumentNodes(anchor.node, item.node, nextAnchor && nextAnchor.node);
+      });
+      var fields = indexEducationFields(inContainer);
+      if (anchor.kind === "experience_company") fields.experience_company = anchor;
+      if (anchor.kind === "experience_title" && !fields.experience_title) {
+        fields.experience_title = anchor;
+      }
+      fields = mergeDirectExperienceFields(fields, anchor.node);
+      blocks.push({
+        index: i,
+        root: container || anchor.node,
+        fields: fields
+      });
+    }
+    return blocks;
+  }
+
+  function climbToExperienceSection(fromNode, root) {
+    var el = fromNode;
+    var scope = root || document;
+    while (el && el !== scope) {
+      var context = normalizeText(
+        getNearbySectionContext(el) + " " + String((el.className && el.className.baseVal) || el.className || "")
+      );
+      if (isExperienceSectionContext(context, el)) {
+        var addBtn = el.querySelector && el.querySelector("button, a, [role='button']");
+        if (addBtn || countExperienceKindsIn(el) >= 1) return el;
+      }
+      el = el.parentElement;
+    }
+    return scope;
+  }
+
+  function findExperienceAddAnotherButton(root) {
+    var blocks = getExperienceBlocks(root);
+    var section =
+      blocks.length && blocks[0].root
+        ? climbToExperienceSection(blocks[0].root, root || document)
+        : root || document;
+    var experienceContainer =
+      blocks.length &&
+      blocks[0].root &&
+      blocks[0].root.closest
+        ? blocks[0].root.closest(".employment--container") ||
+          blocks[0].root.closest("[class*='employment--container']") ||
+          blocks[0].root.closest("[class*='experience--container']")
+        : null;
+    if (experienceContainer) section = experienceContainer;
+    var buttons = section.querySelectorAll("button, a, [role='button']");
+    var best = null;
+    var bestScore = 0;
+
+    Array.prototype.forEach.call(buttons, function (btn) {
+      if (!btn || btn.disabled) return;
+      var text = normalizeText(
+        (btn.innerText || btn.textContent || btn.getAttribute("aria-label") || btn.getAttribute("title") || "")
+          .replace(/\s+/g, " ")
+          .trim()
+      );
+      if (!text) return;
+      var isAddAnother = /\badd\s+another\b/.test(text);
+      var isAddExperience =
+        /\badd\s+(another\s+)?(employment|experience|work\s+experience)\b/.test(text);
+      if (!isAddAnother && !isAddExperience && text !== "add") return;
+
+      var context = normalizeText(getNearbySectionContext(btn) + " " + experienceSectionBlob(btn));
+      var educationOnly =
+        /\beducation\b/.test(context) &&
+        !/\b(employment|work\s+experience|work\s+history|employment\s+history)\b/.test(context);
+      if (educationOnly) return;
+      if (!experienceContainer && !isExperienceSectionContext(context, btn) && !isAddExperience) {
+        return;
+      }
+
+      var score = 0;
+      if (isAddExperience) score += 70;
+      if (isAddAnother) score += 50;
+      if (text === "add") score += 10;
+      if (/\b(employment|work\s+experience|work\s+history|employment\s+history)\b/.test(context)) {
+        score += 40;
+      } else if (/\bexperience\b/.test(context)) {
+        score += 25;
+      }
+      if (blocks.length) {
+        var lastRoot = blocks[blocks.length - 1].root;
+        if (lastRoot) {
+          if (lastRoot.contains(btn)) score += 25;
+          else if (compareDocumentOrder(lastRoot, btn) < 0) score += 20;
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = btn;
+      }
+    });
+
+    return bestScore >= 40 ? best : null;
+  }
+
+  async function ensureExperienceBlockCount(root, needed) {
+    var want = Math.max(0, needed || 0);
+    if (!want) return getExperienceBlocks(root);
+
+    var clicks = 0;
+    var maxClicks = want + 4;
+    var blocks = getExperienceBlocks(root);
+
+    while (blocks.length < want && clicks < maxClicks) {
+      var before = blocks.length;
+      var addBtn = findExperienceAddAnotherButton(root);
+      if (!addBtn) break;
+      clickElement(addBtn);
+      clicks += 1;
+      await waitForDomCondition(function () {
+        return getExperienceBlocks(root).length > before;
+      }, 4500);
+      blocks = getExperienceBlocks(root);
+      if (blocks.length <= before) break;
+    }
+
+    return getExperienceBlocks(root);
+  }
+
+  function readExperienceBlockValues(block) {
+    var fields = (block && block.fields) || {};
+    function readField(kind) {
+      var item = fields[kind];
+      if (!item || !item.node) return "";
+      var control = findComboboxControl(item.node) || item.node;
+      if (kind === "experience_current") {
+        var box = control;
+        if (box && normalizeText(box.type || "") !== "checkbox") {
+          box = (item.node.closest && item.node.closest("label")
+            ? item.node.closest("label").querySelector("input[type='checkbox']")
+            : null) || item.node;
+        }
+        return box && box.checked ? "true" : "";
+      }
+      return (
+        trimText(readComboboxSelectedText(control) || "") ||
+        trimText(readValue(control) || "") ||
+        trimText(readValue(item.node) || "")
+      );
+    }
+    return {
+      company: readField("experience_company"),
+      title: readField("experience_title"),
+      startMonth: readField("experience_start_month"),
+      startYear: readField("experience_start_year"),
+      endMonth: readField("experience_end_month"),
+      endYear: readField("experience_end_year"),
+      current: readField("experience_current") === "true"
+    };
+  }
+
+  function experienceBlockMatchesRecord(block, record) {
+    if (!block || !record) return false;
+    var values = readExperienceBlockValues(block);
+    var company = trimText(values.company);
+    var title = trimText(values.title);
+    if (!company && !title) return false;
+
+    var companyOk =
+      !company || !record.company || experienceNamesMatch(company, record.company);
+    var titleOk = !title || !record.title || experienceNamesMatch(title, record.title);
+
+    if (company && record.company && companyOk) {
+      if (title && record.title) return titleOk;
+      return true;
+    }
+    if (!company && title && record.title && titleOk && !record.company) return true;
+    return false;
+  }
+
+  function experienceBlockLooksFilled(block) {
+    var values = readExperienceBlockValues(block);
+    return Boolean(values.company || values.title);
+  }
+
+  function assignExperienceBlocks(blocks, records) {
+    var assignments = [];
+    var usedBlocks = {};
+    var usedRecords = {};
+    var b;
+    var r;
+
+    for (b = 0; b < blocks.length; b += 1) {
+      for (r = 0; r < records.length; r += 1) {
+        if (usedRecords[r]) continue;
+        if (!experienceBlockMatchesRecord(blocks[b], records[r])) continue;
+        usedBlocks[b] = true;
+        usedRecords[r] = true;
+        assignments.push({
+          blockIndex: b,
+          recordIndex: r,
+          block: blocks[b],
+          record: records[r],
+          alreadyMatched: true
+        });
+        break;
+      }
+    }
+
+    var ri;
+    for (ri = 0; ri < records.length; ri += 1) {
+      if (usedRecords[ri]) continue;
+      var blockIndex = -1;
+      var bi;
+      for (bi = 0; bi < blocks.length; bi += 1) {
+        if (usedBlocks[bi]) continue;
+        if (experienceBlockLooksFilled(blocks[bi])) continue;
+        blockIndex = bi;
+        break;
+      }
+      if (blockIndex === -1) break;
+      usedBlocks[blockIndex] = true;
+      usedRecords[ri] = true;
+      assignments.push({
+        blockIndex: blockIndex,
+        recordIndex: ri,
+        block: blocks[blockIndex],
+        record: records[ri],
+        alreadyMatched: false
+      });
+    }
+
+    return {
+      assignments: assignments,
+      unmatchedRecordIndexes: records
+        .map(function (_, idx) {
+          return idx;
+        })
+        .filter(function (idx) {
+          return !usedRecords[idx];
+        })
+    };
+  }
+
+  function experienceAnswerFor(kind, record) {
+    if (!record) return "";
+    if (kind === "experience_company") return trimText(record.company || "");
+    if (kind === "experience_title") return trimText(record.title || "");
+    if (kind === "experience_start_month") return educationMonthFrom(record.startDate);
+    if (kind === "experience_start_year") return educationYearFrom(record.startDate);
+    if (kind === "experience_end_month") {
+      if (record.current) return "";
+      return educationMonthFrom(record.endDate);
+    }
+    if (kind === "experience_end_year") {
+      if (record.current) return "";
+      return educationYearFrom(record.endDate);
+    }
+    if (kind === "experience_current") return record.current ? "true" : "";
+    return "";
+  }
+
+  function fillExperienceTextInput(el, answer) {
+    var saved = trimText(answer);
+    if (!el) {
+      return { ok: false, status: "skipped", reason: "Field not found.", value: "" };
+    }
+    if (!saved) {
+      return { ok: false, status: "skipped", reason: "No saved answer.", value: "" };
+    }
+    var current = trimText(readValue(el) || el.value || "");
+    if (current) {
+      if (valuesMatch(saved, current) || normalizeText(current) === normalizeText(saved)) {
+        return { ok: true, status: "filled", reason: "", value: current };
+      }
+      return { ok: false, status: "skipped", reason: "Field is already completed.", value: "" };
+    }
+    if (!setNativeValue(el, saved)) {
+      return { ok: false, status: "failed", reason: "Could not set field value.", value: "" };
+    }
+    var after = trimText(readValue(el) || el.value || "");
+    if (!after || !(valuesMatch(saved, after) || normalizeText(after) === normalizeText(saved))) {
+      return { ok: false, status: "failed", reason: "Verification failed.", value: "" };
+    }
+    return { ok: true, status: "filled", reason: "", value: after };
+  }
+
+  function fillExperienceYearInput(el, year) {
+    var answer = trimText(year);
+    if (!el) {
+      return { ok: false, status: "skipped", reason: "Field not found.", value: "" };
+    }
+    if (!answer) {
+      return { ok: false, status: "skipped", reason: "No saved answer.", value: "" };
+    }
+    var current = trimText(readValue(el) || el.value || "");
+    if (current) {
+      if (educationYearFrom(current) === educationYearFrom(answer) || educationYearFrom(current) === answer) {
+        return { ok: true, status: "filled", reason: "", value: current };
+      }
+      return { ok: false, status: "skipped", reason: "Field is already completed.", value: "" };
+    }
+    return fillEducationYearInput(el, answer);
+  }
+
+  function isExperienceMonthComboboxInput(el) {
+    if (!el || (el.tagName || "").toLowerCase() !== "input") return false;
+    if (normalizeText((el.getAttribute && el.getAttribute("role")) || "") !== "combobox") return false;
+    return /^(start|end)-date-month-\d+$/.test(trimText(el.id || ""));
+  }
+
+  function findExperienceMonthToggle(input) {
+    if (!isExperienceMonthComboboxInput(input)) return null;
+
+    function isToggle(btn) {
+      return Boolean(
+        btn &&
+          (btn.tagName || "").toLowerCase() === "button" &&
+          normalizeText(btn.getAttribute("aria-label") || "") === "toggle flyout"
+      );
+    }
+
+    var nextMonth = null;
+    var combos = document.querySelectorAll('input[role="combobox"]');
+    var i;
+    var passed = false;
+    for (i = 0; i < combos.length; i += 1) {
+      if (combos[i] === input) {
+        passed = true;
+        continue;
+      }
+      if (passed && isExperienceMonthComboboxInput(combos[i])) {
+        nextMonth = combos[i];
+        break;
+      }
+    }
+
+    var el = input.parentElement;
+    var depth;
+    for (depth = 0; depth < 8 && el; depth += 1) {
+      var buttons = [];
+      Array.prototype.forEach.call(el.querySelectorAll("button"), function (btn) {
+        if (!isToggle(btn)) return;
+        if (compareDocumentOrder(input, btn) > 0) return;
+        if (nextMonth && compareDocumentOrder(btn, nextMonth) >= 0) return;
+        buttons.push(btn);
+      });
+      if (buttons.length === 1) return buttons[0];
+      el = el.parentElement;
+    }
+
+    var scope = fieldContainer(input) || input.parentElement;
+    if (!scope || !scope.querySelectorAll) return null;
+    var scoped = [];
+    Array.prototype.forEach.call(scope.querySelectorAll("button"), function (btn) {
+      if (!isToggle(btn)) return;
+      if (compareDocumentOrder(input, btn) > 0) return;
+      if (nextMonth && compareDocumentOrder(btn, nextMonth) >= 0) return;
+      scoped.push(btn);
+    });
+    if (scoped.length === 1) return scoped[0];
+    return null;
+  }
+
+  function readExperienceMonthDisplay(input) {
+    if (!input) return "";
+    var fromInput = trimText(input.value || "");
+    if (fromInput && monthIndexFromLabel(fromInput) >= 0) return fromInput;
+    var root = comboboxRoot(input) || fieldContainer(input) || input.parentElement;
+    if (root && root.querySelector) {
+      var display = root.querySelector(
+        ".select__single-value, [class*='single-value'], [class*='Select-value']"
+      );
+      var shown = trimText(display && (display.innerText || display.textContent || ""));
+      if (shown && monthIndexFromLabel(shown) >= 0) return shown;
+    }
+    return fromInput;
+  }
+
+  function findVisibleExperienceMonthOptions() {
+    var boxes = document.querySelectorAll("[role='listbox']");
+    var b;
+    for (b = 0; b < boxes.length; b += 1) {
+      if (!isListboxOpen(boxes[b])) continue;
+      var options = collectListboxOptions(boxes[b]);
+      var seen = {};
+      var monthCount = 0;
+      var o;
+      for (o = 0; o < options.length; o += 1) {
+        var idx = monthIndexFromLabel(options[o] && options[o].label);
+        if (idx < 0 || seen[idx]) continue;
+        seen[idx] = true;
+        monthCount += 1;
+      }
+      if (monthCount >= 6) return options;
+    }
+    var loose = [];
+    var looseSeen = {};
+    Array.prototype.forEach.call(document.querySelectorAll("[role='option']"), function (opt) {
+      var label = optionLabelText(opt);
+      var monthIdx = monthIndexFromLabel(label);
+      if (monthIdx < 0 || looseSeen[monthIdx]) return;
+      looseSeen[monthIdx] = true;
+      loose.push({ el: opt, label: label });
+    });
+    if (Object.keys(looseSeen).length >= 6) return loose;
+    return [];
+  }
+
+  function dispatchExperienceFlyoutClick(el) {
+    if (!el) return false;
+    try {
+      var opts = { bubbles: true, cancelable: true, view: global, button: 0 };
+      el.dispatchEvent(new MouseEvent("mousedown", opts));
+      el.dispatchEvent(new MouseEvent("mouseup", opts));
+      el.dispatchEvent(new MouseEvent("click", opts));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function fillExperienceMonthCombobox(input, savedMonth) {
+    var want = monthIndexFromLabel(savedMonth);
+    if (want < 0) {
+      return { ok: false, status: "skipped", reason: "No saved answer." };
+    }
+    var monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December"
+    ];
+    var canonicalMonthName = monthNames[want];
+    var liveInput = document.getElementById(input && input.id) || input;
+    var current = readExperienceMonthDisplay(liveInput);
+    if (current && monthIndexFromLabel(current) === want) {
+      return { ok: true, status: "filled", reason: "", value: current };
+    }
+    try {
+      liveInput.focus();
+    } catch (_) {}
+    typeIntoSearchInput(liveInput, canonicalMonthName);
+    await sleep(120);
+    try {
+      liveInput.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          code: "ArrowDown",
+          keyCode: 40,
+          which: 40,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    } catch (_) {}
+    await sleep(50);
+    try {
+      liveInput.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    } catch (_) {}
+    await sleep(300);
+    var afterInput = document.getElementById(input && input.id) || liveInput;
+    var selected = readExperienceMonthDisplay(afterInput);
+    if (selected && monthIndexFromLabel(selected) === want) {
+      return { ok: true, status: "filled", reason: "", value: selected };
+    }
+    return { ok: false, status: "failed", reason: "Verification failed." };
+  }
+
+  function fillExperienceMonthSelect(el, savedMonth) {
+    var saved = trimText(savedMonth);
+    var want = monthIndexFromLabel(saved);
+    if (!el || (el.tagName || "").toLowerCase() !== "select") {
+      return { ok: false, status: "skipped", reason: "Not a select field.", value: "" };
+    }
+    if (!saved || want < 0) {
+      return { ok: false, status: "skipped", reason: "No saved answer.", value: "" };
+    }
+    var current = readValue(el);
+    var currentNorm = normalizeText(current).replace(/\.+$/g, "").trim();
+    var isPlaceholder =
+      !currentNorm ||
+      currentNorm === "select" ||
+      currentNorm === "choose" ||
+      currentNorm === "please select";
+    if (
+      !isPlaceholder &&
+      typeof el.selectedIndex === "number" &&
+      el.selectedIndex <= 0 &&
+      monthIndexFromLabel(current) < 0
+    ) {
+      isPlaceholder = true;
+    }
+    if (current && monthIndexFromLabel(current) === want) {
+      return { ok: true, status: "filled", reason: "", value: current };
+    }
+    if (!isPlaceholder && isFilledValue(current) && monthIndexFromLabel(current) !== want) {
+      return { ok: false, status: "skipped", reason: "Field is already completed.", value: "" };
+    }
+    var matched = null;
+    Array.prototype.forEach.call(el.options || [], function (opt) {
+      if (matched || !opt || opt.disabled) return;
+      var label = trimText(opt.text || opt.label || opt.value || "");
+      if (monthIndexFromLabel(label) === want) matched = opt;
+    });
+    if (!matched) {
+      return { ok: false, status: "skipped", reason: "No compatible experience option.", value: "" };
+    }
+    try {
+      el.value = matched.value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {
+      return { ok: false, status: "failed", reason: "Could not set select value.", value: "" };
+    }
+    var after = readValue(el);
+    if (monthIndexFromLabel(after) !== want) {
+      return { ok: false, status: "failed", reason: "Verification failed.", value: "" };
+    }
+    return { ok: true, status: "filled", reason: "", value: after };
+  }
+
+  async function checkExperienceCurrentBox(el) {
+    if (!el) {
+      return { ok: false, status: "skipped", reason: "Field not found.", value: "" };
+    }
+    var box = el;
+    var roleName = "";
+    var name = trimText(el.name || "");
+    var id = trimText(el.id || "");
+    var nameMatch = name.match(/^current-role-(\d+)$/);
+    var idMatch = id.match(/^current-role-(\d+)(?:_\d+)?$/);
+    if (normalizeText(el.type || "") === "checkbox" && (nameMatch || idMatch)) {
+      box = el;
+      roleName = nameMatch ? name : "current-role-" + idMatch[1];
+    } else if (normalizeText(box.type || "") !== "checkbox") {
+      box =
+        (el.closest && el.closest("label")
+          ? el.closest("label").querySelector("input[type='checkbox']")
+          : null) ||
+        (el.parentElement && el.parentElement.querySelector
+          ? el.parentElement.querySelector("input[type='checkbox']")
+          : null) ||
+        el;
+      name = trimText((box && box.name) || "");
+      nameMatch = name.match(/^current-role-(\d+)$/);
+      if (nameMatch) roleName = name;
+    }
+    if (!box || normalizeText(box.type || "") !== "checkbox") {
+      return { ok: false, status: "skipped", reason: "Not a checkbox field.", value: "" };
+    }
+    if (box.checked) {
+      return { ok: true, status: "filled", reason: "", value: "true" };
+    }
+    try {
+      box.click();
+    } catch (_) {}
+    await sleep(120);
+    var liveBox = roleName
+      ? document.querySelector('input[type="checkbox"][name="' + roleName + '"]')
+      : (box.id && document.getElementById(box.id)) || box;
+    if (liveBox && liveBox.checked) {
+      return { ok: true, status: "filled", reason: "", value: "true" };
+    }
+    try {
+      if (liveBox) {
+        liveBox.checked = true;
+        liveBox.dispatchEvent(new Event("input", { bubbles: true }));
+        liveBox.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    } catch (_) {}
+    await sleep(80);
+    liveBox = roleName
+      ? document.querySelector('input[type="checkbox"][name="' + roleName + '"]')
+      : liveBox;
+    if (!liveBox || !liveBox.checked) {
+      return { ok: false, status: "failed", reason: "Could not check Current role.", value: "" };
+    }
+    return { ok: true, status: "filled", reason: "", value: "true" };
+  }
+
+  async function fillSingleExperienceField(kind, node, record, handledElements) {
+    if (!node || !kind) {
+      return { ok: false, status: "skipped", reason: "Field not found.", value: "" };
+    }
+    if (wasHandled(handledElements, node)) {
+      return { ok: false, status: "skipped", reason: "Field already handled.", value: "" };
+    }
+
+    var answer = experienceAnswerFor(kind, record);
+    markHandled(handledElements, node);
+    var control = node;
+    if (
+      kind !== "experience_start_year" &&
+      kind !== "experience_end_year" &&
+      !isExperienceMonthComboboxInput(node) &&
+      !(
+        kind === "experience_current" &&
+        normalizeText(node.type || "") === "checkbox"
+      )
+    ) {
+      control = findComboboxControl(node) || node;
+    }
+    markHandled(handledElements, control);
+
+    if (kind === "experience_current") {
+      if (!record || record.current !== true) {
+        return { ok: false, status: "skipped", reason: "No saved answer.", value: "" };
+      }
+      return await checkExperienceCurrentBox(node);
+    }
+
+    if (!trimText(answer)) {
+      return { ok: false, status: "skipped", reason: "No saved answer.", value: "" };
+    }
+
+    var tag = (node.tagName || "").toLowerCase();
+    var result = null;
+
+    if (kind === "experience_company" || kind === "experience_title") {
+      result = fillExperienceTextInput(node, answer);
+    } else if (kind === "experience_start_year" || kind === "experience_end_year") {
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        /^(start|end)-date-year-\d+$/.test(trimText(node.id || ""))
+      ) {
+        result = fillExperienceYearInput(node, answer);
+      } else if (tag === "select") {
+        var yearOpts = [];
+        Array.prototype.forEach.call(node.options || [], function (opt) {
+          yearOpts.push({
+            el: opt,
+            label: trimText((opt && (opt.text || opt.label || opt.value)) || "")
+          });
+        });
+        var yearMatch = pickYearOption(yearOpts, answer);
+        if (!yearMatch) {
+          result = { ok: false, status: "skipped", reason: "No compatible experience option.", value: "" };
+        } else {
+          try {
+            node.value = yearMatch.el.value;
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+            var yearAfter = educationYearFrom(readValue(node));
+            if (yearAfter !== educationYearFrom(answer) && yearAfter !== answer) {
+              result = { ok: false, status: "failed", reason: "Verification failed.", value: "" };
+            } else {
+              result = { ok: true, status: "filled", reason: "", value: readValue(node) };
+            }
+          } catch (_) {
+            result = { ok: false, status: "failed", reason: "Could not set select value.", value: "" };
+          }
+        }
+      } else {
+        result = await selectEducationDropdownOption(
+          control,
+          function (options) {
+            return pickYearOption(options, answer);
+          },
+          answer
+        );
+      }
+    } else if (kind === "experience_start_month" || kind === "experience_end_month") {
+      if (isExperienceMonthComboboxInput(node)) {
+        result = await fillExperienceMonthCombobox(node, answer);
+      } else if (tag === "select") {
+        result = fillExperienceMonthSelect(node, answer);
+      } else {
+        result = await fillEducationMonthDropdown(control, answer);
+      }
+    }
+
+    if (!result) {
+      return { ok: false, status: "skipped", reason: "Unsupported experience control.", value: "" };
+    }
+    return {
+      ok: Boolean(result.ok),
+      status: result.status,
+      reason: result.reason || "",
+      value: result.ok ? result.value || answer : ""
+    };
+  }
+
+  async function fillOneExperienceBlock(block, record, experienceIndex, handledElements) {
+    var kinds = [
+      "experience_company",
+      "experience_title",
+      "experience_start_month",
+      "experience_start_year",
+      "experience_current",
+      "experience_end_month",
+      "experience_end_year"
+    ];
+    var filledFields = [];
+    var skippedFields = [];
+    var failedFields = [];
+    var fieldResults = [];
+    var fields = (block && block.fields) || {};
+    var i;
+
+    for (i = 0; i < kinds.length; i += 1) {
+      var kind = kinds[i];
+      var liveBlocks = getExperienceBlocks(document);
+      var liveIndex = block && typeof block.index === "number" ? block.index : experienceIndex;
+      var liveBlock = (liveBlocks && liveBlocks[liveIndex]) || block;
+      var liveFields = (liveBlock && liveBlock.fields) || {};
+      var item = liveFields[kind] || fields[kind];
+      if (item && item.node && item.node.isConnected === false && item.node.id) {
+        var relive = document.getElementById(item.node.id);
+        if (relive) item = { kind: kind, node: relive, label: item.label };
+      }
+      if (!item || !item.node) {
+        skippedFields.push(kind);
+        continue;
+      }
+      if (
+        (kind === "experience_end_month" || kind === "experience_end_year") &&
+        record &&
+        record.current === true
+      ) {
+        skippedFields.push(kind);
+        markHandled(handledElements, item.node);
+        continue;
+      }
+      var result = await fillSingleExperienceField(kind, item.node, record, handledElements);
+      fieldResults.push({
+        category: kind,
+        label: item.label || kind,
+        status: result.status,
+        reason: result.reason || "",
+        ok: Boolean(result.ok),
+        value: result.ok ? result.value || "" : "",
+        experienceIndex: experienceIndex
+      });
+      if (result.ok && result.status === "filled") filledFields.push(kind);
+      else if (result.status === "failed") failedFields.push(kind);
+      else skippedFields.push(kind);
+    }
+
+    var verifyBlock =
+      (getExperienceBlocks(document)[
+        block && typeof block.index === "number" ? block.index : experienceIndex
+      ] || block);
+    var values = readExperienceBlockValues(verifyBlock);
+    var verifyFields = (verifyBlock && verifyBlock.fields) || fields;
+    var hasCompanyField = Boolean(verifyFields.experience_company);
+    var hasTitleField = Boolean(verifyFields.experience_title);
+    var hasStartMonthField = Boolean(verifyFields.experience_start_month);
+    var hasStartYearField = Boolean(verifyFields.experience_start_year);
+    var hasEndMonthField = Boolean(verifyFields.experience_end_month);
+    var hasEndYearField = Boolean(verifyFields.experience_end_year);
+    var hasCurrentField = Boolean(verifyFields.experience_current);
+    var savedStartMonth = educationMonthFrom(record && record.startDate);
+    var savedStartYear = educationYearFrom(record && record.startDate);
+    var savedEndMonth = record && record.current ? "" : educationMonthFrom(record && record.endDate);
+    var savedEndYear = record && record.current ? "" : educationYearFrom(record && record.endDate);
+
+    var companyOk =
+      !hasCompanyField ||
+      !(record && record.company) ||
+      experienceNamesMatch(values.company, record.company);
+    var titleOk =
+      !hasTitleField ||
+      !(record && record.title) ||
+      experienceNamesMatch(values.title, record.title);
+    var startMonthOk =
+      !hasStartMonthField ||
+      !savedStartMonth ||
+      monthIndexFromLabel(values.startMonth) === monthIndexFromLabel(savedStartMonth);
+    var startYearOk =
+      !hasStartYearField ||
+      !savedStartYear ||
+      educationYearFrom(values.startYear) === savedStartYear;
+    var endMonthOk =
+      (record && record.current) ||
+      !hasEndMonthField ||
+      !savedEndMonth ||
+      monthIndexFromLabel(values.endMonth) === monthIndexFromLabel(savedEndMonth);
+    var endYearOk =
+      (record && record.current) ||
+      !hasEndYearField ||
+      !savedEndYear ||
+      educationYearFrom(values.endYear) === savedEndYear;
+    var currentOk = !hasCurrentField || !(record && record.current) || values.current;
+
+    var success = Boolean(
+      companyOk &&
+        titleOk &&
+        startMonthOk &&
+        startYearOk &&
+        endMonthOk &&
+        endYearOk &&
+        currentOk &&
+        failedFields.length === 0
+    );
+    var reason = "";
+    if (!success) {
+      if (failedFields.length) reason = "One or more employment fields failed verification.";
+      else if (!companyOk) reason = "Company did not match the saved experience record.";
+      else if (!titleOk) reason = "Title did not match the saved experience record.";
+      else if (!startMonthOk) reason = "Start month did not match the saved experience record.";
+      else if (!startYearOk) reason = "Start year did not match the saved experience record.";
+      else if (!endMonthOk) reason = "End month did not match the saved experience record.";
+      else if (!endYearOk) reason = "End year did not match the saved experience record.";
+      else if (!currentOk) reason = "Current role did not match the saved experience record.";
+      else reason = "Employment block incomplete.";
+    }
+
+    return {
+      entry: {
+        experienceIndex: experienceIndex,
+        company: (record && record.company) || values.company || "",
+        success: success,
+        filledFields: filledFields,
+        skippedFields: skippedFields,
+        failedFields: failedFields,
+        reason: reason
+      },
+      fieldResults: fieldResults
+    };
+  }
+
+  async function fillExperienceFields(root, inventory, profile, handledElements) {
+    var records = resolveExperienceRecords(inventory, profile);
+    var results = [];
+    if (!records.length) return results;
+
+    var existing = getExperienceBlocks(root);
+    var addBtn = findExperienceAddAnotherButton(root);
+    if (!existing.length && !addBtn) return results;
+
+    var blocks = await ensureExperienceBlockCount(root, records.length);
+    if (blocks.length < records.length) {
+      await sleep(250);
+      blocks = await ensureExperienceBlockCount(root, records.length);
+    }
+
+    var assignment = assignExperienceBlocks(blocks, records);
+    if (assignment.unmatchedRecordIndexes.length) {
+      blocks = await ensureExperienceBlockCount(
+        root,
+        getExperienceBlocks(root).length + assignment.unmatchedRecordIndexes.length
+      );
+      assignment = assignExperienceBlocks(blocks, records);
+    }
+
+    var entryResults = [];
+    var a;
+    for (a = 0; a < assignment.assignments.length; a += 1) {
+      var map = assignment.assignments[a];
+      var liveBlocks = getExperienceBlocks(root);
+      var liveBlock = liveBlocks[map.blockIndex] || map.block;
+      var filled = await fillOneExperienceBlock(
+        liveBlock,
+        map.record,
+        map.recordIndex,
+        handledElements
+      );
+      entryResults.push(filled.entry);
+      var fr;
+      for (fr = 0; fr < filled.fieldResults.length; fr += 1) {
+        results.push(filled.fieldResults[fr]);
+      }
+    }
+
+    var u;
+    for (u = 0; u < assignment.unmatchedRecordIndexes.length; u += 1) {
+      var idx = assignment.unmatchedRecordIndexes[u];
+      var unmatched = records[idx];
+      entryResults.push({
+        experienceIndex: idx,
+        company: (unmatched && unmatched.company) || "",
+        success: false,
+        filledFields: [],
+        skippedFields: [
+          "experience_company",
+          "experience_title",
+          "experience_start_month",
+          "experience_start_year",
+          "experience_end_month",
+          "experience_end_year",
+          "experience_current"
+        ],
+        failedFields: [],
+        reason: "No Employment block available for this saved record."
+      });
+    }
+
+    var finalBlocks = getExperienceBlocks(root);
+    var allMatched =
+      entryResults.length === records.length &&
+      entryResults.every(function (entry) {
+        return entry && entry.success;
+      }) &&
+      finalBlocks.length >= records.length;
+
+    results.push({
+      category: "experience_entries",
+      label: "Employment",
+      status: allMatched ? "filled" : entryResults.some(function (e) { return e.success; }) ? "skipped" : "failed",
+      ok: allMatched,
+      reason: allMatched
+        ? ""
+        : "Not all saved experience records have their own correctly matched Employment blocks.",
+      value: String(finalBlocks.length),
+      experienceEntries: entryResults,
+      experienceBlockCount: finalBlocks.length,
+      experienceRecordCount: records.length
+    });
+
+    findExperienceControls(root).forEach(function (item) {
+      if (item && item.node) markHandled(handledElements, item.node);
+    });
+
+    return results;
+  }
+
   function looksLikeLocationCityField(blob) {
     var engine = af();
     if (engine && typeof engine.looksLikeLocationCityField === "function") {
@@ -5266,6 +6715,11 @@
       results.push(educationRows[e]);
     }
 
+    var experienceRows = await fillExperienceFields(root, inventory, options.profile, handledElements);
+    for (var x = 0; x < experienceRows.length; x += 1) {
+      results.push(experienceRows[x]);
+    }
+
     var fields = collectFields(root);
     for (var i = 0; i < fields.length; i += 1) {
       var el = fields[i];
@@ -5286,6 +6740,10 @@
         markHandled(handledElements, el);
         continue;
       }
+      if (classifyExperienceField(labelCue, el)) {
+        markHandled(handledElements, el);
+        continue;
+      }
       if (isExcludedEducationQuestion(labelCue)) {
         markHandled(handledElements, el);
         continue;
@@ -5303,6 +6761,8 @@
     }
 
     await restoreFinalManualSchoolText(root, educationRows, inventory, options.profile);
+
+    reconcileFinalPhoneResult(root, inventory, results);
 
     return summarize(results, handledElements);
   }
