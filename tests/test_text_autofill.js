@@ -154,6 +154,11 @@ function createDomHarness() {
         const id = selector.slice('label[for="'.length, -2);
         if (tag === "label" && node.getAttribute("for") === id) out.push(node);
       }
+      if (selector === "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role='combobox'], [role='listbox'], [role='textbox']") {
+        if (tag === "input" || tag === "textarea" || tag === "select" || node.isContentEditable) {
+          out.push(node);
+        }
+      }
       if (selector === "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role='combobox'], [role='listbox'], [role='textbox'], [role='radio'], [role='checkbox']") {
         if (tag === "input" || tag === "textarea" || tag === "select" || node.isContentEditable) {
           out.push(node);
@@ -333,6 +338,47 @@ assert.strictEqual(AF.getTextAnswerForCategory("phone", { email: "x@y.com", phon
 assert.strictEqual(AF.classifyLabel("Contact", "email").category, "email");
 assert.strictEqual(AF.classifyLabel("Contact", "tel").category, "phone");
 console.log("ok - email/tel type precedence");
+
+const signature = addField("Name", "input", "text", "eeo[disabilitySignature]");
+signature.setAttribute("name", "eeo[disabilitySignature]");
+signature.name = "eeo[disabilitySignature]";
+signature.setAttribute("placeholder", "Enter your full name");
+signature.placeholder = "Enter your full name";
+
+const signatureDate = addField("Date", "input", "text", "eeo[disabilitySignatureDate]");
+signatureDate.setAttribute("name", "eeo[disabilitySignatureDate]");
+signatureDate.name = "eeo[disabilitySignatureDate]";
+signatureDate.setAttribute("placeholder", "MM/DD/YYYY");
+signatureDate.placeholder = "MM/DD/YYYY";
+
+const signatureInventory = Object.assign({}, inventory, { full_name: "Raj Kundur" });
+const signatureReport = AF.fillBasicTextFields(doc, signatureInventory);
+assert.strictEqual(signature.value, "", "disabilitySignature remains empty");
+assert.strictEqual(signatureDate.value, "", "disabilitySignatureDate remains empty");
+const signatureRow = (signatureReport.results || []).find(function (row) {
+  return String(row.reason || "").indexOf("signature") !== -1 && String(row.label || "") === "Name";
+});
+assert.ok(signatureRow, "signature field produces a skipped result");
+assert.strictEqual(signatureRow.status, "skipped");
+assert.notStrictEqual(signatureRow.status, "filled");
+const signatureDateRow = (signatureReport.results || []).find(function (row) {
+  return String(row.reason || "").indexOf("signature") !== -1 && String(row.label || "") === "Date";
+});
+assert.ok(signatureDateRow, "signature date field produces a skipped result");
+assert.strictEqual(signatureDateRow.status, "skipped");
+console.log("ok - eeo disability signature fields remain manual");
+
+const scan = AF.scanPage(signatureInventory);
+const scannedSignature = (scan.fields || []).find(function (field) {
+  return field.name === "eeo[disabilitySignature]" || field.id === "eeo[disabilitySignature]";
+});
+assert.ok(scannedSignature, "scanner finds disabilitySignature");
+assert.strictEqual(scannedSignature.category, "unknown");
+assert.strictEqual(scannedSignature.hasAnswer, false);
+assert.strictEqual(scannedSignature.proposedAnswer, "No saved answer");
+assert.notStrictEqual(scannedSignature.fillStatus, "ready");
+assert.notStrictEqual(scannedSignature.proposedAnswer, "Raj Kundur");
+console.log("ok - scanner does not propose full name for signature field");
 
 assert.ok(report.summary.filled >= 5, "expected at least 5 filled text fields, got " + report.summary.filled);
 console.log("All text autofill tests passed.");

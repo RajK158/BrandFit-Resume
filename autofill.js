@@ -949,6 +949,28 @@
     return want === got || want.endsWith(got) || got.endsWith(want);
   }
 
+  function isProtectedManualTextCue(name, id, ariaLabel, placeholder) {
+    var nameId = String(name || "") + " " + String(id || "");
+    var aria = String(ariaLabel || "");
+    var ph = String(placeholder || "");
+    var identity = (nameId + " " + aria + " " + ph).toLowerCase();
+    if (identity.indexOf("signature") !== -1) return true;
+    var blob = normalizeText(identity);
+    if (/\backnowledg(?:e|ement|ment)\b/.test(blob)) return true;
+    if (/\battestation\b/.test(blob)) return true;
+    return false;
+  }
+
+  function isProtectedManualTextField(el) {
+    if (!el) return false;
+    return isProtectedManualTextCue(
+      el.name || (el.getAttribute && el.getAttribute("name")),
+      el.id,
+      el.getAttribute && el.getAttribute("aria-label"),
+      el.placeholder || (el.getAttribute && el.getAttribute("placeholder"))
+    );
+  }
+
   function detectCategoryFromMeta(meta) {
     var inputType = describeInputTypeFromMeta(meta || {});
     var label = trimText(meta.label || "");
@@ -958,6 +980,9 @@
     var id = trimText(meta.id || "");
     var nearby = trimText(meta.nearby || "");
     var autocomplete = normalizeText(meta.autocomplete || "");
+    if (isProtectedManualTextCue(name, id, ariaLabel, placeholder)) {
+      return validateDetection({ category: "unknown", confidence: 0.99 }, inputType);
+    }
     var questionBlob = normalizeText([label, ariaLabel, name, id].join(" "));
     var fullBlob = normalizeText(
       [label, placeholder, ariaLabel, name, id, nearby, autocomplete].join(" ")
@@ -2018,6 +2043,16 @@
       copy.hasAnswer = false;
     }
 
+    if (
+      isProtectedManualTextCue(copy.name, copy.id, copy.ariaLabel, copy.placeholder)
+    ) {
+      copy.category = "unknown";
+      copy.categoryLabel = CATEGORY_LABELS.unknown;
+      copy.confidence = 0.99;
+      copy.confidenceLabel = confidenceLabel(0.99);
+      copy.hasAnswer = false;
+    }
+
     if (inputType === "url" && (copy.category === "unknown" || !copy.category)) {
       copy.category = "url";
       copy.categoryLabel = CATEGORY_LABELS.url;
@@ -2671,6 +2706,19 @@
 
     nodes.forEach(function (el) {
       if (!el || wasSeen(el)) return;
+
+      if (isProtectedManualTextField(el)) {
+        markSeen(el);
+        results.push({
+          category: "unknown",
+          label: findLabelText(el) || trimText(el.getAttribute && el.getAttribute("aria-label")) || "",
+          status: "skipped",
+          reason: "Manual signature/acknowledgement field.",
+          ok: false,
+          value: ""
+        });
+        return;
+      }
 
       var label = findLabelText(el) || trimText(el.getAttribute && el.getAttribute("aria-label")) || "";
       var detected = detectBasicTextCategory(el);
