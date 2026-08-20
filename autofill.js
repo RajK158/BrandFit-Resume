@@ -722,6 +722,21 @@
     };
   }
 
+  function normalizeExperienceRecord(item) {
+    var row = item && typeof item === "object" ? item : {};
+    var current = false;
+    if (row.current === true || row.current === "true") current = true;
+    if (row.currentRole === true || row.currentRole === "true") current = true;
+    if (row.isCurrent === true || row.isCurrent === "true") current = true;
+    return {
+      company: trimText(row.company || row.company_name || row.employer || row.companyName || ""),
+      title: trimText(row.title || row.job_title || row.role || row.position || ""),
+      startDate: trimText(row.startDate || row.start_date || ""),
+      endDate: trimText(row.endDate || row.end_date || ""),
+      current: current
+    };
+  }
+
   function extractMonthFromEducationDate(value) {
     var text = trimText(value);
     if (!text) return "";
@@ -804,6 +819,18 @@
     var valid = [];
     list.forEach(function (item) {
       if (isValidEducationRecord(item)) valid.push(normalizeEducationRecord(item));
+    });
+    return valid;
+  }
+
+  function listValidExperienceRecords(experienceList) {
+    var list = Array.isArray(experienceList) ? experienceList : [];
+    var valid = [];
+    list.forEach(function (item) {
+      var row = normalizeExperienceRecord(item);
+      if (row.company || row.title || row.startDate || row.endDate || row.current) {
+        valid.push(row);
+      }
     });
     return valid;
   }
@@ -1688,6 +1715,7 @@
       education_gpa_graduate: educationGpaForLevel(data.education, "graduate"),
       education_gpa_doctorate: educationGpaForLevel(data.education, "doctorate"),
       experience: Array.isArray(data.experience) && data.experience.length ? "Saved in profile" : "",
+      experience_records: listValidExperienceRecords(data.experience),
       skills: Array.isArray(data.skills) && data.skills.length ? data.skills.join(", ") : "",
       work_authorization: trimText(work.legallyAuthorizedToWork || ""),
       // Explicit export-control / U.S. person status only — never inferred.
@@ -1751,6 +1779,7 @@
           return normalizeEducationRecord(item);
         })
       : [];
+    var experience = listValidExperienceRecords(data.experience);
     return {
       personal: {
         firstName: trimText(personal.firstName || ""),
@@ -1768,6 +1797,7 @@
         portfolio: trimText(links.portfolio || "")
       },
       education: education,
+      experience: experience,
       commonAnswers: {
         projectHighlight: trimText(common.projectHighlight || ""),
         referralSource: trimText(common.referralSource || ""),
@@ -2833,9 +2863,11 @@
     looksLikeEducationDateField: looksLikeEducationDateField,
     looksLikeLocationCityField: looksLikeLocationCityField,
     normalizeEducationRecord: normalizeEducationRecord,
+    normalizeExperienceRecord: normalizeExperienceRecord,
     extractYearFromEducationDate: extractYearFromEducationDate,
     extractMonthFromEducationDate: extractMonthFromEducationDate,
     listValidEducationRecords: listValidEducationRecords,
+    listValidExperienceRecords: listValidExperienceRecords,
     educationDegreeLevel: educationDegreeLevel,
     educationGpaForLevel: educationGpaForLevel,
     selectPrimaryEducation: selectPrimaryEducation,
