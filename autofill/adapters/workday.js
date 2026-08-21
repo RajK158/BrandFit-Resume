@@ -4915,6 +4915,347 @@
     );
   }
 
+  function disclosureLabelKey(label) {
+    var text = normalizeText(String(label || "").replace(/[:*]/g, " "));
+    if (!text) return "";
+    return text.replace(/\s*\((required|optional)\)\s*$/g, "").trim();
+  }
+
+  function isPreferNotToAnswerValue(value) {
+    var text = normalizeText(value);
+    return (
+      text === "prefer not to answer" ||
+      text === "prefer not to say" ||
+      text === "decline to self-identify" ||
+      text === "decline to self identify" ||
+      text === "not declared" ||
+      text === "i do not want to answer"
+    );
+  }
+
+  function looksLikeTermsAndConditionsText(text) {
+    var t = normalizeText(text);
+    if (!t) return false;
+    if (!/\bterms and conditions\b/.test(t)) return false;
+    return (
+      /\bwillingly accept\b/.test(t) ||
+      /\baccept the terms\b/.test(t) ||
+      /\bsubmitting an application\b/.test(t)
+    );
+  }
+
+  function isGenderDisclosureLabel(label) {
+    return disclosureLabelKey(label) === "gender";
+  }
+
+  function isHispanicDisclosureLabel(label) {
+    var key = disclosureLabelKey(label);
+    return key === "ethnicity hispanic or latino" || key === "hispanic or latino";
+  }
+
+  function isRaceDisclosureLabel(label) {
+    return disclosureLabelKey(label) === "race";
+  }
+
+  function isVeteranDisclosureLabel(label) {
+    var key = disclosureLabelKey(label);
+    return key === "veteran status" || key === "veteran";
+  }
+
+  function findDisclosureField(root, testFn) {
+    var doc = root || document;
+    var i;
+    var field;
+    var label;
+    var next;
+    var parent;
+    var fields;
+    var labels;
+    if (!doc || !doc.querySelectorAll) return null;
+    fields = doc.querySelectorAll('[data-automation-id^="formField-"]');
+    for (i = 0; i < fields.length; i += 1) {
+      field = fields[i];
+      label = questionFieldLabel(field);
+      if (looksLikeTermsAndConditionsText(label)) continue;
+      if (testFn(label)) return field;
+    }
+    labels = doc.querySelectorAll(
+      '[data-automation-id="formLabel"], [data-automation-id="label"], label, legend'
+    );
+    for (i = 0; i < labels.length; i += 1) {
+      label = trimText(labels[i].innerText || labels[i].textContent || "");
+      if (looksLikeTermsAndConditionsText(label)) continue;
+      if (!testFn(label)) continue;
+      field =
+        (labels[i].closest && labels[i].closest('[data-automation-id^="formField-"]')) || null;
+      if (field) return field;
+      next = labels[i].nextElementSibling;
+      if (next && (findDropdownButton(next) || comboboxControlIn(next))) return next;
+      parent = labels[i].parentElement;
+      if (parent && (findDropdownButton(parent) || comboboxControlIn(parent))) return parent;
+    }
+    return null;
+  }
+
+  function closeWorkdayDropdown(control) {
+    try {
+      if (control) {
+        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      }
+    } catch (_) {}
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    } catch (_) {}
+  }
+
+  async function collectWorkdayDropdownOptions(control) {
+    var options = [];
+    var i;
+    if (!control) return options;
+    clickElement(control);
+    await sleep(180);
+    for (i = 0; i < 10; i += 1) {
+      options = collectOpenOptions();
+      if (options.length) break;
+      await sleep(70);
+    }
+    return options;
+  }
+
+  async function selectUniqueWorkdayDropdownOption(control, container, matcher) {
+    var current = displayedDropdownValue(container, control) || readComboboxText(control);
+    var options;
+    var matches;
+    var i;
+    var selected;
+    if (current && matcher(current)) return { ok: true, value: current, already: true };
+    options = await collectWorkdayDropdownOptions(control);
+    matches = [];
+    for (i = 0; i < options.length; i += 1) {
+      if (matcher(options[i].label)) matches.push(options[i]);
+    }
+    if (matches.length !== 1) {
+      closeWorkdayDropdown(control);
+      return { ok: false, value: current, ambiguous: matches.length > 1 };
+    }
+    clickElement(matches[0].el);
+    await sleep(220);
+    selected = "";
+    for (i = 0; i < 8; i += 1) {
+      selected = displayedDropdownValue(container, control) || readComboboxText(control);
+      if (selected && matcher(selected)) break;
+      await sleep(50);
+    }
+    return { ok: Boolean(selected && matcher(selected)), value: selected || matches[0].label };
+  }
+
+  async function fillWorkdayDisclosureDropdown(field, category, displayLabel, matcher, handledElements) {
+    var control = findDropdownButton(field) || comboboxControlIn(field);
+    var current;
+    var selected;
+    if (!control) {
+      return resultRow(category, displayLabel, "skipped", displayLabel + " dropdown was not found.", false, "");
+    }
+    markHandled(handledElements, control);
+    current = displayedDropdownValue(field, control) || readComboboxText(control);
+    if (current && matcher(current)) {
+      return resultRow(category, displayLabel, "filled", "", true, current);
+    }
+    if (current) {
+      return resultRow(category, displayLabel, "skipped", "Field is already completed.", false, "");
+    }
+    selected = await selectUniqueWorkdayDropdownOption(control, field, matcher);
+    if (selected && selected.ok) {
+      return resultRow(category, displayLabel, "filled", "", true, selected.value);
+    }
+    return resultRow(category, displayLabel, "skipped", "No safe matching " + displayLabel + " option.", false, "");
+  }
+
+  function savedDemographicsFromContext(context) {
+    var ctx = context || {};
+    var demo = ctx.demographics || (ctx.profile && ctx.profile.demographics) || {};
+    var inv = ctx.inventory || {};
+    return {
+      gender: trimText(demo.gender || inv.gender || ""),
+      hispanicLatino: trimText(demo.hispanicLatino || demo.hispanic_latino || inv.hispanic_latino || ""),
+      raceEthnicity: trimText(demo.raceEthnicity || demo.race_ethnicity || inv.race_ethnicity || ""),
+      veteranStatus: trimText(demo.veteranStatus || inv.veteran_status || ""),
+      generalVeteranStatus: trimText(demo.generalVeteranStatus || inv.general_veteran_status || "")
+    };
+  }
+
+  function mapWorkdayGenderOption(saved) {
+    var text = normalizeText(saved);
+    if (!text) return "";
+    if (text === "man" || text === "male") return "Male";
+    if (text === "woman" || text === "female") return "Female";
+    if (isPreferNotToAnswerValue(saved)) return "Not declared";
+    return "";
+  }
+
+  function canonicalWorkdayRaceLabel(value) {
+    var text = normalizeText(value);
+    if (!text) return "";
+    return text.replace(/\s*\(\s*united states of america\s*\)\s*$/g, "").trim();
+  }
+
+  function mapWorkdayVeteranKind(saved) {
+    var general = normalizeText(saved.generalVeteranStatus);
+    var prot = normalizeText(saved.veteranStatus);
+    var preferGeneral = isPreferNotToAnswerValue(saved.generalVeteranStatus);
+    var preferProt = isPreferNotToAnswerValue(saved.veteranStatus);
+    if (prot === "i identify as a protected veteran" && general === "i am not a veteran") return "";
+    if (prot === "i identify as a protected veteran") return "protected";
+    if (general === "i am not a veteran") return "not_veteran";
+    if (general === "i am a veteran" && prot === "i am not a protected veteran") return "veteran_not_protected";
+    if ((preferGeneral && preferProt) || (preferGeneral && !prot) || (preferProt && !general)) return "decline";
+    return "";
+  }
+
+  function looksLikeVeteranDeclineOption(label) {
+    var t = normalizeText(label);
+    if (!t) return false;
+    if (/\bdecline\b/.test(t) && (/\bself-identify\b/.test(t) || /\bself identify\b/.test(t))) return true;
+    if (/\bdo not wish to self-identify\b/.test(t) || /\bdo not want to self-identify\b/.test(t)) return true;
+    if (/\bi do not want to answer\b/.test(t)) return true;
+    if (/\bprefer not to (answer|say|self-identify|self identify)\b/.test(t)) return true;
+    return false;
+  }
+
+  function veteranOptionMatchesKind(label, kind) {
+    var t = normalizeText(label);
+    if (!kind || !t) return false;
+    if (kind === "protected") {
+      return t === "i identify as one or more of the classifications of protected veterans listed above";
+    }
+    if (kind === "veteran_not_protected") {
+      return t === "i identify as a veteran, just not a protected veteran";
+    }
+    if (kind === "not_veteran") {
+      return t === "i am not a veteran";
+    }
+    if (kind === "decline") return looksLikeVeteranDeclineOption(label);
+    return false;
+  }
+
+  async function fillVoluntaryGender(root, saved, handledElements) {
+    var field = findDisclosureField(root, isGenderDisclosureLabel);
+    var target;
+    if (!field) return [];
+    target = mapWorkdayGenderOption(saved.gender);
+    if (!target) {
+      return [
+        resultRow("gender", "Gender", "skipped", saved.gender ? "No safe matching Gender option." : "No saved answer.", false, "")
+      ];
+    }
+    return [
+      await fillWorkdayDisclosureDropdown(
+        field,
+        "gender",
+        "Gender",
+        function (label) {
+          return normalizeText(label) === normalizeText(target);
+        },
+        handledElements
+      )
+    ];
+  }
+
+  async function fillVoluntaryHispanic(root, saved, handledElements) {
+    var field = findDisclosureField(root, isHispanicDisclosureLabel);
+    var answer;
+    if (!field) return [];
+    answer = explicitYesNo(saved.hispanicLatino);
+    if (!answer) {
+      return [
+        resultRow(
+          "hispanic_latino",
+          "Ethnicity: Hispanic or Latino",
+          "skipped",
+          saved.hispanicLatino ? "No safe matching Hispanic or Latino option." : "No saved answer.",
+          false,
+          ""
+        )
+      ];
+    }
+    return [
+      await fillWorkdayDisclosureDropdown(
+        field,
+        "hispanic_latino",
+        "Ethnicity: Hispanic or Latino",
+        function (label) {
+          return normalizeText(label) === answer;
+        },
+        handledElements
+      )
+    ];
+  }
+
+  async function fillVoluntaryRace(root, saved, handledElements) {
+    var field = findDisclosureField(root, isRaceDisclosureLabel);
+    var savedCanon;
+    if (!field) return [];
+    savedCanon = canonicalWorkdayRaceLabel(saved.raceEthnicity);
+    if (!savedCanon) {
+      return [resultRow("race_ethnicity", "Race", "skipped", "No saved answer.", false, "")];
+    }
+    return [
+      await fillWorkdayDisclosureDropdown(
+        field,
+        "race_ethnicity",
+        "Race",
+        function (label) {
+          return canonicalWorkdayRaceLabel(label) === savedCanon;
+        },
+        handledElements
+      )
+    ];
+  }
+
+  async function fillVoluntaryVeteran(root, saved, handledElements) {
+    var field = findDisclosureField(root, isVeteranDisclosureLabel);
+    var kind;
+    if (!field) return [];
+    kind = mapWorkdayVeteranKind(saved);
+    if (!kind) {
+      return [
+        resultRow(
+          "veteran_status",
+          "Veteran Status",
+          "skipped",
+          saved.veteranStatus || saved.generalVeteranStatus
+            ? "Saved veteran-status answers are incomplete or contradictory."
+            : "No saved answer.",
+          false,
+          ""
+        )
+      ];
+    }
+    return [
+      await fillWorkdayDisclosureDropdown(
+        field,
+        "veteran_status",
+        "Veteran Status",
+        function (label) {
+          return veteranOptionMatchesKind(label, kind);
+        },
+        handledElements
+      )
+    ];
+  }
+
+  async function fillVoluntaryDisclosures(context, handledElements) {
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var saved = savedDemographicsFromContext(ctx);
+    var results = [];
+    results = results.concat(await fillVoluntaryGender(root, saved, handledElements));
+    results = results.concat(await fillVoluntaryHispanic(root, saved, handledElements));
+    results = results.concat(await fillVoluntaryRace(root, saved, handledElements));
+    results = results.concat(await fillVoluntaryVeteran(root, saved, handledElements));
+    return results;
+  }
+
   function isMyInformationSectionPresent(root) {
     var doc = root || document;
     if (!doc) return false;
@@ -4974,9 +5315,19 @@
     var skillRows = isSkillsSectionPresent(root)
       ? await fillSkills(ctx, handledElements)
       : [];
-    var questionRows = await fillApplicationQuestions(ctx, handledElements);
+    var questionRows = findWorkAuthorizationQuestion(root)
+      ? await fillApplicationQuestions(ctx, handledElements)
+      : [];
+    var disclosureRows = await fillVoluntaryDisclosures(ctx, handledElements);
     return summarize(
-      ((info && info.results) || []).concat(resumeRows, experienceRows, educationRows, skillRows, questionRows),
+      ((info && info.results) || []).concat(
+        resumeRows,
+        experienceRows,
+        educationRows,
+        skillRows,
+        questionRows,
+        disclosureRows
+      ),
       handledElements
     );
   }
