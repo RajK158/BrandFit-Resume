@@ -1395,12 +1395,338 @@
     return summarize(results, handledElements);
   }
 
-  function fillSupportedFields(context) {
+  function looksLikeCoverLetterUpload(blob) {
+    var t = normalizeText(blob);
+    return /\bcover(ing)?\s*letter\b/.test(t) && !/\bresume\b/.test(t) && !/\bcv\b/.test(t);
+  }
+
+  function looksLikeUploadedFilename(text) {
+    return /\S+\.(pdf|docx?|rtf|txt|odt)\b/i.test(String(text || ""));
+  }
+
+  function resumeCvSectionScore(node) {
+    if (!node) return 0;
+    var text = trimText(node.innerText || node.textContent || "");
+    if (text.length > 8000) return 0;
+    var snippet = text.length > 800 ? text.slice(0, 800) : text;
+    var auto = automationBlob(node);
+    var blob = normalizeText(snippet + " " + auto);
+    if (!blob) return 0;
+    if (looksLikeCoverLetterUpload(blob)) return -100;
+    var score = 0;
+    if (/\bresume\s*\/\s*cv\b/.test(blob) || /\bresume\/cv\b/.test(blob)) score += 12;
+    if (/\bresume\b/.test(blob)) score += 6;
+    if (/\bcv\b/.test(blob) || /\bcurriculum\s+vitae\b/.test(blob)) score += 6;
+    if (/\bdrop\s+files\s+here\b/.test(blob)) score += 3;
+    if (/\bselect\s+files\b/.test(blob)) score += 3;
+    if (/\b5\s*mb\b/.test(blob) || /\b5mb\b/.test(blob)) score += 2;
+    if (/\bfile-upload\b/.test(auto) || /\bfileupload\b/.test(auto)) score += 4;
+    if (text.length > 2500) score -= 8;
+    return score;
+  }
+
+  function expandResumeSection(node) {
+    if (!node) return null;
+    if (node.querySelector && node.querySelector('input[type="file"]')) return node;
+    var parent = node.parentElement;
+    if (parent && parent.querySelector && parent.querySelector('input[type="file"]')) return parent;
+    return node;
+  }
+
+  function findResumeCvSection(root) {
+    var doc = root || document;
+    if (!doc || !doc.querySelectorAll) return null;
+    var selectors =
+      '[data-automation-id^="formField-"], [data-automation-id*="fileUpload"], [data-automation-id*="FileUpload"], [data-automation-id*="file-upload"], [data-automation-id*="FileAttachment"], section, [role="group"], h2, h3, h4, legend, label';
+    var nodes;
+    try {
+      nodes = doc.querySelectorAll(selectors);
+    } catch (_) {
+      nodes = [];
+    }
+    var best = null;
+    var bestScore = 0;
+    Array.prototype.forEach.call(nodes, function (node) {
+      var score = resumeCvSectionScore(node);
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    });
+    if (bestScore < 6) return null;
+    return expandResumeSection(best);
+  }
+
+  function findResumeCvFileInput(root) {
+    var doc = root || document;
+    var section = findResumeCvSection(doc);
+    var input = null;
+    if (section && section.querySelector) {
+      input = section.querySelector('input[type="file"]');
+      if (input) return { input: input, section: section };
+    }
+    if (!doc.querySelectorAll) return null;
+    var inputs = doc.querySelectorAll('input[type="file"]');
+    var best = null;
+    var bestScore = 0;
+    var container;
+    var score;
+    Array.prototype.forEach.call(inputs, function (el) {
+      container = fieldContainer(el) || el.parentElement;
+      score = resumeCvSectionScore(container);
+      var engine = af();
+      if (engine && typeof engine.getFieldIdentity === "function" && typeof engine.classifyLabel === "function") {
+        var identity = engine.getFieldIdentity(el);
+        var classified = engine.classifyLabel(identity.blob || identity.label || "", "file");
+        if (classified && classified.category === "resume_upload") score += 8;
+      }
+      if (looksLikeCoverLetterUpload((container && (container.innerText || "")) || "")) score = -100;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    });
+    if (!best || bestScore < 6) return null;
+    return { input: best, section: fieldContainer(best) || best.parentElement || section };
+  }
+
+  function resumeAlreadyUploaded(section, input) {
+    if (input && input.files && input.files.length > 0) return true;
+    if (!section) return false;
+    var item = section.querySelector &&
+      section.querySelector(
+        '[data-automation-id*="file-upload-item"], [data-automation-id*="uploadedFile"], [data-automation-id*="attachmentItem"], [data-automation-id*="Attachment"]'
+      );
+    if (item && looksLikeUploadedFilename(item.textContent || item.innerText || "")) return true;
+    var text = section.innerText || section.textContent || "";
+    if (looksLikeUploadedFilename(text)) return true;
+    return false;
+  }
+
+  function fileMatchesAccept(input, file) {
+    if (!input || !file) return true;
+    var accept = trimText(input.getAttribute && input.getAttribute("accept"));
+    if (!accept) return true;
+    var name = normalizeText(file.name);
+    var type = normalizeText(file.type);
+    var tokens = accept.split(",").map(function (part) {
+      return normalizeText(part);
+    });
+    var i;
+    var token;
+    for (i = 0; i < tokens.length; i += 1) {
+      token = tokens[i];
+      if (!token) continue;
+      if (token === "*/*") return true;
+      if (token.charAt(0) === "." && name.slice(-token.length) === token) return true;
+      if (token.indexOf("/") !== -1 && (type === token || (token.slice(-2) === "/*" && type.indexOf(token.slice(0, token.indexOf("/"))) === 0))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function fileFromResumePayload(resume) {
+    if (!resume || !resume.resumeBase64 || !resume.resumeName) return null;
+    var raw = String(resume.resumeBase64);
+    var arr = raw.split(",");
+    var mime = "application/pdf";
+    var b64 = raw;
+    if (arr.length > 1) {
+      var mimeMatch = arr[0] && arr[0].match(/:(.*?);/);
+      if (mimeMatch) mime = mimeMatch[1];
+      b64 = arr[1];
+    }
+    var bstr = atob(b64);
+    var n = bstr.length;
+    var u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    return new File([u8arr], String(resume.resumeName), { type: mime });
+  }
+
+  function resumeSectionScope(section) {
+    if (!section) return null;
+    var parent = section.parentElement;
+    if (
+      parent &&
+      resumeCvSectionScore(parent) >= 6 &&
+      trimText(parent.innerText || parent.textContent || "").length < 4000
+    ) {
+      return parent;
+    }
+    return section;
+  }
+
+  function scopedResumeText(scope) {
+    if (!scope) return "";
+    return trimText(scope.innerText || scope.textContent || "");
+  }
+
+  function filenameKey(name) {
+    return normalizeText(String(name || "").replace(/^.*[\\/]/, ""));
+  }
+
+  function scopedTextHasFilename(scopeText, fileName) {
+    var want = filenameKey(fileName);
+    if (!want) return false;
+    return normalizeText(scopeText).indexOf(want) !== -1;
+  }
+
+  function scopedTextHasUploadSuccessPhrase(scopeText) {
+    var t = normalizeText(scopeText);
+    if (!t) return false;
+    return (
+      /\bsuccessfully\s+uploaded\b/.test(t) ||
+      /\buploaded\s+successfully\b/.test(t) ||
+      /\bupload\s+complete\b/.test(t)
+    );
+  }
+
+  function scopedHasUploadedFileRow(scope, fileName) {
+    if (!scope || !scope.querySelectorAll) return false;
+    var nodes;
+    try {
+      nodes = scope.querySelectorAll(
+        '[data-automation-id*="file-upload-item"], [data-automation-id*="uploadedFile"], [data-automation-id*="attachmentItem"], [data-automation-id*="Attachment"], [data-automation-id*="fileUploadItem"], [role="listitem"]'
+      );
+    } catch (_) {
+      nodes = [];
+    }
+    var i;
+    var text;
+    for (i = 0; i < nodes.length; i += 1) {
+      text = trimText(nodes[i].innerText || nodes[i].textContent || "");
+      if (fileName && scopedTextHasFilename(text, fileName)) return true;
+      if (!fileName && looksLikeUploadedFilename(text) && scopedTextHasUploadSuccessPhrase(text)) return true;
+    }
+    return false;
+  }
+
+  function inputHasExpectedFile(input, fileName) {
+    if (!input || !input.files || !input.files.length || !input.files[0]) return false;
+    return filenameKey(input.files[0].name) === filenameKey(fileName);
+  }
+
+  function workdayResumeUploadSucceeded(section, input, fileName) {
+    var scope = resumeSectionScope(section);
+    var text = scopedResumeText(scope);
+    if (inputHasExpectedFile(input, fileName)) return true;
+    if (fileName && scopedTextHasFilename(text, fileName)) return true;
+    if (scopedTextHasUploadSuccessPhrase(text)) return true;
+    if (scopedHasUploadedFileRow(scope, fileName)) return true;
+    return false;
+  }
+
+  async function waitForResumeUploadSuccess(section, input, fileName) {
+    var i;
+    for (i = 0; i < 16; i += 1) {
+      if (workdayResumeUploadSucceeded(section, input, fileName)) return true;
+      var errorText = workdayUploadErrorText(resumeSectionScope(section));
+      if (errorText) return false;
+      await sleep(120);
+    }
+    return workdayResumeUploadSucceeded(section, input, fileName);
+  }
+
+  function assignResumeFile(input, file) {
+    if (!input || !file) return false;
+    var dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    try {
+      input.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    try {
+      input.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    return true;
+  }
+
+  function workdayUploadErrorText(section) {
+    if (!section) return "";
+    var t = normalizeText(section.innerText || section.textContent || "");
+    if (
+      /\btoo\s+large\b/.test(t) ||
+      /\bfile\s+is\s+too\s+big\b/.test(t) ||
+      /\bexceeds?\s+(the\s+)?(size\s+)?(limit|maximum)\b/.test(t)
+    ) {
+      return "Workday rejected the file because of size.";
+    }
+    if (
+      /\binvalid\s+file\s*type\b/.test(t) ||
+      /\bfile\s*type\s+is\s+not\s+supported\b/.test(t) ||
+      /\bnot\s+an\s+accepted\s+file\b/.test(t)
+    ) {
+      return "Workday rejected the file because of type.";
+    }
+    return "";
+  }
+
+  async function fillResumeCvUpload(context, handledElements) {
+    var ctx = context || {};
+    var found = findResumeCvFileInput(ctx.root || document);
+    if (!found || !found.input) return [];
+    var input = found.input;
+    var section = found.section;
+    markHandled(handledElements, input);
+    if (resumeAlreadyUploaded(section, input)) {
+      return [resultRow("resume_upload", "Resume/CV", "skipped", "Field is already completed.", false, "")];
+    }
+    var resume = ctx.resume || null;
+    if (!resume || !resume.resumeBase64 || !resume.resumeName) {
+      return [resultRow("resume_upload", "Resume/CV", "skipped", "No resume file available.", false, "")];
+    }
+    var file;
+    try {
+      file = fileFromResumePayload(resume);
+    } catch (_) {
+      return [resultRow("resume_upload", "Resume/CV", "failed", "Resume file could not be read.", false, "")];
+    }
+    if (!file) {
+      return [resultRow("resume_upload", "Resume/CV", "skipped", "No resume file available.", false, "")];
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      return [
+        resultRow("resume_upload", "Resume/CV", "failed", "Workday rejected the file because of size (5MB max).", false, "")
+      ];
+    }
+    if (!fileMatchesAccept(input, file)) {
+      return [resultRow("resume_upload", "Resume/CV", "failed", "Workday rejected the file because of type.", false, "")];
+    }
+    try {
+      assignResumeFile(input, file);
+    } catch (_) {
+      return [resultRow("resume_upload", "Resume/CV", "failed", "Resume upload failed.", false, "")];
+    }
+    var recognized = await waitForResumeUploadSuccess(section, input, file.name);
+    var errorText = workdayUploadErrorText(resumeSectionScope(section));
+    if (recognized) {
+      return [resultRow("resume_upload", "Resume/CV", "filled", "", true, file.name)];
+    }
+    if (errorText) {
+      return [resultRow("resume_upload", "Resume/CV", "failed", errorText, false, "")];
+    }
+    return [
+      resultRow(
+        "resume_upload",
+        "Resume/CV",
+        "failed",
+        "Verification failed; Workday did not recognize the uploaded file.",
+        false,
+        ""
+      )
+    ];
+  }
+
+  async function fillSupportedFields(context) {
     if (!isSupportedPage()) {
       var handled = (context && context.handledElements) || [];
-      return Promise.resolve(summarize([], handled));
+      return summarize([], handled);
     }
-    return fillMyInformation(context);
+    var info = await fillMyInformation(context);
+    var handledElements = (info && info.handledElements) || (context && context.handledElements) || [];
+    var resumeRows = await fillResumeCvUpload(context, handledElements);
+    return summarize(((info && info.results) || []).concat(resumeRows), handledElements);
   }
 
   global.ImpulsoWorkdayAdapter = {
