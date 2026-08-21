@@ -5256,6 +5256,373 @@
     return results;
   }
 
+  var WORKDAY_DISABILITY_YES =
+    "Yes, I have a disability, or have had one in the past";
+  var WORKDAY_DISABILITY_NO =
+    "No, I do not have a disability and have not had one in the past";
+  var WORKDAY_DISABILITY_DECLINE = "I do not want to answer";
+
+  function isSelfIdentifyHeadingText(text) {
+    var key = disclosureLabelKey(text);
+    return key === "self identify" || key === "self-identify";
+  }
+
+  function isSelfIdentifyPage(root) {
+    var doc = root || document;
+    var nodes;
+    var i;
+    var text;
+    if (!doc || !doc.querySelectorAll) return false;
+    nodes = doc.querySelectorAll(
+      'h1, h2, h3, h4, [role="heading"], [data-automation-id="pageHeaderTitleText"], [data-automation-id="pageHeader"]'
+    );
+    for (i = 0; i < nodes.length; i += 1) {
+      text = trimText(nodes[i].innerText || nodes[i].textContent || "");
+      if (isSelfIdentifyHeadingText(text)) return true;
+    }
+    if (findDisabilityChoiceByLabel(doc, WORKDAY_DISABILITY_YES)) return true;
+    if (findDisclosureField(doc, function (label) { return disclosureLabelKey(label) === "name"; }) &&
+        findDisclosureField(doc, function (label) { return disclosureLabelKey(label) === "date"; }) &&
+        findDisabilityChoiceByLabel(doc, WORKDAY_DISABILITY_DECLINE)) {
+      return true;
+    }
+    return false;
+  }
+
+  function savedLegalFullName(inventory, profile) {
+    var first = inventoryAnswer("first_name", inventory, profile);
+    var last = inventoryAnswer("last_name", inventory, profile);
+    if (!first || !last) return "";
+    return trimText(first + " " + last);
+  }
+
+  function pad2(num) {
+    return num < 10 ? "0" + String(num) : String(num);
+  }
+
+  function localDateMmDdYyyy() {
+    var now = new Date();
+    return pad2(now.getMonth() + 1) + "/" + pad2(now.getDate()) + "/" + String(now.getFullYear());
+  }
+
+  function isLocalTodayDateText(value) {
+    var m = trimText(value).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    var now;
+    if (!m) return false;
+    now = new Date();
+    return (
+      parseInt(m[1], 10) === now.getMonth() + 1 &&
+      parseInt(m[2], 10) === now.getDate() &&
+      parseInt(m[3], 10) === now.getFullYear()
+    );
+  }
+
+  function savedDisabilityStatus(context) {
+    var ctx = context || {};
+    var demo = ctx.demographics || (ctx.profile && ctx.profile.demographics) || {};
+    var inv = ctx.inventory || {};
+    return trimText(
+      demo.disabilityStatus ||
+        demo.disability_status ||
+        inv.disability_status ||
+        inv.disabilityStatus ||
+        ""
+    );
+  }
+
+  function mapWorkdayDisabilityKind(saved) {
+    var text = normalizeText(saved);
+    if (!text) return "";
+    if (
+      text === "prefer not to answer" ||
+      text === "prefer not to say" ||
+      text === "decline to self-identify" ||
+      text === "decline to self identify" ||
+      text === "i do not want to answer"
+    ) {
+      return "decline";
+    }
+    if (text === "yes" || text.indexOf("yes, i have a disability") === 0) return "yes";
+    if (text === "no" || text.indexOf("no, i do not have a disability") === 0) return "no";
+    return "";
+  }
+
+  function disabilityKindTargetLabel(kind) {
+    if (kind === "yes") return WORKDAY_DISABILITY_YES;
+    if (kind === "no") return WORKDAY_DISABILITY_NO;
+    if (kind === "decline") return WORKDAY_DISABILITY_DECLINE;
+    return "";
+  }
+
+  function choiceNodeLabel(el) {
+    if (!el) return "";
+    return trimText(
+      (el.getAttribute && (el.getAttribute("data-automation-label") || el.getAttribute("aria-label"))) ||
+        el.innerText ||
+        el.textContent ||
+        ""
+    );
+  }
+
+  function isMultiDisabilityChoiceNode(el) {
+    var t = normalizeText(choiceNodeLabel(el));
+    var hits = 0;
+    if (!t) return false;
+    if (t.indexOf(normalizeText(WORKDAY_DISABILITY_YES)) !== -1) hits += 1;
+    if (t.indexOf(normalizeText(WORKDAY_DISABILITY_NO)) !== -1) hits += 1;
+    if (t.indexOf(normalizeText(WORKDAY_DISABILITY_DECLINE)) !== -1) hits += 1;
+    return hits >= 2;
+  }
+
+  function associatedDisabilityControl(el) {
+    var input;
+    if (!el) return null;
+    if (el.matches && el.matches('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"]')) {
+      return el;
+    }
+    input = el.querySelector && el.querySelector('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"]');
+    if (input) return input;
+    if (el.getAttribute && el.getAttribute("for")) {
+      input = document.getElementById(el.getAttribute("for"));
+      if (input) return input;
+    }
+    return el;
+  }
+
+  function findDisabilityChoiceByLabel(root, targetLabel) {
+    var doc = root || document;
+    var want = normalizeText(targetLabel);
+    var nodes;
+    var i;
+    var el;
+    var label;
+    var best = null;
+    if (!doc || !doc.querySelectorAll || !want) return null;
+    nodes = doc.querySelectorAll(
+      'label, [role="checkbox"], [role="radio"], [data-automation-id="promptOption"], [data-automation-id="radioBtn"], [data-automation-id="checkbox"], [data-automation-id="clickable"], li, button, div, span'
+    );
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      if (isMultiDisabilityChoiceNode(el)) continue;
+      label = choiceNodeLabel(el);
+      if (normalizeText(label) !== want) continue;
+      if (!best || (el.querySelectorAll && best.querySelectorAll && el.querySelectorAll("*").length < best.querySelectorAll("*").length)) {
+        best = el;
+      }
+    }
+    return best ? associatedDisabilityControl(best) || best : null;
+  }
+
+  function isDisabilityChoiceSelected(el) {
+    var input;
+    var box;
+    if (!el) return false;
+    if (el.checked) return true;
+    if (el.getAttribute && (el.getAttribute("aria-checked") === "true" || el.getAttribute("aria-pressed") === "true")) {
+      return true;
+    }
+    if (el.getAttribute && el.getAttribute("data-automation-checked") === "true") return true;
+    input = el.querySelector && el.querySelector("input[type='checkbox'], input[type='radio']");
+    if (input && input.checked) return true;
+    if (input && input.getAttribute && input.getAttribute("aria-checked") === "true") return true;
+    box = el.querySelector && el.querySelector('[data-automation-id="checkbox"]');
+    if (box && box.getAttribute && box.getAttribute("data-automationcheckboxchecked") === "true") return true;
+    return false;
+  }
+
+  function clickWorkdayChoiceOnce(el) {
+    var target = el;
+    var input;
+    var clickFn;
+    if (!el) return;
+    input = el.querySelector && el.querySelector('input[type="checkbox"], input[type="radio"]');
+    if (el.matches && el.matches('input[type="checkbox"], input[type="radio"]')) target = el;
+    else if (input) target = input;
+    clickFn =
+      window.HTMLElement &&
+      window.HTMLElement.prototype &&
+      window.HTMLElement.prototype.click;
+    if (clickFn) clickFn.call(target);
+    else target.click();
+  }
+
+  async function fillSelfIdentifyName(root, context, handledElements) {
+    var field = findDisclosureField(root, function (label) {
+      return disclosureLabelKey(label) === "name";
+    });
+    var input;
+    var value;
+    var current;
+    var after;
+    if (!field) return [];
+    input = firstAnswerTextInput(field);
+    if (!input) {
+      return [resultRow("full_name", "Name", "skipped", "Self Identify Name field was not found.", false, "")];
+    }
+    markHandled(handledElements, input);
+    value = savedLegalFullName(context.inventory, context.profile);
+    current = readInputValue(input);
+    if (current && value && normalizeText(current) === normalizeText(value)) {
+      return [resultRow("full_name", "Name", "filled", "", true, current)];
+    }
+    if (current) {
+      return [resultRow("full_name", "Name", "skipped", "Field is already completed.", false, "")];
+    }
+    if (!value) {
+      return [resultRow("full_name", "Name", "skipped", "No saved name.", false, "")];
+    }
+    if (!setInputValue(input, value)) {
+      return [resultRow("full_name", "Name", "failed", "Could not set field value.", false, "")];
+    }
+    after = readInputValue(input);
+    if (!after || normalizeText(after) !== normalizeText(value)) {
+      return [resultRow("full_name", "Name", "failed", "Verification failed; value did not persist.", false, "")];
+    }
+    return [resultRow("full_name", "Name", "filled", "", true, after)];
+  }
+
+  async function fillSelfIdentifyDate(root, handledElements) {
+    var field = findDisclosureField(root, function (label) {
+      return disclosureLabelKey(label) === "date";
+    });
+    var today = localDateMmDdYyyy();
+    var now = new Date();
+    var month;
+    var day;
+    var year;
+    var input;
+    var current;
+    var after;
+    var monthStatus;
+    var dayStatus;
+    var yearStatus;
+    if (!field) return [];
+    month = field.querySelector && field.querySelector('[data-automation-id="dateSectionMonth-input"]');
+    day = field.querySelector && field.querySelector('[data-automation-id="dateSectionDay-input"]');
+    year = field.querySelector && field.querySelector('[data-automation-id="dateSectionYear-input"]');
+    if (month || day || year) {
+      monthStatus = month
+        ? await fillExperienceDatePart(month, pad2(now.getMonth() + 1), handledElements, false, "month")
+        : "skip";
+      if (day) {
+        markHandled(handledElements, day);
+        current = readInputValue(day);
+        if (current && parseInt(current, 10) === now.getDate()) {
+          dayStatus = "already";
+        } else if (current) {
+          dayStatus = "skip-existing";
+        } else {
+          dayStatus = setInputValue(day, pad2(now.getDate())) && parseInt(readInputValue(day), 10) === now.getDate()
+            ? "ok"
+            : "fail";
+        }
+      } else {
+        dayStatus = "skip";
+      }
+      yearStatus = year
+        ? await fillExperienceDatePart(year, String(now.getFullYear()), handledElements, false, "year")
+        : "skip";
+      if (monthStatus === "fail" || dayStatus === "fail" || yearStatus === "fail") {
+        return [resultRow("availability", "Date", "failed", "Verification failed; date did not persist.", false, "")];
+      }
+      if (monthStatus === "ok" || dayStatus === "ok" || yearStatus === "ok" ||
+          monthStatus === "already" || dayStatus === "already" || yearStatus === "already") {
+        return [resultRow("availability", "Date", "filled", "", true, today)];
+      }
+      return [resultRow("availability", "Date", "skipped", "Field is already completed.", false, "")];
+    }
+    input = firstAnswerTextInput(field);
+    if (!input) {
+      return [resultRow("availability", "Date", "skipped", "Self Identify Date field was not found.", false, "")];
+    }
+    markHandled(handledElements, input);
+    current = readInputValue(input);
+    if (current && isLocalTodayDateText(current)) {
+      return [resultRow("availability", "Date", "filled", "", true, current)];
+    }
+    if (current) {
+      return [resultRow("availability", "Date", "skipped", "Field is already completed.", false, "")];
+    }
+    if (!setInputValue(input, today)) {
+      return [resultRow("availability", "Date", "failed", "Could not set field value.", false, "")];
+    }
+    after = readInputValue(input);
+    if (!isLocalTodayDateText(after)) {
+      return [resultRow("availability", "Date", "failed", "Verification failed; date did not persist.", false, "")];
+    }
+    return [resultRow("availability", "Date", "filled", "", true, after)];
+  }
+
+  async function fillSelfIdentifyDisability(root, context, handledElements) {
+    var saved = savedDisabilityStatus(context);
+    var kind = mapWorkdayDisabilityKind(saved);
+    var target = disabilityKindTargetLabel(kind);
+    var yesEl = findDisabilityChoiceByLabel(root, WORKDAY_DISABILITY_YES);
+    var noEl = findDisabilityChoiceByLabel(root, WORKDAY_DISABILITY_NO);
+    var declineEl = findDisabilityChoiceByLabel(root, WORKDAY_DISABILITY_DECLINE);
+    var selectedEl = null;
+    var mappedEl = null;
+    var i;
+    if (!yesEl && !noEl && !declineEl) return [];
+    if (isDisabilityChoiceSelected(yesEl)) selectedEl = yesEl;
+    else if (isDisabilityChoiceSelected(noEl)) selectedEl = noEl;
+    else if (isDisabilityChoiceSelected(declineEl)) selectedEl = declineEl;
+    if (kind === "yes") mappedEl = yesEl;
+    else if (kind === "no") mappedEl = noEl;
+    else if (kind === "decline") mappedEl = declineEl;
+    if (selectedEl) {
+      if (mappedEl && selectedEl === mappedEl) {
+        return [resultRow("disability_status", "Disability", "filled", "", true, target)];
+      }
+      return [
+        resultRow("disability_status", "Disability", "skipped", "Field is already completed.", false, "")
+      ];
+    }
+    if (!kind || !mappedEl) {
+      return [
+        resultRow(
+          "disability_status",
+          "Disability",
+          "skipped",
+          saved ? "No safe matching Disability option." : "No saved answer.",
+          false,
+          ""
+        )
+      ];
+    }
+    markHandled(handledElements, mappedEl);
+    clickWorkdayChoiceOnce(mappedEl);
+    for (i = 0; i < 8; i += 1) {
+      if (isDisabilityChoiceSelected(mappedEl)) break;
+      await sleep(50);
+    }
+    if (!isDisabilityChoiceSelected(mappedEl)) {
+      return [
+        resultRow("disability_status", "Disability", "skipped", "Disability selection did not persist.", false, "")
+      ];
+    }
+    if (
+      (mappedEl !== yesEl && isDisabilityChoiceSelected(yesEl)) ||
+      (mappedEl !== noEl && isDisabilityChoiceSelected(noEl)) ||
+      (mappedEl !== declineEl && isDisabilityChoiceSelected(declineEl))
+    ) {
+      return [
+        resultRow("disability_status", "Disability", "skipped", "Disability selection was not unique.", false, "")
+      ];
+    }
+    return [resultRow("disability_status", "Disability", "filled", "", true, target)];
+  }
+
+  async function fillSelfIdentify(context, handledElements) {
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var results = [];
+    results = results.concat(await fillSelfIdentifyName(root, ctx, handledElements));
+    results = results.concat(await fillSelfIdentifyDate(root, handledElements));
+    results = results.concat(await fillSelfIdentifyDisability(root, ctx, handledElements));
+    return results;
+  }
+
   function isMyInformationSectionPresent(root) {
     var doc = root || document;
     if (!doc) return false;
@@ -5298,6 +5665,11 @@
     var ctx = context || {};
     var root = ctx.root || document;
     var handledElements = ctx.handledElements || [];
+    var selfIdentifyRows;
+    if (isSelfIdentifyPage(root)) {
+      selfIdentifyRows = await fillSelfIdentify(ctx, handledElements);
+      return summarize(selfIdentifyRows, handledElements);
+    }
     var info = { results: [], handledElements: handledElements };
     if (isMyInformationSectionPresent(root)) {
       info = await fillMyInformation(ctx);
