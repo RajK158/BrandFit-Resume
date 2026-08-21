@@ -2855,7 +2855,9 @@
       return true;
     }
     var placeholder = normalizeText((el.getAttribute && el.getAttribute("placeholder")) || "");
-    return /\bsearch\b/.test(placeholder);
+    if (/\bsearch\b/.test(placeholder)) return true;
+    if (/\btype to add skills\b/.test(placeholder) || /\badd skills\b/.test(placeholder)) return true;
+    return false;
   }
 
   function readPromptSelectedText(container) {
@@ -3952,6 +3954,791 @@
     return results;
   }
 
+  function normalizeSkillLabel(value) {
+    return trimText(value)
+      .toLowerCase()
+      .replace(/[’']/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  var WORKDAY_SKILL_DESCRIPTORS = {
+    "programming language": true,
+    software: true,
+    database: true,
+    "operating system": true,
+    framework: true,
+    library: true,
+    platform: true,
+    tool: true,
+    technology: true
+  };
+
+  var WORKDAY_SKILL_ALIASES = {
+    aws: "amazon web services",
+    "amazon web services (aws)": "amazon web services",
+    "amazon web services": "amazon web services",
+    gcp: "google cloud platform",
+    "google cloud": "google cloud platform",
+    "google cloud platform": "google cloud platform",
+    azure: "microsoft azure",
+    "microsoft azure": "microsoft azure",
+    postgres: "postgresql",
+    postgresql: "postgresql",
+    "react.js": "react",
+    reactjs: "react",
+    react: "react",
+    nextjs: "next.js",
+    "next.js": "next.js",
+    nodejs: "node.js",
+    "node.js": "node.js",
+    js: "javascript",
+    javascript: "javascript",
+    ts: "typescript",
+    typescript: "typescript"
+  };
+
+  function skillLabelsEqual(a, b) {
+    var left = normalizeSkillLabel(a);
+    var right = normalizeSkillLabel(b);
+    return Boolean(left && right && left === right);
+  }
+
+  function stripApprovedTrailingDescriptor(text) {
+    var phrase;
+    var suffix;
+    var base;
+    var i;
+    var phrases = Object.keys(WORKDAY_SKILL_DESCRIPTORS);
+    if (!text) return "";
+    for (i = 0; i < phrases.length; i += 1) {
+      phrase = phrases[i];
+      suffix = " " + phrase;
+      if (text.length > suffix.length && text.slice(text.length - suffix.length) === suffix) {
+        base = trimText(text.slice(0, text.length - suffix.length));
+        if (base) return base;
+      }
+    }
+    return text;
+  }
+
+  function canonicalWorkdaySkillLabel(value) {
+    var text = normalizeSkillLabel(value);
+    var match;
+    var base;
+    var descriptor;
+    if (!text) return "";
+    match = text.match(/^(.*)\s+\(([^)]+)\)\s*$/);
+    if (match) {
+      base = trimText(match[1]);
+      descriptor = trimText(match[2]);
+      if (base && descriptor && WORKDAY_SKILL_DESCRIPTORS[descriptor]) text = base;
+    }
+    return stripApprovedTrailingDescriptor(text);
+  }
+
+  function workdaySkillAliasTarget(value) {
+    var normalized = normalizeSkillLabel(value);
+    var canonical = canonicalWorkdaySkillLabel(value);
+    if (WORKDAY_SKILL_ALIASES[normalized]) return WORKDAY_SKILL_ALIASES[normalized];
+    if (canonical && WORKDAY_SKILL_ALIASES[canonical]) return WORKDAY_SKILL_ALIASES[canonical];
+    return "";
+  }
+
+  function skillMatchRank(optionLabel, saved) {
+    var savedCanon;
+    var optionCanon;
+    var savedAlias;
+    var optionAlias;
+    if (!trimText(optionLabel) || !trimText(saved)) return 0;
+    if (skillLabelsEqual(optionLabel, saved)) return 3;
+    savedCanon = canonicalWorkdaySkillLabel(saved);
+    optionCanon = canonicalWorkdaySkillLabel(optionLabel);
+    if (savedCanon && optionCanon && savedCanon === optionCanon) return 2;
+    savedAlias = workdaySkillAliasTarget(saved);
+    optionAlias = workdaySkillAliasTarget(optionLabel);
+    if (
+      savedAlias &&
+      (savedAlias === optionCanon ||
+        savedAlias === normalizeSkillLabel(optionLabel) ||
+        (optionAlias && savedAlias === optionAlias))
+    ) {
+      return 1;
+    }
+    return 0;
+  }
+
+  function skillResultMatchKind(optionLabel, saved) {
+    var rank = skillMatchRank(optionLabel, saved);
+    if (rank === 3) return "exact";
+    if (rank === 2) return "canonical";
+    if (rank === 1) return "alias";
+    return "";
+  }
+
+  function skillChipMatchesSaved(chipLabel, saved) {
+    return skillMatchRank(chipLabel, saved) > 0;
+  }
+
+  var WORKDAY_SKILL_SKIPS = {
+    shell: true,
+    "tailwind css": true,
+    tailwindcss: true,
+    newman: true
+  };
+
+  function workdaySkillPlan(query, targets) {
+    return {
+      query: query,
+      targets: targets && targets.length ? targets : null
+    };
+  }
+
+  var WORKDAY_SKILL_PLANS = {
+    "c++": [workdaySkillPlan("C++", ["C++ Programming Language"])],
+    "javascript/typescript": [
+      workdaySkillPlan("JavaScript", ["JavaScript"]),
+      workdaySkillPlan("TypeScript", ["TypeScript"])
+    ],
+    "javascript / typescript": [
+      workdaySkillPlan("JavaScript", ["JavaScript"]),
+      workdaySkillPlan("TypeScript", ["TypeScript"])
+    ],
+    vue: [workdaySkillPlan("Vue", ["Vue.js", "Vuejs"])],
+    "vue.js": [workdaySkillPlan("Vue", ["Vue.js", "Vuejs"])],
+    vuejs: [workdaySkillPlan("Vue", ["Vue.js", "Vuejs"])],
+    junit: [workdaySkillPlan("JUnit", ["JUnit Testing Framework"])],
+    "ci/cd pipelines": [workdaySkillPlan("CI/CD Pipelines", ["CI/CD"])],
+    jira: [workdaySkillPlan("Jira", ["Atlassian JIRA"])],
+    confluence: [workdaySkillPlan("Confluence", ["Atlassian Confluence"])],
+    "google cloud platform": [workdaySkillPlan("Google Cloud Platform", ["Google Cloud Platform (GCP)"])],
+    gcp: [workdaySkillPlan("Google Cloud Platform", ["Google Cloud Platform (GCP)"])],
+    "application programming": [workdaySkillPlan("Application programming", ["Applications Programming"])],
+    "android development": [workdaySkillPlan("Android Development", ["Android Software Development"])],
+    "operating systems": [workdaySkillPlan("Operating Systems", ["Operating Systems (OS)"])],
+    ai: [workdaySkillPlan("Artificial Intelligence", ["Artificial Intelligence (AI)"])],
+    "artificial intelligence": [workdaySkillPlan("Artificial Intelligence", ["Artificial Intelligence (AI)"])],
+    agile: [workdaySkillPlan("Agile", ["Agile Methodology"])],
+    "waterfall development": [workdaySkillPlan("Waterfall development", ["Waterfall Model"])]
+  };
+
+  function getWorkdaySkillPlans(savedSkill) {
+    var saved = trimText(savedSkill);
+    var key = normalizeSkillLabel(saved);
+    if (!saved || !key) return [];
+    if (WORKDAY_SKILL_SKIPS[key]) return [];
+    if (WORKDAY_SKILL_PLANS[key]) return WORKDAY_SKILL_PLANS[key];
+    return [workdaySkillPlan(saved, null)];
+  }
+
+  function labelMatchesApprovedTarget(optionLabel, target) {
+    return skillLabelsEqual(optionLabel, target);
+  }
+
+  function skillPlanMatchesLabel(optionLabel, saved, targets) {
+    var i;
+    if (targets && targets.length) {
+      for (i = 0; i < targets.length; i += 1) {
+        if (labelMatchesApprovedTarget(optionLabel, targets[i])) return true;
+      }
+      return false;
+    }
+    return skillMatchRank(optionLabel, saved) > 0;
+  }
+
+  function readSkillArray(source) {
+    if (!source) return [];
+    if (!Array.isArray(source.skills)) return [];
+    return source.skills
+      .map(function (item) {
+        return trimText(typeof item === "string" ? item : "");
+      })
+      .filter(Boolean);
+  }
+
+  function dedupeSavedSkills(list) {
+    var out = [];
+    var seen = {};
+    var i;
+    var skill;
+    var key;
+    for (i = 0; i < (list || []).length; i += 1) {
+      skill = trimText(list[i]);
+      key = normalizeSkillLabel(skill);
+      if (!skill || !key || seen[key]) continue;
+      seen[key] = true;
+      out.push(skill);
+    }
+    return out;
+  }
+
+  function savedSkillNames(profile, inventory) {
+    var fromProfile = readSkillArray(profile);
+    if (fromProfile.length) return dedupeSavedSkills(fromProfile);
+    var fromInv = readSkillArray(inventory);
+    if (fromInv.length) return dedupeSavedSkills(fromInv);
+    var joined = inventory && typeof inventory.skills === "string" ? trimText(inventory.skills) : "";
+    if (joined && joined.indexOf(",") !== -1) {
+      return dedupeSavedSkills(joined.split(/\s*,\s*/));
+    }
+    if (joined) return dedupeSavedSkills([joined]);
+    return [];
+  }
+
+  function loadMasterProfileSkills() {
+    return new Promise(function (resolve) {
+      try {
+        if (!global.chrome || !chrome.storage || !chrome.storage.local) {
+          resolve([]);
+          return;
+        }
+        chrome.storage.local.get(["masterProfile"], function (data) {
+          if (chrome.runtime && chrome.runtime.lastError) {
+            resolve([]);
+            return;
+          }
+          resolve(dedupeSavedSkills(readSkillArray(data && data.masterProfile)));
+        });
+      } catch (_) {
+        resolve([]);
+      }
+    });
+  }
+
+  async function resolveSavedSkills(profile, inventory) {
+    var list = savedSkillNames(profile, inventory);
+    if (list.length) return list;
+    return loadMasterProfileSkills();
+  }
+
+  function findSkillsSection(root) {
+    var doc = root || document;
+    if (!doc || !doc.querySelector) return null;
+    return (
+      doc.querySelector('[role="group"][aria-labelledby="Skills-section"]') ||
+      doc.querySelector('[aria-labelledby="Skills-section"]')
+    );
+  }
+
+  function findSkillsFormField(root) {
+    var section = findSkillsSection(root);
+    var field = section && section.querySelector
+      ? section.querySelector('[data-automation-id="formField-skills"]')
+      : null;
+    if (field) return field;
+    var doc = root || document;
+    return doc && doc.querySelector ? doc.querySelector('[data-automation-id="formField-skills"]') : null;
+  }
+
+  function findSkillsMultiSelect(root) {
+    var field = findSkillsFormField(root);
+    var scope = field || findSkillsSection(root) || root || document;
+    if (!scope || !scope.querySelector) return null;
+    return (
+      scope.querySelector('[data-automation-id="multiSelectContainer"][data-uxi-widget-type="multiselect"]') ||
+      scope.querySelector('[data-automation-id="multiSelectContainer"]')
+    );
+  }
+
+  function findSkillsInputContainer(root) {
+    var field = findSkillsFormField(root);
+    var section = findSkillsSection(root);
+    var scope = field || section || root || document;
+    if (!scope || !scope.querySelector) return null;
+    return (
+      scope.querySelector(
+        '[data-automation-id="multiSelectContainer"] [data-automation-id="multiselectInputContainer"]'
+      ) || scope.querySelector('[data-automation-id="multiselectInputContainer"]')
+    );
+  }
+
+  function findSkillsSearchInput(root) {
+    var doc = root || document;
+    if (!doc || !doc.querySelector) return null;
+    var section = findSkillsSection(doc);
+    var field = findSkillsFormField(doc);
+    var scoped =
+      (section && field && section.contains(field) && field) ||
+      field ||
+      section;
+    var input = null;
+    if (scoped && scoped.querySelector) {
+      input =
+        scoped.querySelector('input#skills--skills[data-automation-id="searchBox"]') ||
+        scoped.querySelector('[data-automation-id="formField-skills"] input[data-automation-id="searchBox"]') ||
+        scoped.querySelector('input[data-automation-id="searchBox"][data-uxi-widget-type="selectinput"]') ||
+        scoped.querySelector('input[data-automation-id="searchBox"]');
+    }
+    if (!input && doc.querySelector) {
+      input =
+        doc.querySelector('input#skills--skills[data-automation-id="searchBox"]') ||
+        doc.querySelector(
+          '[aria-labelledby="Skills-section"] [data-automation-id="formField-skills"] input[data-automation-id="searchBox"]'
+        ) ||
+        doc.querySelector('[data-automation-id="formField-skills"] input[data-automation-id="searchBox"]');
+    }
+    if (input && isTextLikeInput(input)) return input;
+    return null;
+  }
+
+  function scrollSkillsIntoView(el) {
+    if (!el || typeof el.scrollIntoView !== "function") return;
+    try {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch (_) {
+      try {
+        el.scrollIntoView(true);
+      } catch (__) {}
+    }
+  }
+
+  function skillsPickerInstructionText(root) {
+    var scope =
+      findSkillsFormField(root) ||
+      findSkillsSection(root) ||
+      findSkillsInputContainer(root) ||
+      root ||
+      document;
+    if (!scope || !scope.querySelector) return "";
+    var el = scope.querySelector('[data-automation-id="promptAriaInstruction"]');
+    if (!el) return "";
+    return trimText(
+      (el.innerText || el.textContent || (el.getAttribute && el.getAttribute("aria-label")) || "")
+    );
+  }
+
+  function isSkillsPickerExpanded(root) {
+    return /\bexpanded\b/.test(normalizeText(skillsPickerInstructionText(root)));
+  }
+
+  async function ensureSkillsPickerOpen(root) {
+    var section = findSkillsSection(root);
+    var field = findSkillsFormField(root);
+    var container = findSkillsInputContainer(root);
+    var search;
+    var i;
+    if (isSkillsPickerExpanded(root)) {
+      search = findSkillsSearchInput(root);
+      if (search) {
+        try {
+          search.focus();
+        } catch (_) {}
+        return search;
+      }
+    }
+    scrollSkillsIntoView(section || field || container);
+    await sleep(100);
+    container = findSkillsInputContainer(root) || container;
+    if (container) {
+      scrollSkillsIntoView(container);
+      clickElement(container);
+    }
+    for (i = 0; i < 12; i += 1) {
+      if (isSkillsPickerExpanded(root)) {
+        search = findSkillsSearchInput(root);
+        if (search) {
+          try {
+            search.focus();
+          } catch (_) {}
+          return search;
+        }
+      }
+      if (i === 4 || i === 8) {
+        container = findSkillsInputContainer(root) || container;
+        if (container && !isSkillsPickerExpanded(root)) clickElement(container);
+      }
+      await sleep(150);
+    }
+    return findSkillsSearchInput(root);
+  }
+
+  async function resetSkillsPickerForNextSkill(root, searchInput) {
+    var search = findSkillsSearchInput(root) || searchInput;
+    try {
+      await clearSkillsSearch(search);
+    } catch (_) {}
+    await sleep(130);
+    try {
+      search = (await ensureSkillsPickerOpen(root)) || findSkillsSearchInput(root) || search;
+    } catch (_) {
+      search = findSkillsSearchInput(root) || search;
+    }
+    if (search) {
+      try {
+        search.focus();
+      } catch (_) {}
+    }
+    return search;
+  }
+
+  function isInsideSelectedItemList(el) {
+    return Boolean(el && el.closest && el.closest('[data-automation-id="selectedItemList"]'));
+  }
+
+  function promptAutomationLabel(el) {
+    if (!el || !el.getAttribute) return "";
+    return trimText(el.getAttribute("data-automation-label") || "");
+  }
+
+  function findSkillsSelectedItemList(root) {
+    var field = findSkillsFormField(root);
+    var multi = findSkillsMultiSelect(root);
+    var scope = field || multi || findSkillsSection(root);
+    if (scope && scope.querySelector) {
+      var list = scope.querySelector('[data-automation-id="selectedItemList"]');
+      if (list) return list;
+    }
+    var doc = root || document;
+    return doc && doc.querySelector
+      ? doc.querySelector('[data-automation-id="formField-skills"] [data-automation-id="selectedItemList"]')
+      : null;
+  }
+
+  function readCommittedSkillLabels(root) {
+    var labels = [];
+    var seen = {};
+    var list = findSkillsSelectedItemList(root);
+    if (!list || !list.querySelectorAll) return labels;
+    var prompts = list.querySelectorAll(
+      '[data-automation-id="selectedItem"] [data-automation-id="promptOption"][data-automation-label], [data-automation-id="promptOption"][data-automation-label]'
+    );
+    Array.prototype.forEach.call(prompts, function (prompt) {
+      var label = promptAutomationLabel(prompt);
+      var key = normalizeSkillLabel(label);
+      if (!label || !key || seen[key]) return;
+      seen[key] = true;
+      labels.push(label);
+    });
+    return labels;
+  }
+
+  function skillAlreadySelected(root, saved, targets) {
+    var labels = readCommittedSkillLabels(root);
+    var i;
+    for (i = 0; i < labels.length; i += 1) {
+      if (skillPlanMatchesLabel(labels[i], saved, targets)) return true;
+    }
+    return false;
+  }
+
+  function readSkillResultRowLabel(row) {
+    var prompt;
+    if (!row || !row.querySelector) return "";
+    prompt = row.querySelector('[data-automation-id="promptOption"][data-automation-label]');
+    if (!prompt || !prompt.getAttribute) return "";
+    return trimText(prompt.getAttribute("data-automation-label") || "");
+  }
+
+  function findSkillRowForApprovedTarget(target) {
+    var rows = document.querySelectorAll('[data-automation-id="promptLeafNode"]');
+    var match = null;
+    var i;
+    var row;
+    var label;
+    for (i = 0; i < rows.length; i += 1) {
+      row = rows[i];
+      if (isInsideSelectedItemList(row)) continue;
+      label = readSkillResultRowLabel(row);
+      if (!label || !labelMatchesApprovedTarget(label, target)) continue;
+      if (match) return null;
+      match = row;
+    }
+    return match;
+  }
+
+  function findSkillSearchResultRow(saved, targets) {
+    var t;
+    var row;
+    var rows;
+    var bestRank;
+    var bestRow;
+    var tied;
+    var i;
+    var prompt;
+    var label;
+    var rank;
+    if (targets && targets.length) {
+      for (t = 0; t < targets.length; t += 1) {
+        row = findSkillRowForApprovedTarget(targets[t]);
+        if (row) return row;
+      }
+      return null;
+    }
+    rows = document.querySelectorAll('[data-automation-id="promptLeafNode"]');
+    bestRank = 0;
+    bestRow = null;
+    tied = false;
+    for (i = 0; i < rows.length; i += 1) {
+      row = rows[i];
+      if (isInsideSelectedItemList(row)) continue;
+      if (!row.querySelector) continue;
+      prompt = row.querySelector('[data-automation-id="promptOption"][data-automation-label]');
+      if (!prompt) continue;
+      label = trimText(prompt.getAttribute("data-automation-label") || "");
+      rank = skillMatchRank(label, saved);
+      if (!rank) continue;
+      if (rank > bestRank) {
+        bestRank = rank;
+        bestRow = row;
+        tied = false;
+      } else if (rank === bestRank) {
+        tied = true;
+      }
+    }
+    if (!bestRow || tied) return null;
+    return bestRow;
+  }
+
+  async function waitForSkillTargetRow(saved, targets) {
+    var i;
+    var row;
+    for (i = 0; i < 32; i += 1) {
+      row = findSkillSearchResultRow(saved, targets);
+      if (row && row.isConnected) return row;
+      await sleep(125);
+    }
+    return null;
+  }
+
+  function skillRowCheckbox(row) {
+    if (!row || !row.querySelector) return null;
+    return (
+      row.querySelector('input[type="checkbox"][data-automation-id="checkboxPanel"]') ||
+      row.querySelector('[data-automation-id="checkbox"] input[type="checkbox"]') ||
+      null
+    );
+  }
+
+  function skillRowCheckboxIsUnchecked(row) {
+    var checkbox = skillRowCheckbox(row);
+    if (!checkbox) return false;
+    if (checkbox.checked) return false;
+    if (checkbox.getAttribute && checkbox.getAttribute("aria-checked") === "true") return false;
+    return true;
+  }
+
+  function clickSkillCheckboxPanel(checkbox) {
+    if (!checkbox) return;
+    var clickFn =
+      window.HTMLElement &&
+      window.HTMLElement.prototype &&
+      window.HTMLElement.prototype.click;
+    if (clickFn) {
+      clickFn.call(checkbox);
+    } else {
+      checkbox.click();
+    }
+  }
+
+  function clickSkillResultRowOnce(row) {
+    var checkbox = skillRowCheckbox(row);
+    if (!checkbox) return;
+    clickSkillCheckboxPanel(checkbox);
+  }
+
+  function searchValueContainsSkill(input, query) {
+    var value = trimText(input && input.value);
+    if (!value || !trimText(query)) return false;
+    if (skillLabelsEqual(value, query)) return true;
+    return normalizeSkillLabel(value).indexOf(normalizeSkillLabel(query)) !== -1;
+  }
+
+  async function typeOneSkillQuery(input, query) {
+    if (!input || !trimText(query)) return false;
+    try {
+      input.focus();
+    } catch (_) {}
+    setSearchInputValueNoBlur(input, query);
+    try {
+      input.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, data: query, inputType: "insertText" })
+      );
+    } catch (_) {}
+    try {
+      input.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    if (!searchValueContainsSkill(input, query)) {
+      setSearchInputValueNoBlur(input, query);
+    }
+    return true;
+  }
+
+  function dispatchSkillsSearchEnter(el) {
+    if (!el) return;
+    try {
+      el.focus();
+    } catch (_) {}
+    var types = ["keydown", "keypress", "keyup"];
+    var i;
+    var type;
+    var ev;
+    for (i = 0; i < types.length; i += 1) {
+      type = types[i];
+      try {
+        ev = new KeyboardEvent(type, {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+          view: window
+        });
+        try {
+          Object.defineProperty(ev, "keyCode", { get: function () { return 13; } });
+          Object.defineProperty(ev, "which", { get: function () { return 13; } });
+        } catch (_) {}
+        el.dispatchEvent(ev);
+      } catch (_) {}
+    }
+  }
+
+  async function clearSkillsSearch(searchInput) {
+    if (!searchInput || !isTextLikeInput(searchInput)) return;
+    try {
+      searchInput.focus();
+    } catch (_) {}
+    setSearchInputValueNoBlur(searchInput, "");
+    await sleep(120);
+  }
+
+  async function waitForSkillCommitted(root, saved, targets) {
+    var i;
+    for (i = 0; i < 20; i += 1) {
+      if (skillAlreadySelected(root, saved, targets)) return true;
+      await sleep(125);
+    }
+    return skillAlreadySelected(root, saved, targets);
+  }
+
+  async function selectOneSavedSkill(root, search, saved, plan) {
+    var query = trimText((plan && plan.query) || saved);
+    var targets = plan && plan.targets && plan.targets.length ? plan.targets : null;
+    try {
+      search = (await ensureSkillsPickerOpen(root)) || findSkillsSearchInput(root) || search;
+    } catch (_) {
+      search = findSkillsSearchInput(root) || search;
+    }
+    if (!search || !query) return { ok: false, skipped: true, reason: "timeout" };
+    if (/\s*,\s*/.test(query) && query.split(/\s*,\s*/).filter(Boolean).length > 1) {
+      return { ok: false, skipped: true, reason: "nomatch" };
+    }
+    try {
+      if (skillAlreadySelected(root, saved || query, targets)) return { ok: true, already: true };
+      await clearSkillsSearch(search);
+      await typeOneSkillQuery(search, query);
+      dispatchSkillsSearchEnter(search);
+      var row = await waitForSkillTargetRow(saved || query, targets);
+      if (!row) {
+        await clearSkillsSearch(search);
+        return { ok: false, skipped: true, reason: "nomatch" };
+      }
+      clickSkillResultRowOnce(row);
+      var committed = await waitForSkillCommitted(root, saved || query, targets);
+      if (!committed) {
+        var live = findSkillSearchResultRow(saved || query, targets);
+        if (live && live.isConnected && skillRowCheckboxIsUnchecked(live)) {
+          clickSkillResultRowOnce(live);
+          committed = await waitForSkillCommitted(root, saved || query, targets);
+        }
+      }
+      await clearSkillsSearch(search);
+      if (!skillAlreadySelected(root, saved || query, targets)) return { ok: false, skipped: true, reason: "timeout" };
+      return { ok: true };
+    } catch (_) {
+      try {
+        await clearSkillsSearch(search);
+      } catch (__) {}
+      return { ok: false, skipped: true, reason: "timeout" };
+    }
+  }
+
+  async function fillSkills(context, handledElements) {
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var saved = await resolveSavedSkills(ctx.profile, ctx.inventory);
+    if (!saved.length) return [];
+    var field = findSkillsFormField(root);
+    var multi = findSkillsMultiSelect(root);
+    var search = null;
+    try {
+      search = await ensureSkillsPickerOpen(root);
+    } catch (_) {
+      search = findSkillsSearchInput(root);
+    }
+    if (!search) {
+      return [resultRow("skill", "Skills", "skipped", "Workday Skills picker was not available.", false, "")];
+    }
+    markHandled(handledElements, search);
+    if (field) markHandled(handledElements, field);
+    var inputContainer = findSkillsInputContainer(root);
+    if (inputContainer) markHandled(handledElements, inputContainer);
+    if (multi) markHandled(handledElements, multi);
+    var selectedCount = 0;
+    var alreadyCount = 0;
+    var unsupportedCount = 0;
+    var timeoutCount = 0;
+    var i;
+    var p;
+    var skill;
+    var plans;
+    var plan;
+    var selected;
+    for (i = 0; i < saved.length; i += 1) {
+      skill = trimText(saved[i]);
+      if (!skill) continue;
+      plans = getWorkdaySkillPlans(skill);
+      if (!plans.length) {
+        unsupportedCount += 1;
+        continue;
+      }
+      for (p = 0; p < plans.length; p += 1) {
+        plan = plans[p];
+        try {
+          if (skillAlreadySelected(root, skill, plan && plan.targets)) {
+            alreadyCount += 1;
+          } else {
+            search = findSkillsSearchInput(root) || search;
+            if (!search || !isSkillsPickerExpanded(root)) {
+              search = (await ensureSkillsPickerOpen(root)) || search;
+            }
+            if (!search) {
+              timeoutCount += 1;
+            } else {
+              try {
+                search.focus();
+              } catch (_) {}
+              selected = await selectOneSavedSkill(root, search, skill, plan);
+              if (selected && selected.already) alreadyCount += 1;
+              else if (selected && selected.ok) selectedCount += 1;
+              else if (selected && selected.reason === "timeout") timeoutCount += 1;
+              else unsupportedCount += 1;
+            }
+          }
+        } catch (_) {
+          timeoutCount += 1;
+        }
+        try {
+          search = await resetSkillsPickerForNextSkill(root, search);
+        } catch (_) {}
+      }
+    }
+    try {
+      closeOpenList();
+    } catch (_) {}
+    var parts = [
+      selectedCount + " selected",
+      alreadyCount + " already present",
+      unsupportedCount + " unsupported"
+    ];
+    if (timeoutCount) parts.push(timeoutCount + " timed out");
+    var reason = "Workday Skills: " + parts.join(", ") + ".";
+    var filledAny = selectedCount > 0;
+    return [
+      resultRow("skill", "Skills", filledAny ? "filled" : "skipped", reason, filledAny, "")
+    ];
+  }
+
   async function fillSupportedFields(context) {
     if (!isSupportedPage()) {
       var handled = (context && context.handledElements) || [];
@@ -3962,7 +4749,11 @@
     var resumeRows = await fillResumeCvUpload(context, handledElements);
     var experienceRows = await fillWorkExperience(context, handledElements);
     var educationRows = await fillEducation(context, handledElements);
-    return summarize(((info && info.results) || []).concat(resumeRows, experienceRows, educationRows), handledElements);
+    var skillRows = await fillSkills(context, handledElements);
+    return summarize(
+      ((info && info.results) || []).concat(resumeRows, experienceRows, educationRows, skillRows),
+      handledElements
+    );
   }
 
   global.ImpulsoWorkdayAdapter = {
