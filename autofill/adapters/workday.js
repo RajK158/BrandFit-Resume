@@ -5657,6 +5657,230 @@
     return Boolean(found && found.input);
   }
 
+  function findWebsitesHeadingNode(root) {
+    var doc = root || document;
+    var el;
+    var nodes;
+    var i;
+    var text;
+    if (!doc || !doc.querySelector) return null;
+    el = doc.querySelector("#Websites-section");
+    if (el) return el;
+    if (!doc.querySelectorAll) return null;
+    nodes = doc.querySelectorAll('h1, h2, h3, h4, h5, legend, [role="heading"]');
+    for (i = 0; i < nodes.length; i += 1) {
+      text = normalizeText(headingVisibleText(nodes[i])).replace(/\s*\*+\s*$/, "").trim();
+      if (text === "websites") return nodes[i];
+    }
+    return null;
+  }
+
+  function findWebsitesSection(root) {
+    var doc = root || document;
+    var labelled;
+    var heading;
+    var nextHeading;
+    var node;
+    var best;
+    if (!doc || !doc.querySelector) return null;
+    labelled =
+      doc.querySelector('[role="group"][aria-labelledby="Websites-section"]') ||
+      doc.querySelector('[aria-labelledby="Websites-section"]');
+    if (labelled) return labelled;
+    heading = findWebsitesHeadingNode(doc);
+    if (!heading) return null;
+    nextHeading = nextMyExperienceHeadingNode(doc, heading);
+    node = heading.parentElement || heading;
+    best = node;
+    while (node && node !== document.body && node !== document.documentElement) {
+      if (nextHeading && node.contains && node.contains(nextHeading) && node !== nextHeading) break;
+      best = node;
+      if (node.querySelector && node.querySelector('input[name="url"]')) return node;
+      node = node.parentElement;
+    }
+    return best;
+  }
+
+  function collectWebsiteUrlInputs(section) {
+    var inputs = [];
+    var nodes;
+    var i;
+    var el;
+    if (!section || !section.querySelectorAll) return inputs;
+    nodes = section.querySelectorAll('input[name="url"]');
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      if (!el || normalizeText(el.type) === "hidden") continue;
+      inputs.push(el);
+    }
+    return inputs;
+  }
+
+  function findWebsitesAddAnotherButton(section) {
+    var buttons;
+    var i;
+    var btn;
+    if (!section || !section.querySelectorAll) return null;
+    buttons = section.querySelectorAll('button[data-automation-id="add-button"]');
+    for (i = 0; i < buttons.length; i += 1) {
+      btn = buttons[i];
+      if (!addButtonVisible(btn)) continue;
+      if (isAddAnotherLabel(visibleAddButtonText(btn))) return btn;
+    }
+    return null;
+  }
+
+  function canonicalWebsiteUrl(value) {
+    var raw = trimText(value);
+    var parsed;
+    var host;
+    var path;
+    var href;
+    if (!raw) return "";
+    href = raw;
+    if (!/^https?:\/\//i.test(href)) href = "https://" + href;
+    try {
+      parsed = new URL(href);
+      host = String(parsed.hostname || "").toLowerCase().replace(/^www\./, "");
+      path = String(parsed.pathname || "").replace(/\/+$/, "");
+      return trimText(host + path + String(parsed.search || "") + String(parsed.hash || ""));
+    } catch (_) {
+      return normalizeText(raw)
+        .replace(/^https?:\/\//, "")
+        .replace(/^www\./, "")
+        .replace(/\/+$/, "");
+    }
+  }
+
+  function websiteValuesMatch(actual, desired) {
+    var left = trimText(actual);
+    var right = trimText(desired);
+    var leftCanon;
+    var rightCanon;
+    if (!left || !right) return false;
+    if (left === right) return true;
+    if (normalizeText(left) === normalizeText(right)) return true;
+    leftCanon = canonicalWebsiteUrl(left);
+    rightCanon = canonicalWebsiteUrl(right);
+    return Boolean(leftCanon && rightCanon && leftCanon === rightCanon);
+  }
+
+  function savedWebsiteEntries(profile, inventory) {
+    var links = (profile && profile.links) || {};
+    var inv = inventory || {};
+    var entries = [];
+    var seen = {};
+    function add(label, url) {
+      var trimmed = trimText(url);
+      var key = canonicalWebsiteUrl(trimmed);
+      if (!trimmed || !key || seen[key]) return;
+      seen[key] = true;
+      entries.push({ label: label, url: trimmed });
+    }
+    add("Portfolio", links.portfolio || inv.portfolio || "");
+    add("GitHub", links.github || inv.github || "");
+    add("LinkedIn", links.linkedin || inv.linkedin || "");
+    return entries;
+  }
+
+  function websiteInputIsBlank(input) {
+    return !trimText(input && input.value);
+  }
+
+  function findBlankWebsiteInput(inputs) {
+    var i;
+    for (i = 0; i < (inputs || []).length; i += 1) {
+      if (websiteInputIsBlank(inputs[i])) return inputs[i];
+    }
+    return null;
+  }
+
+  function websiteAlreadyPresent(inputs, desired) {
+    var i;
+    for (i = 0; i < (inputs || []).length; i += 1) {
+      if (websiteValuesMatch(inputs[i] && inputs[i].value, desired)) return true;
+    }
+    return false;
+  }
+
+  async function waitForNewWebsiteUrlInput(section, previousCount) {
+    var i;
+    var inputs;
+    for (i = 0; i < 16; i += 1) {
+      inputs = collectWebsiteUrlInputs(section);
+      if (inputs.length > previousCount) return inputs;
+      await sleep(120);
+    }
+    return collectWebsiteUrlInputs(section);
+  }
+
+  async function addWebsiteRow(section, handledElements) {
+    var before = collectWebsiteUrlInputs(section).length;
+    var btn = findWebsitesAddAnotherButton(section);
+    var inputs;
+    if (!btn) {
+      return { ok: false, inputs: collectWebsiteUrlInputs(section) };
+    }
+    markHandled(handledElements, btn);
+    clickElement(btn);
+    inputs = await waitForNewWebsiteUrlInput(section, before);
+    if (inputs.length <= before) return { ok: false, inputs: inputs };
+    return { ok: true, inputs: inputs };
+  }
+
+  async function fillWebsiteUrlInput(input, url, handledElements) {
+    var after;
+    if (!input || !trimText(url)) return false;
+    markHandled(handledElements, input);
+    if (!setInputValue(input, url)) return false;
+    after = readInputValue(input);
+    return websiteValuesMatch(after, url) || (after && after.indexOf(trimText(url)) !== -1);
+  }
+
+  async function fillWebsites(context, handledElements) {
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var section = findWebsitesSection(root);
+    var desired;
+    var results = [];
+    var i;
+    var entry;
+    var inputs;
+    var blank;
+    var created;
+    if (!section) return [];
+    desired = savedWebsiteEntries(ctx.profile, ctx.inventory);
+    if (!desired.length) return [];
+    for (i = 0; i < desired.length; i += 1) {
+      entry = desired[i];
+      inputs = collectWebsiteUrlInputs(section);
+      if (websiteAlreadyPresent(inputs, entry.url)) {
+        results.push(
+          resultRow("url", entry.label, "skipped", "Field is already completed.", false, entry.url)
+        );
+        continue;
+      }
+      blank = findBlankWebsiteInput(inputs);
+      if (!blank) {
+        created = await addWebsiteRow(section, handledElements);
+        inputs = created.inputs || collectWebsiteUrlInputs(section);
+        blank = findBlankWebsiteInput(inputs);
+        if (!created.ok || !blank) {
+          results.push(
+            resultRow("url", entry.label, "skipped", "Websites Add Another was not available.", false, "")
+          );
+          continue;
+        }
+      }
+      if (await fillWebsiteUrlInput(blank, entry.url, handledElements)) {
+        results.push(resultRow("url", entry.label, "filled", "", true, entry.url));
+      } else {
+        results.push(resultRow("url", entry.label, "failed", "Verification failed; website URL did not persist.", false, ""));
+      }
+    }
+    return results;
+  }
+
   async function fillSupportedFields(context) {
     if (!isSupportedPage()) {
       var handled = (context && context.handledElements) || [];
@@ -5687,6 +5911,7 @@
     var skillRows = isSkillsSectionPresent(root)
       ? await fillSkills(ctx, handledElements)
       : [];
+    var websiteRows = findWebsitesSection(root) ? await fillWebsites(ctx, handledElements) : [];
     var questionRows = findWorkAuthorizationQuestion(root)
       ? await fillApplicationQuestions(ctx, handledElements)
       : [];
@@ -5697,6 +5922,7 @@
         experienceRows,
         educationRows,
         skillRows,
+        websiteRows,
         questionRows,
         disclosureRows
       ),
