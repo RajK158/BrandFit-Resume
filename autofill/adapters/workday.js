@@ -1718,6 +1718,780 @@
     ];
   }
 
+  var MONTH_NAMES = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December"
+  ];
+
+  function padMonth(value) {
+    var num = parseInt(value, 10);
+    if (!num || num < 1 || num > 12) return "";
+    return num < 10 ? "0" + num : String(num);
+  }
+
+  function monthNameFromNumber(value) {
+    var num = parseInt(value, 10);
+    if (!num || num < 1 || num > 12) return "";
+    return MONTH_NAMES[num - 1];
+  }
+
+  function monthNumberFromText(value) {
+    var text = trimText(value);
+    if (!text) return "";
+    var padded = padMonth(text);
+    if (padded) return padded;
+    var engine = af();
+    if (engine && typeof engine.extractMonthFromEducationDate === "function") {
+      var named = engine.extractMonthFromEducationDate(text);
+      if (named) {
+        var i;
+        for (i = 0; i < MONTH_NAMES.length; i += 1) {
+          if (MONTH_NAMES[i] === named) return padMonth(i + 1);
+        }
+      }
+    }
+    return "";
+  }
+
+  function isPresentDateValue(value) {
+    return /^(present|current|now|ongoing)$/i.test(trimText(value));
+  }
+
+  function parseExperienceMonthYear(value) {
+    var text = trimText(value);
+    var empty = { month: "", year: "", present: false, yearOnly: false };
+    if (!text) return empty;
+    if (isPresentDateValue(text)) return { month: "", year: "", present: true, yearOnly: false };
+    var engine = af();
+    if (engine && typeof engine.parseStoredDate === "function") {
+      var parsed = engine.parseStoredDate(text);
+      if (parsed && parsed.y && parsed.m) {
+        return { month: padMonth(parsed.m), year: String(parsed.y), present: false, yearOnly: false };
+      }
+    }
+    var yearMonth = text.match(/^(\d{4})-(\d{1,2})$/);
+    if (yearMonth) {
+      return { month: padMonth(yearMonth[2]), year: yearMonth[1], present: false, yearOnly: false };
+    }
+    var monthYear = text.match(/^(\d{1,2})\/(\d{4})$/);
+    if (monthYear) {
+      return { month: padMonth(monthYear[1]), year: monthYear[2], present: false, yearOnly: false };
+    }
+    var year = "";
+    var month = monthNumberFromText(text);
+    if (engine && typeof engine.extractYearFromEducationDate === "function") {
+      year = engine.extractYearFromEducationDate(text) || "";
+    } else {
+      var yearMatch = text.match(/\b((?:19|20)\d{2})\b/);
+      year = yearMatch ? yearMatch[1] : "";
+    }
+    if (year && month) return { month: month, year: year, present: false, yearOnly: false };
+    if (year && !month) return { month: "", year: year, present: false, yearOnly: true };
+    return empty;
+  }
+
+  function monthValuesMatch(actual, expectedMonth) {
+    var want = padMonth(expectedMonth) || monthNumberFromText(expectedMonth);
+    var got = padMonth(actual) || monthNumberFromText(actual);
+    if (want && got && want === got) return true;
+    return normalizeText(actual) === normalizeText(expectedMonth);
+  }
+
+  function yearValuesMatch(actual, expectedYear) {
+    return trimText(actual) === trimText(expectedYear);
+  }
+
+  function mapSavedExperience(item) {
+    var row = item && typeof item === "object" ? item : {};
+    var current =
+      row.current === true ||
+      row.current === "true" ||
+      row.isCurrent === true ||
+      row.isCurrent === "true" ||
+      row.currentRole === true ||
+      row.currentRole === "true";
+    var endDate = trimText(row.endDate || row.end_date || "");
+    if (isPresentDateValue(endDate)) current = true;
+    var bullets = Array.isArray(row.bullets)
+      ? row.bullets
+          .map(function (item) {
+            return trimText(item);
+          })
+          .filter(Boolean)
+      : [];
+    var description = trimText(row.description || "");
+    if (!description && bullets.length) description = bullets.join("\n");
+    return {
+      title: trimText(row.title || row.job_title || row.role || row.position || ""),
+      company: trimText(row.company || row.company_name || row.employer || row.companyName || ""),
+      location: trimText(row.location || ""),
+      startDate: trimText(row.startDate || row.start_date || ""),
+      endDate: endDate,
+      current: current,
+      description: description
+    };
+  }
+
+  function savedExperienceRecords(profile, inventory) {
+    var fromProfile = profile && Array.isArray(profile.experience) ? profile.experience : [];
+    var fromInv = inventory && Array.isArray(inventory.experience_records) ? inventory.experience_records : [];
+    var raw = fromProfile.length >= fromInv.length ? fromProfile : fromInv;
+    return raw
+      .map(mapSavedExperience)
+      .filter(function (row) {
+        return Boolean(row.title || row.company);
+      });
+  }
+
+  function experienceNamesMatch(a, b) {
+    return normalizeText(a) === normalizeText(b);
+  }
+
+  function closestExperienceRow(titleInput) {
+    var node = titleInput;
+    while (node && node !== document.documentElement) {
+      if (node.querySelectorAll) {
+        var titles = node.querySelectorAll('input[name="jobTitle"]');
+        if (titles.length === 1 && titles[0] === titleInput && node.querySelector('input[name="companyName"]')) {
+          return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return titleInput && titleInput.parentElement;
+  }
+
+  function collectExperienceRows(root) {
+    var doc = root || document;
+    var rows = [];
+    if (!doc.querySelectorAll) return rows;
+    Array.prototype.forEach.call(doc.querySelectorAll('input[name="jobTitle"]'), function (titleInput) {
+      var row = closestExperienceRow(titleInput);
+      if (row && rows.indexOf(row) === -1) rows.push(row);
+    });
+    return rows;
+  }
+
+  function findRowDateInput(row, which, part) {
+    if (!row || !row.querySelectorAll) return null;
+    var token = which === "start" ? "--startdate-" : "--enddate-";
+    var autoName = part === "month" ? "dateSectionMonth-input" : "dateSectionYear-input";
+    var nodes = row.querySelectorAll('input, [role="combobox"], [aria-haspopup="listbox"]');
+    var i;
+    var el;
+    var id;
+    var auto;
+    var blob;
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      id = normalizeText(el.id || "");
+      auto = automationId(el);
+      if (auto === autoName && id.indexOf(token) !== -1) return el;
+    }
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      id = normalizeText(el.id || "");
+      auto = automationId(el);
+      blob = id + " " + normalizeText(el.name || "") + " " + automationBlob(el);
+      if (auto === autoName) {
+        if (which === "start" && blob.indexOf("startdate") !== -1) return el;
+        if (which === "end" && blob.indexOf("enddate") !== -1) return el;
+      }
+    }
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      id = normalizeText(el.id || "");
+      if (id.indexOf(token) === -1) continue;
+      if (part === "month" && /month/.test(id)) return el;
+      if (part === "year" && /year/.test(id)) return el;
+    }
+    return null;
+  }
+
+  function findRoleDescription(row) {
+    if (!row || !row.querySelectorAll) return null;
+    var areas = row.querySelectorAll("textarea");
+    var i;
+    var el;
+    for (i = 0; i < areas.length; i += 1) {
+      el = areas[i];
+      if (normalizeText(el.id || "").indexOf("--roledescription") !== -1) return el;
+      if (normalizeText(el.name || "") === "roledescription") return el;
+    }
+    var container = row.querySelector('[data-automation-id="formField-roleDescription"]');
+    if (container && container.querySelector) {
+      el = container.querySelector("textarea");
+      if (el) return el;
+    }
+    return areas.length === 1 ? areas[0] : null;
+  }
+
+  function experienceRowFields(row) {
+    return {
+      title: row.querySelector('input[name="jobTitle"]'),
+      company: row.querySelector('input[name="companyName"]'),
+      location: row.querySelector('input[name="location"]'),
+      current: row.querySelector('input[type="checkbox"][name="currentlyWorkHere"]'),
+      startMonth: findRowDateInput(row, "start", "month"),
+      startYear: findRowDateInput(row, "start", "year"),
+      endMonth: findRowDateInput(row, "end", "month"),
+      endYear: findRowDateInput(row, "end", "year"),
+      description: findRoleDescription(row)
+    };
+  }
+
+  function isBlankExperienceRow(row) {
+    var fields = experienceRowFields(row);
+    return !readInputValue(fields.title) && !readInputValue(fields.company) && !readInputValue(fields.location);
+  }
+
+  function rowMatchesExperience(row, saved) {
+    var fields = experienceRowFields(row);
+    if (!trimText(saved.title) || !trimText(saved.company)) return false;
+    return (
+      experienceNamesMatch(readInputValue(fields.title), saved.title) &&
+      experienceNamesMatch(readInputValue(fields.company), saved.company)
+    );
+  }
+
+  function findMatchingExperienceRow(rows, saved, used) {
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (used && used.indexOf(rows[i]) !== -1) continue;
+      if (rowMatchesExperience(rows[i], saved)) return rows[i];
+    }
+    return null;
+  }
+
+  function findBlankExperienceRow(rows, used) {
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (used && used.indexOf(rows[i]) !== -1) continue;
+      if (isBlankExperienceRow(rows[i])) return rows[i];
+    }
+    return null;
+  }
+
+  function headingVisibleText(node) {
+    if (!node) return "";
+    return trimText(node.innerText || node.textContent || "");
+  }
+
+  function myExperienceHeadingKind(text) {
+    var t = normalizeText(text).replace(/\s*\(.*\)\s*$/, "").replace(/\s*\*+\s*$/, "").trim();
+    if (!t || t.length > 40) return "";
+    if (t === "work experience" || t === "experience") return "experience";
+    if (t === "education") return "education";
+    if (t === "certification" || t === "certifications") return "certification";
+    if (t === "language" || t === "languages") return "language";
+    if (t === "website" || t === "websites" || t === "web site" || t === "web sites") return "website";
+    if (t === "skill" || t === "skills") return "skill";
+    if (t === "resume/cv" || t === "resume" || t === "cv") return "resume";
+    return "";
+  }
+
+  function workExperienceSectionKind(node) {
+    if (!node) return "";
+    var auto = normalizeText(automationId(node));
+    if (/\bworkexperience\b/.test(auto) || /\bwork-experience\b/.test(auto) || /\bwork_experience\b/.test(auto)) {
+      return "experience";
+    }
+    if (/\beducation\b/.test(auto)) return "education";
+    if (/\bcertif/.test(auto)) return "certification";
+    if (/\blanguage/.test(auto)) return "language";
+    if (/\bwebsite\b/.test(auto) || /\bwebaddress\b/.test(auto)) return "website";
+    if (/\bskill/.test(auto)) return "skill";
+    var heading = "";
+    if (node.matches && node.matches("h1, h2, h3, h4, h5, legend, [role='heading']")) {
+      heading = node.innerText || node.textContent || "";
+    } else if (node.querySelector) {
+      var h = null;
+      try {
+        h = node.querySelector(":scope > h2, :scope > h3, :scope > h4, :scope > legend");
+      } catch (_) {
+        h = node.querySelector("h2, h3, h4, legend");
+      }
+      if (h) heading = h.innerText || h.textContent || "";
+    }
+    return myExperienceHeadingKind(heading);
+  }
+
+  function collectMyExperienceHeadings(root) {
+    var doc = root || document;
+    var out = [];
+    if (!doc.querySelectorAll) return out;
+    var nodes = doc.querySelectorAll('h1, h2, h3, h4, h5, legend, [role="heading"], span, p, label, div');
+    Array.prototype.forEach.call(nodes, function (node) {
+      var text = headingVisibleText(node);
+      var kind = myExperienceHeadingKind(text);
+      if (!kind) return;
+      if (node.querySelector && node.querySelector("input, textarea, [data-automation-id='add-button']")) return;
+      if ((node.tagName || "").toLowerCase() === "div" && node.children && node.children.length) return;
+      out.push({ node: node, kind: kind, text: text });
+    });
+    var filtered = [];
+    var i;
+    var j;
+    var containsOther;
+    for (i = 0; i < out.length; i += 1) {
+      containsOther = false;
+      for (j = 0; j < out.length; j += 1) {
+        if (i === j) continue;
+        if (out[i].node.contains && out[i].node.contains(out[j].node)) {
+          containsOther = true;
+          break;
+        }
+      }
+      if (!containsOther) filtered.push(out[i]);
+    }
+    return filtered;
+  }
+
+  function findWorkExperienceHeadingNode(root) {
+    var headings = collectMyExperienceHeadings(root);
+    var i;
+    var fallback = null;
+    for (i = 0; i < headings.length; i += 1) {
+      if (headings[i].kind !== "experience") continue;
+      if (normalizeText(headings[i].text) === "work experience" || /^work experience\b/.test(normalizeText(headings[i].text))) {
+        return headings[i].node;
+      }
+      fallback = fallback || headings[i].node;
+    }
+    return fallback;
+  }
+
+  function nextMyExperienceHeadingNode(root, heading) {
+    var headings = collectMyExperienceHeadings(root);
+    var i;
+    var seen = false;
+    for (i = 0; i < headings.length; i += 1) {
+      if (headings[i].node === heading) {
+        seen = true;
+        continue;
+      }
+      if (seen) return headings[i].node;
+    }
+    return null;
+  }
+
+  function nodeIsAfter(start, target) {
+    return Boolean(start && target && start.compareDocumentPosition && (start.compareDocumentPosition(target) & 4));
+  }
+
+  function nodeIsBefore(end, target) {
+    return Boolean(end && target && end.compareDocumentPosition && (end.compareDocumentPosition(target) & 2));
+  }
+
+  function isInWorkExperienceBounds(target, heading, nextHeading) {
+    if (!target || !heading) return false;
+    if (!nodeIsAfter(heading, target) && target !== heading && !(heading.contains && heading.contains(target))) {
+      return false;
+    }
+    if (nextHeading && !nodeIsBefore(nextHeading, target)) return false;
+    return true;
+  }
+
+  function addButtonVisible(btn) {
+    if (!btn || btn.disabled) return false;
+    if (btn.getAttribute && btn.getAttribute("aria-hidden") === "true") return false;
+    try {
+      var style = global.getComputedStyle ? global.getComputedStyle(btn) : null;
+      if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+    } catch (_) {}
+    if (btn.getClientRects && btn.getClientRects().length === 0) return false;
+    return true;
+  }
+
+  function visibleAddButtonText(btn) {
+    return trimText((btn && (btn.innerText || btn.textContent)) || "");
+  }
+
+  function isExactAddLabel(text) {
+    return text === "Add";
+  }
+
+  function isAddAnotherLabel(text) {
+    return text === "Add Another" || normalizeText(text) === "add another";
+  }
+
+  function addButtonSectionKind(btn) {
+    var label = normalizeText(visibleAddButtonText(btn) || (btn && btn.getAttribute && btn.getAttribute("aria-label")) || "");
+    if (/\beducation\b/.test(label)) return "education";
+    if (/\bcertif/.test(label)) return "certification";
+    if (/\blanguage/.test(label)) return "language";
+    if (/\bwebsite\b/.test(label) || /\bweb\s*site\b/.test(label)) return "website";
+    if (/\bskill/.test(label)) return "skill";
+    if (/\bwork\s+experience\b/.test(label)) return "experience";
+    var node = btn;
+    var hops = 0;
+    while (node && hops < 14) {
+      var kind = workExperienceSectionKind(node);
+      if (kind) return kind;
+      node = node.parentElement;
+      hops += 1;
+    }
+    return "";
+  }
+
+  function findWorkExperienceSection(root, rows) {
+    var doc = root || document;
+    var heading = findWorkExperienceHeadingNode(doc);
+    var nextHeading = heading ? nextMyExperienceHeadingNode(doc, heading) : null;
+    var list = rows && rows.length ? rows : collectExperienceRows(doc);
+    var start = heading || (list.length ? list[0] : null);
+    if (!start) return null;
+    var node = start;
+    var best = null;
+    var i;
+    var containsAll;
+    while (node && node !== document.body && node !== document.documentElement) {
+      if (nextHeading && node.contains && node.contains(nextHeading) && node !== nextHeading) break;
+      if (list.length) {
+        containsAll = true;
+        for (i = 0; i < list.length; i += 1) {
+          if (!node.contains(list[i])) {
+            containsAll = false;
+            break;
+          }
+        }
+        if (!containsAll) {
+          node = node.parentElement;
+          continue;
+        }
+      }
+      best = node;
+      if (node.querySelector && scopedWorkExperienceAddButtons(node, heading, nextHeading, list).length) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return best;
+  }
+
+  function scopedWorkExperienceAddButtons(scope, heading, nextHeading, rows) {
+    var list = [];
+    if (!scope || !scope.querySelectorAll) return list;
+    var buttons = scope.querySelectorAll('[data-automation-id="add-button"]');
+    var i;
+    var j;
+    var btn;
+    var kind;
+    var insideRow;
+    for (i = 0; i < buttons.length; i += 1) {
+      btn = buttons[i];
+      if (!addButtonVisible(btn)) continue;
+      kind = addButtonSectionKind(btn);
+      if (kind && kind !== "experience") continue;
+      if (heading && !isInWorkExperienceBounds(btn, heading, nextHeading)) continue;
+      insideRow = false;
+      for (j = 0; j < (rows || []).length; j += 1) {
+        if (rows[j] && rows[j] !== btn && rows[j].contains(btn)) {
+          insideRow = true;
+          break;
+        }
+      }
+      if (insideRow) continue;
+      list.push(btn);
+    }
+    return list;
+  }
+
+  function workExperienceAddCandidates(root, rows) {
+    var doc = root || document;
+    var heading = findWorkExperienceHeadingNode(doc);
+    if (!heading) return [];
+    var nextHeading = nextMyExperienceHeadingNode(doc, heading);
+    var section = findWorkExperienceSection(doc, rows);
+    var scoped = scopedWorkExperienceAddButtons(section || heading.parentElement || doc, heading, nextHeading, rows || []);
+    if (scoped.length) return scoped;
+    return scopedWorkExperienceAddButtons(doc, heading, nextHeading, rows || []);
+  }
+
+  function findInitialWorkExperienceAddButton(root) {
+    var buttons = workExperienceAddCandidates(root, []);
+    var i;
+    for (i = 0; i < buttons.length; i += 1) {
+      if (isExactAddLabel(visibleAddButtonText(buttons[i]))) return buttons[i];
+    }
+    return null;
+  }
+
+  function findWorkExperienceAddAnotherButton(root, rows) {
+    var list = rows || [];
+    var buttons = workExperienceAddCandidates(root, list);
+    var lastRow = list.length ? list[list.length - 1] : null;
+    var i;
+    var btn;
+    for (i = 0; i < buttons.length; i += 1) {
+      btn = buttons[i];
+      if (!isAddAnotherLabel(visibleAddButtonText(btn))) continue;
+      if (lastRow && lastRow.compareDocumentPosition && !(lastRow.compareDocumentPosition(btn) & 4)) continue;
+      return btn;
+    }
+    return null;
+  }
+
+  async function waitForNewExperienceRow(root, previousCount) {
+    var i;
+    var rows;
+    for (i = 0; i < 16; i += 1) {
+      rows = collectExperienceRows(root);
+      if (rows.length > previousCount) return rows;
+      await sleep(120);
+    }
+    return collectExperienceRows(root);
+  }
+
+  async function createWorkExperienceRow(root, handledElements) {
+    var rows = collectExperienceRows(root);
+    var before = rows.length;
+    var btn = before === 0
+      ? findInitialWorkExperienceAddButton(root)
+      : findWorkExperienceAddAnotherButton(root, rows);
+    if (!btn) {
+      return {
+        ok: false,
+        rows: rows,
+        reason: before === 0 ? "Work Experience Add was not found." : "Work Experience Add Another was not found."
+      };
+    }
+    markHandled(handledElements, btn);
+    clickElement(btn);
+    rows = await waitForNewExperienceRow(root, before);
+    if (rows.length <= before) {
+      return {
+        ok: false,
+        rows: rows,
+        reason: "Workday did not create another Work Experience row."
+      };
+    }
+    return { ok: true, rows: rows };
+  }
+
+  async function fillExperienceTextField(el, value, handledElements, overwrite) {
+    if (!el) return "missing";
+    markHandled(handledElements, el);
+    var current = readInputValue(el);
+    if (!value) return "skip";
+    if (current && normalizeText(current) === normalizeText(value)) return "already";
+    if (current && !overwrite) return "skip-existing";
+    if (!setInputValue(el, value)) return "fail";
+    var after = readInputValue(el);
+    return normalizeText(after) === normalizeText(value) ? "ok" : "fail";
+  }
+
+  function monthInputValues(expectedMonth) {
+    var padded = padMonth(expectedMonth) || monthNumberFromText(expectedMonth);
+    var values = [];
+    if (padded) values.push(padded);
+    if (padded && String(parseInt(padded, 10)) !== padded) values.push(String(parseInt(padded, 10)));
+    var named = monthNameFromNumber(padded);
+    if (named) values.push(named);
+    return values;
+  }
+
+  function monthOptionMatches(label, expectedMonth) {
+    var padded = padMonth(expectedMonth) || monthNumberFromText(expectedMonth);
+    if (!padded) return false;
+    if (monthValuesMatch(label, padded)) return true;
+    return normalizeText(label) === normalizeText(monthNameFromNumber(padded));
+  }
+
+  async function fillExperienceDatePart(el, value, handledElements, overwrite, kind) {
+    if (!el) return "missing";
+    if (!value) return "skip";
+    markHandled(handledElements, el);
+    var control = isComboboxControl(el) ? el : comboboxControlIn(fieldContainer(el));
+    var matcher = kind === "month"
+      ? function (label) {
+          return monthOptionMatches(label, value);
+        }
+      : function (label) {
+          return yearValuesMatch(label, value);
+        };
+    if (control && (isComboboxControl(control) || control !== el)) {
+      var currentCombo = readComboboxText(control);
+      if (currentCombo && !isPlaceholderValue(currentCombo) && matcher(currentCombo)) return "already";
+      if (currentCombo && !isPlaceholderValue(currentCombo) && !overwrite) return "skip-existing";
+      var selected = await selectComboboxOption(control, matcher);
+      return selected.ok ? "ok" : "skip";
+    }
+    var current = readInputValue(el);
+    if (kind === "month") {
+      if (current && monthValuesMatch(current, value)) return "already";
+    } else if (current && yearValuesMatch(current, value)) {
+      return "already";
+    }
+    if (current && !overwrite) return "skip-existing";
+    var candidates = kind === "month" ? monthInputValues(value) : [String(value)];
+    var i;
+    for (i = 0; i < candidates.length; i += 1) {
+      if (!setInputValue(el, candidates[i])) continue;
+      var after = readInputValue(el);
+      if (kind === "month" ? monthValuesMatch(after, value) : yearValuesMatch(after, value)) return "ok";
+    }
+    return "skip";
+  }
+
+  function setCurrentlyWorkHere(el, shouldCheck, handledElements) {
+    if (!el) return "missing";
+    markHandled(handledElements, el);
+    var isOn = Boolean(el.checked);
+    if (isOn === Boolean(shouldCheck)) return "already";
+    clickElement(el);
+    try {
+      el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    return Boolean(el.checked) === Boolean(shouldCheck) ? "ok" : "fail";
+  }
+
+  function datePartVisible(el) {
+    return Boolean(el) && isVisibleEnough(el);
+  }
+
+  async function fillOneExperienceRow(row, saved, handledElements) {
+    var fields = experienceRowFields(row);
+    var overwrite = isBlankExperienceRow(row);
+    var filledAny = false;
+    var failedRequired = false;
+
+    var titleStatus = await fillExperienceTextField(fields.title, saved.title, handledElements, overwrite);
+    var companyStatus = await fillExperienceTextField(fields.company, saved.company, handledElements, overwrite);
+    if (titleStatus === "ok" || companyStatus === "ok") filledAny = true;
+    if ((saved.title && titleStatus === "fail") || (saved.company && companyStatus === "fail")) failedRequired = true;
+
+    var locationStatus = await fillExperienceTextField(fields.location, saved.location, handledElements, overwrite);
+    if (locationStatus === "ok") filledAny = true;
+
+    if (fields.current) {
+      var currentStatus = setCurrentlyWorkHere(fields.current, Boolean(saved.current), handledElements);
+      if (currentStatus === "ok" && saved.current) filledAny = true;
+      if (saved.current) await sleep(180);
+    }
+
+    var start = parseExperienceMonthYear(saved.startDate);
+    if (start.yearOnly || (start.year && !start.month)) {
+      markHandled(handledElements, fields.startMonth);
+      markHandled(handledElements, fields.startYear);
+    } else if (start.month && start.year) {
+      if (datePartVisible(fields.startMonth)) {
+        var sm = await fillExperienceDatePart(fields.startMonth, start.month, handledElements, overwrite, "month");
+        if (sm === "ok") filledAny = true;
+      }
+      if (datePartVisible(fields.startYear)) {
+        var sy = await fillExperienceDatePart(fields.startYear, start.year, handledElements, overwrite, "year");
+        if (sy === "ok") filledAny = true;
+      }
+    }
+
+    if (!saved.current) {
+      var end = parseExperienceMonthYear(saved.endDate);
+      if (end.present) {
+        markHandled(handledElements, fields.endMonth);
+        markHandled(handledElements, fields.endYear);
+      } else if (end.yearOnly || (end.year && !end.month)) {
+        markHandled(handledElements, fields.endMonth);
+        markHandled(handledElements, fields.endYear);
+      } else if (end.month && end.year) {
+        if (datePartVisible(fields.endMonth)) {
+          var em = await fillExperienceDatePart(fields.endMonth, end.month, handledElements, overwrite, "month");
+          if (em === "ok") filledAny = true;
+        }
+        if (datePartVisible(fields.endYear)) {
+          var ey = await fillExperienceDatePart(fields.endYear, end.year, handledElements, overwrite, "year");
+          if (ey === "ok") filledAny = true;
+        }
+      }
+    }
+
+    var descriptionStatus = await fillExperienceTextField(
+      fields.description,
+      saved.description,
+      handledElements,
+      overwrite
+    );
+    if (descriptionStatus === "ok") filledAny = true;
+
+    if (failedRequired) return "failed";
+    if (filledAny) return "filled";
+    return "skipped";
+  }
+
+  async function fillWorkExperience(context, handledElements) {
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var saved = savedExperienceRecords(ctx.profile, ctx.inventory);
+    if (!saved.length) return [];
+    var results = [];
+    var used = [];
+    var i;
+    var rows;
+    var target;
+    var status;
+    var label;
+
+    for (i = 0; i < saved.length; i += 1) {
+      label = "Work Experience " + (i + 1);
+      rows = collectExperienceRows(root);
+      target = findMatchingExperienceRow(rows, saved[i], used);
+      if (target) {
+        used.push(target);
+        status = await fillOneExperienceRow(target, saved[i], handledElements);
+        if (status === "filled") {
+          results.push(resultRow("experience", label, "filled", "", true, saved[i].title || saved[i].company));
+        } else if (status === "failed") {
+          results.push(resultRow("experience", label, "failed", "Could not persist job title or company.", false, ""));
+        } else {
+          results.push(resultRow("experience", label, "skipped", "Experience is already present.", false, ""));
+        }
+        continue;
+      }
+
+      target = findBlankExperienceRow(rows, used);
+      if (!target) {
+        var created = await createWorkExperienceRow(root, handledElements);
+        if (!created.ok) {
+          results.push(resultRow("experience", label, "failed", created.reason, false, ""));
+          break;
+        }
+        rows = created.rows;
+        target = findBlankExperienceRow(rows, used) || rows[rows.length - 1];
+      }
+
+      if (!target) {
+        results.push(resultRow("experience", label, "failed", "Could not create a Work Experience row.", false, ""));
+        break;
+      }
+
+      used.push(target);
+      status = await fillOneExperienceRow(target, saved[i], handledElements);
+      if (status === "filled") {
+        results.push(resultRow("experience", label, "filled", "", true, saved[i].title || saved[i].company));
+      } else if (status === "failed") {
+        results.push(resultRow("experience", label, "failed", "Could not persist job title or company.", false, ""));
+        break;
+      } else {
+        results.push(resultRow("experience", label, "skipped", "Experience is already present.", false, ""));
+      }
+    }
+
+    return results;
+  }
+
   async function fillSupportedFields(context) {
     if (!isSupportedPage()) {
       var handled = (context && context.handledElements) || [];
@@ -1726,7 +2500,8 @@
     var info = await fillMyInformation(context);
     var handledElements = (info && info.handledElements) || (context && context.handledElements) || [];
     var resumeRows = await fillResumeCvUpload(context, handledElements);
-    return summarize(((info && info.results) || []).concat(resumeRows), handledElements);
+    var experienceRows = await fillWorkExperience(context, handledElements);
+    return summarize(((info && info.results) || []).concat(resumeRows, experienceRows), handledElements);
   }
 
   global.ImpulsoWorkdayAdapter = {
