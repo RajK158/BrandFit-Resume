@@ -4739,19 +4739,244 @@
     ];
   }
 
+  function explicitYesNo(value) {
+    var text = normalizeText(value);
+    if (text === "yes") return "yes";
+    if (text === "no") return "no";
+    return "";
+  }
+
+  var WORKDAY_WORK_AUTH_ANY_EMPLOYER =
+    "I am authorized to work in this country for any employer";
+  var WORKDAY_WORK_AUTH_PRESENT_EMPLOYER =
+    "I am authorized to work in this country for my present employer only";
+  var WORKDAY_WORK_AUTH_SPONSORSHIP =
+    "I require sponsorship to work in this country";
+
+  function looksLikeWorkAuthorizationQuestionLabel(label) {
+    var text = normalizeText(String(label || "").replace(/[:*]/g, " "));
+    if (!text) return false;
+    text = text.replace(/\s*\((required|optional)\)\s*$/g, "").trim();
+    if (/\bitar\b/.test(text) || /\bear\b/.test(text)) return false;
+    if (/\bdocumentation\b/.test(text)) return false;
+    if (/\bsecurity\s+clearance\b/.test(text)) return false;
+    if (/\bgovernment\b/.test(text)) return false;
+    return text === "work authorization";
+  }
+
+  function workAuthOptionMatches(label, target) {
+    return Boolean(target && normalizeText(label) === normalizeText(target));
+  }
+
+  function isKnownWorkdayWorkAuthOption(label) {
+    return (
+      workAuthOptionMatches(label, WORKDAY_WORK_AUTH_ANY_EMPLOYER) ||
+      workAuthOptionMatches(label, WORKDAY_WORK_AUTH_PRESENT_EMPLOYER) ||
+      workAuthOptionMatches(label, WORKDAY_WORK_AUTH_SPONSORSHIP)
+    );
+  }
+
+  function workAuthorizationFromContext(inventory, profile, workAuthorization) {
+    var work = (profile && profile.workAuthorization) || workAuthorization || {};
+    var inv = inventory || {};
+    return {
+      legallyAuthorizedToWork: work.legallyAuthorizedToWork || inv.work_authorization || "",
+      requireSponsorshipNow: work.requireSponsorshipNow || inv.sponsorship_now || ""
+    };
+  }
+
+  function resolveWorkdayWorkAuthorizationOption(inventory, profile, workAuthorization) {
+    var saved = workAuthorizationFromContext(inventory, profile, workAuthorization);
+    var auth = explicitYesNo(saved.legallyAuthorizedToWork);
+    var now = explicitYesNo(saved.requireSponsorshipNow);
+    if (auth === "yes" && now === "no") return WORKDAY_WORK_AUTH_ANY_EMPLOYER;
+    if (auth === "no" && now === "yes") return WORKDAY_WORK_AUTH_SPONSORSHIP;
+    return "";
+  }
+
+  function questionFieldLabel(field) {
+    var label = containerLabel(field);
+    var prev;
+    var control;
+    if (label) return label;
+    prev = field && field.previousElementSibling;
+    if (prev) {
+      label = trimText(prev.innerText || prev.textContent || "");
+      if (label && label.length < 120) return label;
+    }
+    control = comboboxControlIn(field) || findDropdownButton(field);
+    if (control) return widgetLabel(control);
+    return "";
+  }
+
+  function findWorkAuthorizationQuestion(root) {
+    var doc = root || document;
+    var i;
+    var field;
+    var label;
+    var next;
+    var parent;
+    var fields;
+    var labels;
+    if (!doc || !doc.querySelectorAll) return null;
+    fields = doc.querySelectorAll('[data-automation-id^="formField-"]');
+    for (i = 0; i < fields.length; i += 1) {
+      field = fields[i];
+      if (looksLikeWorkAuthorizationQuestionLabel(questionFieldLabel(field))) return field;
+    }
+    labels = doc.querySelectorAll(
+      '[data-automation-id="formLabel"], [data-automation-id="label"], label, legend'
+    );
+    for (i = 0; i < labels.length; i += 1) {
+      label = trimText(labels[i].innerText || labels[i].textContent || "");
+      if (!looksLikeWorkAuthorizationQuestionLabel(label)) continue;
+      field =
+        (labels[i].closest && labels[i].closest('[data-automation-id^="formField-"]')) || null;
+      if (field) return field;
+      next = labels[i].nextElementSibling;
+      if (next && (findDropdownButton(next) || comboboxControlIn(next))) return next;
+      parent = labels[i].parentElement;
+      if (parent && (findDropdownButton(parent) || comboboxControlIn(parent))) return parent;
+    }
+    return null;
+  }
+
+  async function fillWorkAuthorizationQuestion(root, inventory, profile, workAuthorization, handledElements) {
+    var field = findWorkAuthorizationQuestion(root);
+    var control;
+    var target;
+    var current;
+    var selected;
+    var after;
+    if (!field) return [];
+    control = findDropdownButton(field) || comboboxControlIn(field);
+    if (!control) {
+      return [
+        resultRow(
+          "work_authorization",
+          "Work Authorization",
+          "skipped",
+          "Workday Work Authorization dropdown was not found.",
+          false,
+          ""
+        )
+      ];
+    }
+    markHandled(handledElements, control);
+    target = resolveWorkdayWorkAuthorizationOption(inventory, profile, workAuthorization);
+    current = displayedDropdownValue(field, control) || readComboboxText(control);
+    if (current && isKnownWorkdayWorkAuthOption(current)) {
+      if (target && workAuthOptionMatches(current, target)) {
+        return [resultRow("work_authorization", "Work Authorization", "filled", "", true, current)];
+      }
+      return [
+        resultRow("work_authorization", "Work Authorization", "skipped", "Field is already completed.", false, "")
+      ];
+    }
+    if (!target) {
+      return [
+        resultRow(
+          "work_authorization",
+          "Work Authorization",
+          "skipped",
+          "Saved work-authorization and sponsorship answers are incomplete or contradictory.",
+          false,
+          ""
+        )
+      ];
+    }
+    selected = await selectComboboxOption(control, function (label) {
+      return workAuthOptionMatches(label, target);
+    });
+    after = displayedDropdownValue(field, control) || selected.value || "";
+    if (!selected.ok || !workAuthOptionMatches(after, target)) {
+      return [
+        resultRow(
+          "work_authorization",
+          "Work Authorization",
+          "skipped",
+          "No matching Work Authorization option.",
+          false,
+          ""
+        )
+      ];
+    }
+    return [resultRow("work_authorization", "Work Authorization", "filled", "", true, after)];
+  }
+
+  async function fillApplicationQuestions(context, handledElements) {
+    var ctx = context || {};
+    return fillWorkAuthorizationQuestion(
+      ctx.root || document,
+      ctx.inventory || {},
+      ctx.profile || null,
+      ctx.workAuthorization || null,
+      handledElements
+    );
+  }
+
+  function isMyInformationSectionPresent(root) {
+    var doc = root || document;
+    if (!doc) return false;
+    if (collectWidgets(doc).length) return true;
+    if (findAnswerTextInput(doc, "addressLine1", "formField-addressLine1")) return true;
+    if (findPhoneNumberInput(doc)) return true;
+    return false;
+  }
+
+  function isWorkExperienceSectionPresent(root) {
+    var doc = root || document;
+    if (findWorkExperienceHeadingNode(doc)) return true;
+    if (collectExperienceRows(doc).length) return true;
+    if (findInitialWorkExperienceAddButton(doc)) return true;
+    return false;
+  }
+
+  function isEducationSectionPresent(root) {
+    var doc = root || document;
+    if (findEducationHeadingNode(doc)) return true;
+    if (collectEducationRows(doc).length) return true;
+    if (findInitialEducationAddButton(doc)) return true;
+    return false;
+  }
+
+  function isSkillsSectionPresent(root) {
+    return Boolean(findSkillsSection(root) || findSkillsFormField(root));
+  }
+
+  function isResumeSectionPresent(root) {
+    var found = findResumeCvFileInput(root);
+    return Boolean(found && found.input);
+  }
+
   async function fillSupportedFields(context) {
     if (!isSupportedPage()) {
       var handled = (context && context.handledElements) || [];
       return summarize([], handled);
     }
-    var info = await fillMyInformation(context);
-    var handledElements = (info && info.handledElements) || (context && context.handledElements) || [];
-    var resumeRows = await fillResumeCvUpload(context, handledElements);
-    var experienceRows = await fillWorkExperience(context, handledElements);
-    var educationRows = await fillEducation(context, handledElements);
-    var skillRows = await fillSkills(context, handledElements);
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var handledElements = ctx.handledElements || [];
+    var info = { results: [], handledElements: handledElements };
+    if (isMyInformationSectionPresent(root)) {
+      info = await fillMyInformation(ctx);
+      handledElements = (info && info.handledElements) || handledElements;
+    }
+    var resumeRows = isResumeSectionPresent(root)
+      ? await fillResumeCvUpload(ctx, handledElements)
+      : [];
+    var experienceRows = isWorkExperienceSectionPresent(root)
+      ? await fillWorkExperience(ctx, handledElements)
+      : [];
+    var educationRows = isEducationSectionPresent(root)
+      ? await fillEducation(ctx, handledElements)
+      : [];
+    var skillRows = isSkillsSectionPresent(root)
+      ? await fillSkills(ctx, handledElements)
+      : [];
+    var questionRows = await fillApplicationQuestions(ctx, handledElements);
     return summarize(
-      ((info && info.results) || []).concat(resumeRows, experienceRows, educationRows, skillRows),
+      ((info && info.results) || []).concat(resumeRows, experienceRows, educationRows, skillRows, questionRows),
       handledElements
     );
   }
