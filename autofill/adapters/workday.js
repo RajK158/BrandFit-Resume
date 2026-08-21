@@ -2492,6 +2492,1466 @@
     return results;
   }
 
+  function mapSavedEducation(item) {
+    var engine = af();
+    var row = item && typeof item === "object" ? item : {};
+    var normalized = {};
+    if (engine && typeof engine.normalizeEducationRecord === "function") {
+      normalized = engine.normalizeEducationRecord(item) || {};
+    }
+    return {
+      institution: trimText(
+        normalized.institution || row.institution || row.school_name || row.school || row.university || ""
+      ),
+      degree: trimText(normalized.degree || row.degree || row.degree_type || ""),
+      field: trimText(
+        normalized.field || row.field || row.major || row.discipline || row.fieldOfStudy || row.field_of_study || ""
+      ),
+      location: trimText(normalized.location || row.location || ""),
+      startDate: trimText(normalized.startDate || row.startDate || row.start_date || ""),
+      endDate: trimText(normalized.endDate || row.endDate || row.end_date || row.graduation_year || ""),
+      gpa: trimText(normalized.gpa || row.gpa || ""),
+      isCurrent: Boolean(normalized.isCurrent || row.isCurrent || row.currentlyEnrolled || row.inProgress)
+    };
+  }
+
+  function savedEducationRecords(profile, inventory) {
+    var fromProfile = profile && Array.isArray(profile.education) ? profile.education : [];
+    var fromInv = inventory && Array.isArray(inventory.education_records) ? inventory.education_records : [];
+    var raw = fromProfile.length >= fromInv.length ? fromProfile : fromInv;
+    return raw
+      .map(mapSavedEducation)
+      .filter(function (row) {
+        return Boolean(row.institution || row.degree || row.field || row.startDate || row.endDate);
+      });
+  }
+
+  function educationYearFromDate(value) {
+    var engine = af();
+    if (engine && typeof engine.extractYearFromEducationDate === "function") {
+      return trimText(engine.extractYearFromEducationDate(value) || "");
+    }
+    var text = trimText(value);
+    if (!text) return "";
+    if (/^(present|current|now|ongoing|in\s*progress|expected|n\/?a)$/i.test(text)) return "";
+    var match = text.match(/\b((?:19|20)\d{2})\b/);
+    return match ? match[1] : "";
+  }
+
+  function compactDegreeText(value) {
+    return normalizeText(value)
+      .replace(/['’`]/g, "")
+      .replace(/\./g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function workdayDegreeCode(value) {
+    var text = compactDegreeText(value);
+    var compact = text.replace(/\s+/g, "");
+    if (!text) return "";
+    if (compact === "mba" || /\bmba\b/.test(text) || /\bmaster of business administration\b/.test(text)) return "MBA";
+    if (
+      compact === "phd" ||
+      /\bphd\b/.test(text) ||
+      /\bdoctor of philosophy\b/.test(text) ||
+      /\bdoctorate\b/.test(text) ||
+      /\bdoctoral\b/.test(text)
+    ) {
+      return "PhD";
+    }
+    if (compact === "jd" || /\bjd\b/.test(text) || /\bjuris doctor\b/.test(text)) return "JD";
+    if (compact === "ma" || /\bmaster of arts\b/.test(text) || /(^|\s)m a($|\s)/.test(text)) return "MA";
+    if (
+      compact === "ms" ||
+      compact === "msc" ||
+      compact === "me" ||
+      compact === "meng" ||
+      /\bmaster of science\b/.test(text) ||
+      /\bmaster of engineering\b/.test(text) ||
+      /(^|\s)m s($|\s)/.test(text) ||
+      /(^|\s)m e($|\s)/.test(text)
+    ) {
+      return "MS";
+    }
+    if (compact === "ba" || /\bbachelor of arts\b/.test(text) || /(^|\s)b a($|\s)/.test(text)) return "BA";
+    if (
+      compact === "bs" ||
+      compact === "bsc" ||
+      compact === "be" ||
+      compact === "beng" ||
+      compact === "btech" ||
+      /\bbachelor of science\b/.test(text) ||
+      /\bbachelor of engineering\b/.test(text) ||
+      /\bbachelor of technology\b/.test(text) ||
+      /(^|\s)b s($|\s)/.test(text) ||
+      /(^|\s)b e($|\s)/.test(text) ||
+      /(^|\s)b tech($|\s)/.test(text)
+    ) {
+      return "BS";
+    }
+    return "";
+  }
+
+  function isAbbreviatedDegreeOption(optionLabel) {
+    var t = trimText(optionLabel);
+    return /^(AA|AS|AAS|BA|BS|BSc|BE|BEng|MA|MS|MSc|MBA|MEng|PhD|JD|MD)$/i.test(t);
+  }
+
+  function degreesEqualNormalized(a, b) {
+    var left = compactDegreeText(a);
+    var right = compactDegreeText(b);
+    return Boolean(left && right && left === right);
+  }
+
+  function degreeExactMatch(savedDegree, optionLabel) {
+    var saved = trimText(savedDegree);
+    var option = trimText(optionLabel);
+    if (!saved || !option || isPlaceholderValue(option)) return false;
+    if (normalizeText(saved) === normalizeText(option)) return true;
+    return degreesEqualNormalized(saved, option);
+  }
+
+  function degreeAliasMatch(savedDegree, optionLabel) {
+    var option = trimText(optionLabel);
+    if (!option || isPlaceholderValue(option) || !isAbbreviatedDegreeOption(option)) return false;
+    var savedCode = workdayDegreeCode(savedDegree);
+    if (!savedCode) return false;
+    return normalizeText(option) === normalizeText(savedCode) || workdayDegreeCode(option) === savedCode;
+  }
+
+  function degreeOptionMatches(savedDegree, optionLabel) {
+    return degreeExactMatch(savedDegree, optionLabel) || degreeAliasMatch(savedDegree, optionLabel);
+  }
+
+  function pickDegreeOption(options, savedDegree) {
+    var code = workdayDegreeCode(savedDegree);
+    if (!code) return null;
+    var i;
+    var opt;
+    for (i = 0; i < (options || []).length; i += 1) {
+      opt = options[i];
+      if (opt && normalizeText(opt.label) === normalizeText(code)) return opt;
+    }
+    return null;
+  }
+
+  function degreeAlreadyFilled(current, savedDegree) {
+    var code = workdayDegreeCode(savedDegree);
+    var currentText = trimText(current);
+    if (!code || !currentText || isPlaceholderValue(currentText)) return false;
+    return normalizeText(currentText) === normalizeText(code);
+  }
+
+  function canonicalFieldOfStudy(value) {
+    var t = normalizeText(value).replace(/\s*\(.*\)\s*$/, "").trim();
+    if (t === "cs" || t === "c s" || t === "comp sci" || t === "compsci") return "computer science";
+    return t;
+  }
+
+  function normalizePickerLabel(value) {
+    return canonicalFieldOfStudy(value)
+      .replace(/[’']/g, "")
+      .replace(/[.,]/g, " ")
+      .replace(/\s+&\s+/g, " and ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function workdayFieldOfStudyAlias(saved) {
+    var key = normalizePickerLabel(saved);
+    if (!key) return "";
+    if (key === "computer science" || key === "cs" || key === "comp sci" || key === "compsci") {
+      return "Computer and Information Science";
+    }
+    if (key === "computer engineering") return "Computer Engineering";
+    return "";
+  }
+
+  function fieldOfStudyMatches(saved, optionLabel) {
+    var a = normalizePickerLabel(saved);
+    var b = normalizePickerLabel(optionLabel);
+    return Boolean(a && b && a === b);
+  }
+
+  function pickFieldOfStudyOption(options, targetLabel) {
+    var want = normalizePickerLabel(targetLabel);
+    if (!want) return null;
+    var i;
+    var opt;
+    var label;
+    var best = null;
+    var bestLen = Infinity;
+    for (i = 0; i < (options || []).length; i += 1) {
+      opt = options[i];
+      if (!opt) continue;
+      label = trimText(opt.label);
+      if (normalizePickerLabel(label) !== want) continue;
+      if (label.length > trimText(targetLabel).length + 12) continue;
+      if (label.length < bestLen) {
+        best = opt;
+        bestLen = label.length;
+      }
+    }
+    return best;
+  }
+
+  function fieldOfStudySatisfied(current, saved) {
+    if (promptContainsField(current, saved)) return true;
+    var alias = workdayFieldOfStudyAlias(saved);
+    return Boolean(alias && promptContainsField(current, alias));
+  }
+
+  function promptContainsField(current, want) {
+    var text = trimText(current);
+    if (!text || !trimText(want)) return false;
+    if (fieldOfStudyMatches(want, text)) return true;
+    var chunks = text.split(/\s*[;,\n]\s*/);
+    var i;
+    for (i = 0; i < chunks.length; i += 1) {
+      if (fieldOfStudyMatches(want, chunks[i])) return true;
+    }
+    return false;
+  }
+
+  function savedFieldsOfStudy(saved) {
+    var raw = trimText(saved && saved.field);
+    if (!raw) return [];
+    var parts = raw.split(/\s*[;|\n]\s*/).map(trimText).filter(Boolean);
+    return parts.length ? parts : [raw];
+  }
+
+  function closestEducationRow(schoolInput) {
+    var node = schoolInput;
+    while (node && node !== document.documentElement) {
+      if (node.querySelectorAll) {
+        var schools = node.querySelectorAll('input[name="schoolName"]');
+        if (schools.length === 1 && schools[0] === schoolInput) {
+          if (node.querySelector('button[name="degree"], [name="degree"]')) return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return schoolInput && schoolInput.parentElement;
+  }
+
+  function collectEducationRows(root) {
+    var doc = root || document;
+    var rows = [];
+    if (!doc.querySelectorAll) return rows;
+    Array.prototype.forEach.call(doc.querySelectorAll('input[name="schoolName"]'), function (schoolInput) {
+      var row = closestEducationRow(schoolInput);
+      if (row && rows.indexOf(row) === -1) rows.push(row);
+    });
+    return rows;
+  }
+
+  function findEducationYearInput(row, which) {
+    if (!row || !row.querySelectorAll) return null;
+    var token = which === "first" ? "--firstyearattended-" : "--lastyearattended-";
+    var alt = which === "first" ? "firstyearattended" : "lastyearattended";
+    var nodes = row.querySelectorAll('input, [role="combobox"], [aria-haspopup="listbox"]');
+    var i;
+    var el;
+    var id;
+    var auto;
+    var blob;
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      id = normalizeText(el.id || "");
+      auto = automationId(el);
+      if (auto === "dateSectionYear-input" && id.indexOf(token) !== -1) return el;
+    }
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      blob = normalizeText(el.id || "") + " " + normalizeText(el.name || "") + " " + automationBlob(el);
+      if (blob.indexOf(alt) !== -1 && (automationId(el) === "dateSectionYear-input" || /year/.test(blob))) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function findEducationGpaInput(row) {
+    if (!row || !row.querySelector) return null;
+    var named = row.querySelector(
+      'input[name="gpa"], input[name="overallResult"], input[name="overallGPA"], input[name="gradeAverage"]'
+    );
+    if (named) return named;
+    var exact = row.querySelector(
+      '[data-automation-id="formField-gpa"], [data-automation-id="formField-overallResult"], [data-automation-id="formField-gradeAverage"]'
+    );
+    if (exact && exact.querySelector) {
+      named = exact.querySelector('input:not([type="hidden"])');
+      if (named) return named;
+    }
+    var containers = row.querySelectorAll('[data-automation-id^="formField-"]');
+    var i;
+    var container;
+    var blob;
+    for (i = 0; i < containers.length; i += 1) {
+      container = containers[i];
+      blob = normalizeText(containerLabel(container) + " " + automationId(container));
+      if (!/\bgpa\b/.test(blob) && !/\boverall\s+result\b/.test(blob)) continue;
+      named = container.querySelector('input:not([type="hidden"])');
+      if (named) return named;
+    }
+    return null;
+  }
+
+  function findFieldOfStudyContainer(row) {
+    if (!row || !row.querySelector) return null;
+    var exact = row.querySelector(
+      '[data-automation-id="formField-fieldOfStudy"], [data-automation-id="formField-fieldsOfStudy"], [data-automation-id="formField-major"], [data-automation-id*="fieldOfStudy"], [data-automation-id*="FieldOfStudy"], [data-automation-id*="fieldsOfStudy"]'
+    );
+    if (exact && row.contains(exact)) return fieldContainer(exact) || exact;
+    var containers = row.querySelectorAll('[data-automation-id^="formField-"]');
+    var i;
+    var container;
+    var blob;
+    for (i = 0; i < containers.length; i += 1) {
+      container = containers[i];
+      blob = normalizeText(containerLabel(container) + " " + widgetLabel(container) + " " + automationId(container));
+      if (/\bfield\s+of\s+study\b/.test(blob) || /\bfieldofstudy\b/.test(blob)) return container;
+    }
+    return null;
+  }
+
+  function fieldOfStudyControl(container) {
+    if (!container || !container.querySelector) return null;
+    var named = container.querySelector(
+      '[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"], [data-automation-id="promptSearchButton"], [data-automation-id="searchBox"]'
+    );
+    if (named && isVisibleEnough(named)) return named;
+    var combo = comboboxControlIn(container);
+    if (combo) return combo;
+    var button = container.querySelector('button[aria-haspopup="listbox"], [role="combobox"], button');
+    if (button && isVisibleEnough(button) && automationId(button) !== "add-button") return button;
+    var input = container.querySelector('input:not([type="hidden"]):not([name="schoolName"]):not([name="gpa"])');
+    if (input && isVisibleEnough(input) && automationId(input) !== "dateSectionYear-input") return input;
+    return null;
+  }
+
+  function findDegreeControl(row) {
+    if (!row || !row.querySelector) return null;
+    var btn = row.querySelector('button[name="degree"]');
+    if (btn && row.contains(btn)) return btn;
+    var container = row.querySelector('[data-automation-id="formField-degree"]');
+    if (container && row.contains(container)) {
+      return (
+        comboboxControlIn(container) ||
+        container.querySelector('button[name="degree"], button[aria-haspopup="listbox"], [role="combobox"]') ||
+        container.querySelector("button")
+      );
+    }
+    return null;
+  }
+
+  function isSearchInput(el) {
+    if (!isTextLikeInput(el)) return false;
+    var auto = automationId(el);
+    if (auto === "searchBox" || auto === "promptSearchField" || auto === "searchField" || auto === "textInputBox") {
+      return true;
+    }
+    var placeholder = normalizeText((el.getAttribute && el.getAttribute("placeholder")) || "");
+    return /\bsearch\b/.test(placeholder);
+  }
+
+  function readPromptSelectedText(container) {
+    if (!container) return "";
+    var chips = container.querySelectorAll(
+      '[data-automation-id="promptSelectedItem"], [data-automation-id="selectedItem"], [data-automation-id="pill"], [data-automation-id="promptOption"][aria-checked="true"], [aria-selected="true"]'
+    );
+    var labels = [];
+    Array.prototype.forEach.call(chips, function (chip) {
+      if (isSearchInput(chip)) return;
+      var text =
+        trimText((chip.getAttribute && chip.getAttribute("data-automation-label")) || "") ||
+        trimText(chip.innerText || chip.textContent || "");
+      if (text && !isPlaceholderValue(text) && !isSearchInput(chip) && labels.indexOf(text) === -1) {
+        labels.push(text);
+      }
+    });
+    if (labels.length) return labels.join("; ");
+    var control = fieldOfStudyControl(container);
+    if (control && !isSearchInput(control) && !isTextLikeInput(control)) {
+      var shown = readComboboxText(control);
+      if (shown && !isPlaceholderValue(shown)) return shown;
+    }
+    return "";
+  }
+
+  function educationRowFields(row) {
+    return {
+      school: row.querySelector('input[name="schoolName"]'),
+      degree: findDegreeControl(row),
+      fieldContainer: findFieldOfStudyContainer(row),
+      gpa: findEducationGpaInput(row),
+      firstYear: findEducationYearInput(row, "first"),
+      lastYear: findEducationYearInput(row, "last")
+    };
+  }
+
+  function isBlankEducationRow(row) {
+    var fields = educationRowFields(row);
+    var degreeText = readComboboxText(fields.degree);
+    return !readInputValue(fields.school) && (!degreeText || isPlaceholderValue(degreeText));
+  }
+
+  function rowMatchesEducation(row, saved) {
+    var fields = educationRowFields(row);
+    var school = readInputValue(fields.school);
+    var degree = readComboboxText(fields.degree);
+    if (!trimText(saved.institution) || !experienceNamesMatch(school, saved.institution)) return false;
+    if (trimText(saved.degree) && degree && !isPlaceholderValue(degree)) {
+      var savedCode = workdayDegreeCode(saved.degree);
+      var currentCode = workdayDegreeCode(degree);
+      if (savedCode && currentCode) return savedCode === currentCode;
+      if (degreeExactMatch(saved.degree, degree) || degreeOptionMatches(saved.degree, degree)) return true;
+      return false;
+    }
+    return true;
+  }
+
+  function findMatchingEducationRow(rows, saved, used) {
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (used && used.indexOf(rows[i]) !== -1) continue;
+      if (rowMatchesEducation(rows[i], saved)) return rows[i];
+    }
+    return null;
+  }
+
+  function findBlankEducationRow(rows, used) {
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (used && used.indexOf(rows[i]) !== -1) continue;
+      if (isBlankEducationRow(rows[i])) return rows[i];
+    }
+    return null;
+  }
+
+  function findEducationHeadingNode(root) {
+    var headings = collectMyExperienceHeadings(root);
+    var i;
+    for (i = 0; i < headings.length; i += 1) {
+      if (headings[i].kind === "education") return headings[i].node;
+    }
+    return null;
+  }
+
+  function scopedEducationAddButtons(scope, heading, nextHeading, rows) {
+    var list = [];
+    if (!scope || !scope.querySelectorAll) return list;
+    var buttons = scope.querySelectorAll('[data-automation-id="add-button"]');
+    var i;
+    var j;
+    var btn;
+    var kind;
+    var insideRow;
+    for (i = 0; i < buttons.length; i += 1) {
+      btn = buttons[i];
+      if (!addButtonVisible(btn)) continue;
+      kind = addButtonSectionKind(btn);
+      if (kind && kind !== "education") continue;
+      if (heading && !isInWorkExperienceBounds(btn, heading, nextHeading)) continue;
+      insideRow = false;
+      for (j = 0; j < (rows || []).length; j += 1) {
+        if (rows[j] && rows[j] !== btn && rows[j].contains(btn)) {
+          insideRow = true;
+          break;
+        }
+      }
+      if (insideRow) continue;
+      list.push(btn);
+    }
+    return list;
+  }
+
+  function findEducationSection(root, rows) {
+    var doc = root || document;
+    var heading = findEducationHeadingNode(doc);
+    var nextHeading = heading ? nextMyExperienceHeadingNode(doc, heading) : null;
+    var list = rows && rows.length ? rows : collectEducationRows(doc);
+    var start = heading || (list.length ? list[0] : null);
+    if (!start) return null;
+    var node = start;
+    var best = null;
+    var i;
+    var containsAll;
+    while (node && node !== document.body && node !== document.documentElement) {
+      if (nextHeading && node.contains && node.contains(nextHeading) && node !== nextHeading) break;
+      if (list.length) {
+        containsAll = true;
+        for (i = 0; i < list.length; i += 1) {
+          if (!node.contains(list[i])) {
+            containsAll = false;
+            break;
+          }
+        }
+        if (!containsAll) {
+          node = node.parentElement;
+          continue;
+        }
+      }
+      best = node;
+      if (node.querySelector && scopedEducationAddButtons(node, heading, nextHeading, list).length) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return best;
+  }
+
+  function educationAddCandidates(root, rows) {
+    var doc = root || document;
+    var heading = findEducationHeadingNode(doc);
+    if (!heading) return [];
+    var nextHeading = nextMyExperienceHeadingNode(doc, heading);
+    var section = findEducationSection(doc, rows);
+    var scoped = scopedEducationAddButtons(section || heading.parentElement || doc, heading, nextHeading, rows || []);
+    if (scoped.length) return scoped;
+    return scopedEducationAddButtons(doc, heading, nextHeading, rows || []);
+  }
+
+  function findInitialEducationAddButton(root) {
+    var buttons = educationAddCandidates(root, []);
+    var i;
+    for (i = 0; i < buttons.length; i += 1) {
+      if (isExactAddLabel(visibleAddButtonText(buttons[i]))) return buttons[i];
+    }
+    return null;
+  }
+
+  function findEducationAddAnotherButton(root, rows) {
+    var list = rows || [];
+    var buttons = educationAddCandidates(root, list);
+    var lastRow = list.length ? list[list.length - 1] : null;
+    var i;
+    var btn;
+    for (i = 0; i < buttons.length; i += 1) {
+      btn = buttons[i];
+      if (!isAddAnotherLabel(visibleAddButtonText(btn))) continue;
+      if (lastRow && lastRow.compareDocumentPosition && !(lastRow.compareDocumentPosition(btn) & 4)) continue;
+      return btn;
+    }
+    return null;
+  }
+
+  async function waitForNewEducationRow(root, previousCount) {
+    var i;
+    var rows;
+    for (i = 0; i < 16; i += 1) {
+      rows = collectEducationRows(root);
+      if (rows.length > previousCount) return rows;
+      await sleep(120);
+    }
+    return collectEducationRows(root);
+  }
+
+  async function createEducationRow(root, handledElements) {
+    var rows = collectEducationRows(root);
+    var before = rows.length;
+    var btn = before === 0 ? findInitialEducationAddButton(root) : findEducationAddAnotherButton(root, rows);
+    if (!btn) {
+      return {
+        ok: false,
+        rows: rows,
+        reason: before === 0 ? "Education Add was not found." : "Education Add Another was not found."
+      };
+    }
+    markHandled(handledElements, btn);
+    clickElement(btn);
+    rows = await waitForNewEducationRow(root, before);
+    if (rows.length <= before) {
+      return {
+        ok: false,
+        rows: rows,
+        reason: "Workday did not create another Education row."
+      };
+    }
+    return { ok: true, rows: rows };
+  }
+
+  function closeOpenList() {
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    } catch (_) {}
+  }
+
+  function isTextLikeInput(el) {
+    if (!el) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    if (tag === "textarea") return true;
+    if (tag !== "input") return false;
+    var type = normalizeText(el.type || "text");
+    return !type || type === "text" || type === "search";
+  }
+
+  function isEducationAuxiliaryInput(el) {
+    if (!el) return false;
+    var name = normalizeText(el.name || "");
+    var id = normalizeText(el.id || "");
+    var auto = automationId(el);
+    if (name === "schoolname" || name === "gpa" || name === "overallresult") return true;
+    if (id.indexOf("firstyearattended") !== -1 || id.indexOf("lastyearattended") !== -1) return true;
+    if (auto === "dateSectionYear-input" || auto === "dateSectionMonth-input") return true;
+    return false;
+  }
+
+  function pickerOptionLabel(node) {
+    if (!node) return "";
+    return (
+      trimText(node.getAttribute && node.getAttribute("data-automation-label")) ||
+      trimText(node.getAttribute && node.getAttribute("aria-label")) ||
+      trimText(node.innerText || node.textContent || "")
+    );
+  }
+
+  function isPickerOptionContainer(node) {
+    if (!node || !node.querySelector) return false;
+    var auto = automationId(node);
+    var role = (node.getAttribute && node.getAttribute("role")) || "";
+    if (auto === "promptOption" || role === "option" || role === "radio") return false;
+    return Boolean(node.querySelector('[data-automation-id="promptOption"], [role="option"]'));
+  }
+
+  function collectPickerOptions() {
+    var options = [];
+    var seen = [];
+    var nodes = document.querySelectorAll(
+      '[data-automation-id="promptOption"], [role="option"], [role="radio"], [data-automation-id="menuItem"], [data-automation-id="promptLeafNode"], input[type="radio"], label, li'
+    );
+    Array.prototype.forEach.call(nodes, function (node) {
+      if (seen.indexOf(node) !== -1) return;
+      if (!isVisibleEnough(node)) return;
+      if (isPickerOptionContainer(node)) return;
+      var label = pickerOptionLabel(node);
+      if (!label || isPlaceholderValue(label) || looksLikeSaveOrContinue(label)) return;
+      if (isExactAddLabel(label) || isAddAnotherLabel(label)) return;
+      if (label.indexOf("\n") !== -1 && label.split("\n").length > 2) return;
+      options.push({ el: node, label: label });
+      seen.push(node);
+    });
+    return options;
+  }
+
+  function findExactVisibleOption(targetLabel) {
+    var want = normalizePickerLabel(targetLabel);
+    if (!want) return null;
+    var options = collectPickerOptions();
+    var i;
+    var opt;
+    var best = null;
+    var bestLen = Infinity;
+    for (i = 0; i < options.length; i += 1) {
+      opt = options[i];
+      if (!opt) continue;
+      if (normalizePickerLabel(opt.label) !== want && normalizeText(opt.label) !== normalizeText(targetLabel)) continue;
+      if (trimText(opt.label).length < bestLen) {
+        best = opt;
+        bestLen = trimText(opt.label).length;
+      }
+    }
+    return best;
+  }
+
+  async function waitForMatchingPickerOption(targetLabel, pickFn) {
+    var i;
+    var options;
+    var picked;
+    for (i = 0; i < 20; i += 1) {
+      options = collectPickerOptions();
+      picked = pickFn ? pickFn(options) : null;
+      if (!picked) picked = findExactVisibleOption(targetLabel);
+      if (picked) return picked;
+      await sleep(120);
+    }
+    return (pickFn && pickFn(collectPickerOptions())) || findExactVisibleOption(targetLabel);
+  }
+
+  function clickPickerOption(picked) {
+    if (!picked || !picked.el) return;
+    var el = picked.el;
+    var radio =
+      (el.matches && el.matches('input[type="radio"], [role="radio"]') && el) ||
+      (el.querySelector && el.querySelector('input[type="radio"], [role="radio"]'));
+    if (radio) clickElement(radio);
+    clickElement(el);
+    var optionRoot = el.closest
+      ? el.closest('[data-automation-id="promptOption"]') || el.closest('[role="option"]')
+      : null;
+    if (optionRoot && optionRoot !== el && optionRoot !== radio) clickElement(optionRoot);
+  }
+
+  function findActiveWorkdaySearchInput(control) {
+    var active = document.activeElement;
+    if (isTextLikeInput(active) && isVisibleEnough(active) && !isEducationAuxiliaryInput(active)) return active;
+    var selectors =
+      '[data-automation-id="searchBox"], [data-automation-id="promptSearchField"], [data-automation-id="searchField"], [data-automation-id="textInputBox"], input[type="search"]';
+    var popups = document.querySelectorAll(
+      '[data-automation-id="promptBox"], [data-automation-id="activeListContainer"], [data-automation-id="wd-popup"], [data-automation-widget="wd-popup"]'
+    );
+    var i;
+    var popup;
+    var input;
+    for (i = 0; i < popups.length; i += 1) {
+      popup = popups[i];
+      if (!popup.querySelector) continue;
+      input = popup.querySelector(selectors) || popup.querySelector('input:not([type="hidden"])');
+      if (isTextLikeInput(input) && isVisibleEnough(input) && !isEducationAuxiliaryInput(input)) return input;
+    }
+    var container = fieldContainer(control);
+    if (container && container.querySelector) {
+      input = container.querySelector(selectors) || container.querySelector('input:not([type="hidden"]):not([name="schoolName"])');
+      if (isTextLikeInput(input) && isVisibleEnough(input) && !isEducationAuxiliaryInput(input)) return input;
+    }
+    if (isTextLikeInput(control) && isVisibleEnough(control) && !isEducationAuxiliaryInput(control)) return control;
+    return null;
+  }
+
+  async function typeIntoWorkdaySearch(input, query) {
+    if (!input || !trimText(query)) return false;
+    try {
+      input.focus();
+    } catch (_) {}
+    setInputValue(input, "");
+    await sleep(40);
+    setInputValue(input, query);
+    try {
+      input.dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true }));
+    } catch (_) {}
+    return true;
+  }
+
+  async function selectEducationPickerOption(control, queries, pickFn, isSelectedFn) {
+    if (!control) return { ok: false, value: "" };
+    clickElement(control);
+    await sleep(200);
+    var picked = pickFn(collectPickerOptions());
+    var i;
+    var search;
+    var query;
+    var verified = false;
+    for (i = 0; i < (queries || []).length && !picked; i += 1) {
+      query = trimText(queries[i]);
+      if (!query) continue;
+      search = findActiveWorkdaySearchInput(control);
+      if (!search) {
+        clickElement(control);
+        await sleep(160);
+        search = findActiveWorkdaySearchInput(control);
+      }
+      if (!search) continue;
+      await typeIntoWorkdaySearch(search, query);
+      picked = await waitForMatchingPickerOption(query, pickFn);
+    }
+    if (!picked && queries && queries[0]) picked = findExactVisibleOption(queries[0]);
+    if (!picked) {
+      closeOpenList();
+      return { ok: false, value: "" };
+    }
+    clickPickerOption(picked);
+    for (i = 0; i < 16; i += 1) {
+      if (typeof isSelectedFn === "function" && isSelectedFn(picked.label)) {
+        verified = true;
+        break;
+      }
+      if (i === 5) clickPickerOption(picked);
+      await sleep(120);
+    }
+    closeOpenList();
+    if (typeof isSelectedFn === "function") {
+      await sleep(80);
+      if (!verified) verified = isSelectedFn(picked.label);
+      return { ok: verified, value: picked.label };
+    }
+    return { ok: true, value: picked.label };
+  }
+
+  async function fillEducationDegree(control, savedDegree, handledElements, overwrite) {
+    if (!control) return "missing";
+    markHandled(handledElements, control);
+    if (!trimText(savedDegree)) return "skip";
+    var code = workdayDegreeCode(savedDegree);
+    if (!code) return "skip";
+    var current = readComboboxText(control);
+    if (degreeAlreadyFilled(current, savedDegree)) return "already";
+    var longSameLevel = Boolean(
+      current &&
+        !isPlaceholderValue(current) &&
+        workdayDegreeCode(current) === code &&
+        !isAbbreviatedDegreeOption(current)
+    );
+    if (current && !isPlaceholderValue(current) && !overwrite && !longSameLevel) return "skip-existing";
+    var selected = await selectEducationPickerOption(
+      control,
+      [code],
+      function (options) {
+        return pickDegreeOption(options, savedDegree) || findExactVisibleOption(code);
+      },
+      function () {
+        return degreeAlreadyFilled(readComboboxText(control), savedDegree);
+      }
+    );
+    if (!selected.ok) {
+      closeOpenList();
+      return "skip";
+    }
+    return "ok";
+  }
+
+  function isFieldOfStudySelectable(el) {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    var role = normalizeText((el.getAttribute && el.getAttribute("role")) || "");
+    var auto = automationId(el);
+    if (role === "option" || role === "radio" || role === "listitem" || role === "menuitem") return true;
+    if (auto === "promptOption" || auto === "menuItem" || auto === "promptLeafNode") return true;
+    if (tag === "button" || tag === "label" || tag === "li" || tag === "a") return true;
+    if (tag === "input" && /^(radio|checkbox)$/.test(normalizeText(el.type || ""))) return true;
+    if (el.getAttribute && el.getAttribute("tabindex") != null && el.getAttribute("tabindex") !== "") return true;
+    return false;
+  }
+
+  function isEntireFieldOfStudyResultList(el) {
+    if (!el || !el.querySelectorAll) return false;
+    var rows = el.querySelectorAll(
+      'input[type="radio"], [role="radio"], [role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"]'
+    );
+    return rows.length > 1;
+  }
+
+  function isFieldOfStudySearchChrome(el, searchInput) {
+    if (!el || !searchInput) return false;
+    if (el === searchInput) return true;
+    if (isSearchInput(el) || isTextLikeInput(el) || isEducationAuxiliaryInput(el)) return true;
+    if (searchInput.contains && searchInput.contains(el)) return true;
+    if (el.contains && el.contains(searchInput) && !isEntireFieldOfStudyResultList(el)) {
+      var resultHits = el.querySelectorAll
+        ? el.querySelectorAll(
+            'input[type="radio"], [role="radio"], [role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"]'
+          )
+        : [];
+      if (!resultHits.length) return true;
+    }
+    return false;
+  }
+
+  function fieldOfStudyResultRowSelector() {
+    return 'input[type="radio"], [role="radio"], [role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"]';
+  }
+
+  function collectOpenFieldOfStudyResultLists(searchInput) {
+    var lists = [];
+    var seen = [];
+    function add(node) {
+      if (!node || seen.indexOf(node) !== -1) return;
+      if (node === document.body || node === document.documentElement) return;
+      if (!isVisibleEnough(node)) return;
+      if (isFieldOfStudySearchChrome(node, searchInput)) return;
+      var hits = node.querySelectorAll ? node.querySelectorAll(fieldOfStudyResultRowSelector()) : [];
+      if (!hits.length) return;
+      seen.push(node);
+      lists.push(node);
+    }
+    var nodes = document.querySelectorAll(
+      '[data-automation-id="promptBox"], [data-automation-id="activeListContainer"], [data-automation-id="wd-Popup"], [data-automation-id="wd-popup"], [data-automation-widget="wd-popup"], [role="listbox"], [role="radiogroup"]'
+    );
+    Array.prototype.forEach.call(nodes, add);
+    var optionNodes = document.querySelectorAll(fieldOfStudyResultRowSelector());
+    Array.prototype.forEach.call(optionNodes, function (opt) {
+      if (isFieldOfStudySearchChrome(opt, searchInput)) return;
+      if (!isVisibleEnough(opt) && !(opt.parentElement && isVisibleEnough(opt.parentElement))) return;
+      var parent = opt.parentElement;
+      var hops = 0;
+      while (parent && hops < 6 && parent !== document.body) {
+        if (isEntireFieldOfStudyResultList(parent)) {
+          add(parent);
+          break;
+        }
+        parent = parent.parentElement;
+        hops += 1;
+      }
+      if (opt.parentElement) add(opt.parentElement);
+    });
+    var node = searchInput;
+    var hops = 0;
+    while (node && hops < 12 && node !== document.body) {
+      add(node);
+      node = node.parentElement;
+      hops += 1;
+    }
+    lists.sort(function (a, b) {
+      return (a.querySelectorAll("*").length || 0) - (b.querySelectorAll("*").length || 0);
+    });
+    return lists;
+  }
+
+  function fieldOfStudyRowLabel(row) {
+    if (!row) return "";
+    var autoLabel = trimText(row.getAttribute && row.getAttribute("data-automation-label"));
+    if (autoLabel) return autoLabel;
+    var aria = trimText(row.getAttribute && row.getAttribute("aria-label"));
+    if (aria && aria.length < 120) return aria;
+    return trimText(row.innerText || row.textContent || "");
+  }
+
+  function fieldOfStudyLabelEqualsTarget(text, target) {
+    var raw = trimText(text);
+    var want = normalizePickerLabel(target);
+    if (!raw || !want) return false;
+    if (raw.indexOf("\n") !== -1 && raw.split("\n").length > 2) return false;
+    if (raw.length > trimText(target).length + 8) return false;
+    return normalizePickerLabel(raw) === want || normalizeText(raw) === normalizeText(target);
+  }
+
+  function associatedRadioForLabel(labelEl) {
+    if (!labelEl) return null;
+    var nested = labelEl.querySelector && labelEl.querySelector('input[type="radio"], [role="radio"]');
+    if (nested) return nested;
+    var id = labelEl.getAttribute && labelEl.getAttribute("for");
+    if (id) {
+      var byId = document.getElementById(id);
+      if (byId && /radio/i.test((byId.type || "") + " " + ((byId.getAttribute && byId.getAttribute("role")) || ""))) {
+        return byId;
+      }
+    }
+    return null;
+  }
+
+  function fieldOfStudyRowFromText(start, list) {
+    if (!start) return start;
+    var hop = start;
+    var n = 0;
+    var row = start;
+    while (hop && n < 8 && hop !== list && hop !== document.body) {
+      if (isEntireFieldOfStudyResultList(hop)) break;
+      if (isFieldOfStudySelectable(hop)) row = hop;
+      hop = hop.parentElement;
+      n += 1;
+    }
+    return row;
+  }
+
+  function radioInsideRow(row) {
+    if (!row) return null;
+    if (row.matches && row.matches('input[type="radio"], [role="radio"]')) return row;
+    return (row.querySelector && row.querySelector('input[type="radio"], [role="radio"]')) || null;
+  }
+
+  function findFieldOfStudyRadioRowInList(list, target, searchInput) {
+    if (!list || !list.querySelectorAll) return null;
+    var radios = list.querySelectorAll('input[type="radio"], [role="radio"]');
+    var i;
+    var radio;
+    var row;
+    var label;
+    for (i = 0; i < radios.length; i += 1) {
+      radio = radios[i];
+      if (isFieldOfStudySearchChrome(radio, searchInput)) continue;
+      if (!isVisibleEnough(radio) && !(radio.parentElement && isVisibleEnough(radio.parentElement))) continue;
+      row =
+        (radio.closest &&
+          (radio.closest("label") ||
+            radio.closest('[data-automation-id="promptOption"]') ||
+            radio.closest('[data-automation-id="promptLeafNode"]') ||
+            radio.closest('[role="option"]') ||
+            radio.closest('[role="radio"]') ||
+            radio.closest("li"))) ||
+        radio.parentElement;
+      if (isEntireFieldOfStudyResultList(row)) continue;
+      label = fieldOfStudyRowLabel(row);
+      if (fieldOfStudyLabelEqualsTarget(label, target)) {
+        return { radio: radio, row: row || radio, label: label };
+      }
+    }
+    var labels = list.querySelectorAll("label");
+    for (i = 0; i < labels.length; i += 1) {
+      if (!isVisibleEnough(labels[i])) continue;
+      if (isFieldOfStudySearchChrome(labels[i], searchInput)) continue;
+      if (isEntireFieldOfStudyResultList(labels[i])) continue;
+      label = fieldOfStudyRowLabel(labels[i]);
+      if (!fieldOfStudyLabelEqualsTarget(label, target)) continue;
+      radio = associatedRadioForLabel(labels[i]);
+      return { radio: radio, row: labels[i], label: label };
+    }
+    var options = list.querySelectorAll(
+      '[data-automation-id="promptOption"], [data-automation-id="promptLeafNode"], [role="option"], [role="listitem"], li'
+    );
+    for (i = 0; i < options.length; i += 1) {
+      if (!isVisibleEnough(options[i])) continue;
+      if (isFieldOfStudySearchChrome(options[i], searchInput)) continue;
+      if (isEntireFieldOfStudyResultList(options[i])) continue;
+      label = fieldOfStudyRowLabel(options[i]);
+      if (!fieldOfStudyLabelEqualsTarget(label, target)) continue;
+      return { radio: radioInsideRow(options[i]), row: options[i], label: label };
+    }
+    var textNodes = list.querySelectorAll("div, span, p, td, button, [data-automation-id], [role]");
+    var candidates = [];
+    Array.prototype.forEach.call(textNodes, function (node) {
+      if (!isVisibleEnough(node)) return;
+      if (isFieldOfStudySearchChrome(node, searchInput)) return;
+      if (isEntireFieldOfStudyResultList(node)) return;
+      if (!fieldOfStudyLabelEqualsTarget(fieldOfStudyRowLabel(node), target)) return;
+      candidates.push(node);
+    });
+    if (!candidates.length) return null;
+    candidates.sort(function (a, b) {
+      var aLen = trimText(a.innerText || a.textContent || "").length;
+      var bLen = trimText(b.innerText || b.textContent || "").length;
+      if (aLen !== bLen) return aLen - bLen;
+      var aDepth = 0;
+      var bDepth = 0;
+      var n;
+      for (n = a; n; n = n.parentElement) aDepth += 1;
+      for (n = b; n; n = n.parentElement) bDepth += 1;
+      return bDepth - aDepth;
+    });
+    row = fieldOfStudyRowFromText(candidates[0], list);
+    if (isEntireFieldOfStudyResultList(row)) return null;
+    label = fieldOfStudyRowLabel(row);
+    if (!fieldOfStudyLabelEqualsTarget(label, target)) label = fieldOfStudyRowLabel(candidates[0]);
+    return { radio: radioInsideRow(row), row: row, label: label };
+  }
+
+  function findExactFieldOfStudyResultRow(target, searchInput) {
+    var lists = collectOpenFieldOfStudyResultLists(searchInput);
+    var i;
+    var found;
+    for (i = 0; i < lists.length; i += 1) {
+      found = findFieldOfStudyRadioRowInList(lists[i], target, searchInput);
+      if (found && found.row && !isFieldOfStudySearchChrome(found.row, searchInput) && !isEntireFieldOfStudyResultList(found.row)) {
+        return found;
+      }
+    }
+    var options = collectPickerOptions();
+    var opt;
+    for (i = 0; i < options.length; i += 1) {
+      opt = options[i];
+      if (!opt || !opt.el) continue;
+      if (isFieldOfStudySearchChrome(opt.el, searchInput)) continue;
+      if (isEntireFieldOfStudyResultList(opt.el)) continue;
+      if (!fieldOfStudyLabelEqualsTarget(opt.label, target)) continue;
+      return {
+        radio: radioInsideRow(opt.el) || associatedRadioForLabel(opt.el),
+        row: opt.el,
+        label: opt.label
+      };
+    }
+    return null;
+  }
+
+  function fieldOfStudyResultIsChecked(picked) {
+    if (!picked) return false;
+    var radio = picked.radio;
+    if (radio) {
+      if (radio.checked) return true;
+      if (radio.getAttribute && radio.getAttribute("aria-checked") === "true") return true;
+      if (radio.getAttribute && radio.getAttribute("aria-selected") === "true") return true;
+    }
+    var row = picked.row;
+    if (row && row.getAttribute) {
+      if (row.getAttribute("aria-checked") === "true" || row.getAttribute("aria-selected") === "true") return true;
+    }
+    return false;
+  }
+
+  function fieldOfStudyPickerHasResults(searchInput) {
+    return collectOpenFieldOfStudyResultLists(searchInput).length > 0;
+  }
+
+  function setSearchInputValueNoBlur(el, value) {
+    if (!el) return false;
+    var engine = af();
+    if (engine && typeof engine.setNativeValue === "function") {
+      engine.setNativeValue(el, value);
+    } else {
+      try {
+        var proto = window.HTMLInputElement && window.HTMLInputElement.prototype;
+        var desc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
+        if (desc && desc.set) desc.set.call(el, value);
+        else el.value = value;
+      } catch (_) {
+        try {
+          el.value = value;
+        } catch (__) {
+          return false;
+        }
+      }
+    }
+    try {
+      el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    } catch (_) {}
+    return true;
+  }
+
+  async function typeFieldOfStudySearch(input, query) {
+    if (!input || !trimText(query)) return false;
+    try {
+      input.focus();
+    } catch (_) {}
+    clickElement(input);
+    await sleep(40);
+    setSearchInputValueNoBlur(input, "");
+    await sleep(40);
+    setSearchInputValueNoBlur(input, query);
+    try {
+      input.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, data: query, inputType: "insertFromPaste" })
+      );
+    } catch (_) {}
+    try {
+      input.dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true, cancelable: true }));
+    } catch (_) {}
+    return true;
+  }
+
+  function dispatchSearchKey(el, key) {
+    if (!el) return;
+    var keyCode = key === "ArrowDown" ? 40 : key === "Enter" ? 13 : 0;
+    var init = {
+      key: key,
+      code: key,
+      keyCode: keyCode,
+      which: keyCode,
+      bubbles: true,
+      cancelable: true
+    };
+    try {
+      el.dispatchEvent(new KeyboardEvent("keydown", init));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new KeyboardEvent("keypress", init));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new KeyboardEvent("keyup", init));
+    } catch (_) {}
+  }
+
+  function readCommittedFieldOfStudy(container, target) {
+    var shown = readPromptSelectedText(container);
+    if (shown) return shown;
+    if (!container || !container.querySelectorAll || !trimText(target)) return "";
+    var nodes = container.querySelectorAll("[data-automation-id], span, div, button, li, label");
+    var i;
+    var el;
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      if (isSearchInput(el) || isTextLikeInput(el) || isEducationAuxiliaryInput(el)) continue;
+      if (el.querySelector && el.querySelector("input")) continue;
+      if (fieldOfStudyLabelEqualsTarget(fieldOfStudyRowLabel(el), target)) {
+        return fieldOfStudyRowLabel(el);
+      }
+    }
+    return "";
+  }
+
+  function fieldOfStudyValueCommitted(container, saved, target, searchInput, picked) {
+    var live = findExactFieldOfStudyResultRow(target, searchInput);
+    if (fieldOfStudyResultIsChecked(live) || fieldOfStudyResultIsChecked(picked)) return true;
+    var chips = readPromptSelectedText(container);
+    if (chips && !isPlaceholderValue(chips)) {
+      if (fieldOfStudySatisfied(chips, saved) || fieldOfStudyMatches(target, chips) || fieldOfStudyLabelEqualsTarget(chips, target)) {
+        return true;
+      }
+    }
+    var shown = readCommittedFieldOfStudy(container, target);
+    if (!shown || isPlaceholderValue(shown)) return false;
+    if (searchInput && isTextLikeInput(searchInput)) {
+      var typed = normalizeText(searchInput.value || "");
+      if (typed && typed === normalizeText(shown) && !chips) return false;
+    }
+    if (fieldOfStudySatisfied(shown, saved)) return true;
+    if (fieldOfStudyMatches(target, shown) || fieldOfStudyLabelEqualsTarget(shown, target)) return true;
+    return false;
+  }
+
+  async function waitForFieldOfStudyPickerClosed(searchInput) {
+    var i;
+    for (i = 0; i < 10; i += 1) {
+      if (!fieldOfStudyPickerHasResults(searchInput)) return;
+      closeOpenList();
+      await sleep(80);
+    }
+  }
+
+  function clickFieldOfStudyResult(el) {
+    if (!el) return;
+    try {
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    clickElement(el);
+  }
+
+  function clickFieldOfStudyRadioRow(picked) {
+    if (!picked) return;
+    var radio = picked.radio;
+    var row = picked.row;
+    if (row && isEntireFieldOfStudyResultList(row)) return;
+    if (radio && (isSearchInput(radio) || isTextLikeInput(radio))) return;
+    if (row && (isSearchInput(row) || isTextLikeInput(row))) return;
+    if (radio) {
+      var labelEl = radio.closest && radio.closest("label");
+      if (!labelEl && radio.id) {
+        try {
+          labelEl = document.querySelector('label[for="' + radio.id + '"]');
+        } catch (_) {
+          labelEl = null;
+        }
+      }
+      clickFieldOfStudyResult(radio);
+      try {
+        radio.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+      } catch (_) {}
+      try {
+        radio.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+      } catch (_) {}
+      if (labelEl && labelEl !== radio && !isEntireFieldOfStudyResultList(labelEl)) {
+        clickFieldOfStudyResult(labelEl);
+      }
+    }
+    if (row && row !== radio) clickFieldOfStudyResult(row);
+  }
+
+  async function selectFieldOfStudyValue(container, control, target, saved, handledElements) {
+    if (!control || !trimText(target)) return { ok: false };
+    clickElement(control);
+    await sleep(200);
+    var search = findActiveWorkdaySearchInput(control);
+    if (!search) {
+      clickElement(control);
+      await sleep(160);
+      search = findActiveWorkdaySearchInput(control);
+    }
+    if (!search) return { ok: false };
+    markHandled(handledElements, search);
+    await typeFieldOfStudySearch(search, target);
+
+    var picked = null;
+    var i;
+    for (i = 0; i < 18; i += 1) {
+      picked = findExactFieldOfStudyResultRow(target, search);
+      if (picked) break;
+      await sleep(120);
+    }
+
+    if (picked) {
+      clickFieldOfStudyRadioRow(picked);
+    } else if (fieldOfStudyPickerHasResults(search)) {
+      try {
+        search.focus();
+      } catch (_) {}
+      dispatchSearchKey(search, "ArrowDown");
+      await sleep(90);
+      dispatchSearchKey(search, "Enter");
+    } else {
+      return { ok: false };
+    }
+
+    var stable = 0;
+    for (i = 0; i < 16; i += 1) {
+      if (!picked) picked = findExactFieldOfStudyResultRow(target, search);
+      if (fieldOfStudyValueCommitted(container, saved, target, search, picked)) {
+        stable += 1;
+        if (stable >= 2) {
+          await waitForFieldOfStudyPickerClosed(search);
+          return { ok: fieldOfStudyValueCommitted(container, saved, target, search, picked) };
+        }
+      } else {
+        stable = 0;
+      }
+      if (i === 4 && picked) clickFieldOfStudyRadioRow(picked);
+      if (i === 8 && fieldOfStudyPickerHasResults(search)) {
+        try {
+          search.focus();
+        } catch (_) {}
+        dispatchSearchKey(search, "ArrowDown");
+        await sleep(80);
+        dispatchSearchKey(search, "Enter");
+      }
+      await sleep(120);
+    }
+
+    var ok = fieldOfStudyValueCommitted(container, saved, target, search, picked);
+    if (ok) await waitForFieldOfStudyPickerClosed(search);
+    return { ok: ok };
+  }
+
+  async function fillEducationFieldOfStudy(container, saved, handledElements, overwrite) {
+    try {
+      if (!container) return "missing";
+      var values = savedFieldsOfStudy(saved);
+      if (!values.length) return "skip";
+      var control = fieldOfStudyControl(container);
+      if (!control) return "missing";
+      markHandled(handledElements, control);
+      var current = readCommittedFieldOfStudy(container, workdayFieldOfStudyAlias(values[0]) || values[0]);
+      var i;
+      var allPresent = values.length > 0;
+      for (i = 0; i < values.length; i += 1) {
+        if (!fieldOfStudySatisfied(current, values[i]) && !fieldOfStudyValueCommitted(container, saved, workdayFieldOfStudyAlias(values[i]) || values[i])) {
+          allPresent = false;
+        }
+      }
+      if (allPresent) return "already";
+      if (current && !isPlaceholderValue(current) && !overwrite) return "skip-existing";
+      var filledAny = false;
+      for (i = 0; i < values.length; i += 1) {
+        var want = values[i];
+        current = readCommittedFieldOfStudy(container, workdayFieldOfStudyAlias(want) || want);
+        if (fieldOfStudySatisfied(current, want) || fieldOfStudyValueCommitted(container, saved, workdayFieldOfStudyAlias(want) || want)) continue;
+        var target = workdayFieldOfStudyAlias(want) || want;
+        var selected = await selectFieldOfStudyValue(container, control, target, want, handledElements);
+        if (selected.ok) filledAny = true;
+        await waitForFieldOfStudyPickerClosed();
+      }
+      await waitForFieldOfStudyPickerClosed();
+      return filledAny ? "ok" : "skip";
+    } catch (_) {
+      closeOpenList();
+      return "skip";
+    }
+  }
+
+  async function fillOneEducationRow(row, saved, handledElements) {
+    var fields = educationRowFields(row);
+    var overwrite = isBlankEducationRow(row);
+    var filledAny = false;
+    var failedRequired = false;
+
+    var schoolStatus = await fillExperienceTextField(fields.school, saved.institution, handledElements, overwrite);
+    if (schoolStatus === "ok") filledAny = true;
+    if (saved.institution && schoolStatus === "fail") failedRequired = true;
+
+    try {
+      var degreeStatus = await fillEducationDegree(fields.degree, saved.degree, handledElements, overwrite);
+      if (degreeStatus === "ok") filledAny = true;
+    } catch (_) {
+      closeOpenList();
+    }
+
+    try {
+      var fieldStatus = await fillEducationFieldOfStudy(fields.fieldContainer, saved, handledElements, overwrite);
+      if (fieldStatus === "ok") filledAny = true;
+    } catch (_) {
+      closeOpenList();
+    }
+
+    try {
+      if (saved.gpa && fields.gpa) {
+        var gpaStatus = await fillExperienceTextField(fields.gpa, saved.gpa, handledElements, overwrite);
+        if (gpaStatus === "ok") filledAny = true;
+      } else if (fields.gpa) {
+        markHandled(handledElements, fields.gpa);
+      }
+    } catch (_) {}
+
+    try {
+      var firstYear = educationYearFromDate(saved.startDate);
+      if (firstYear && fields.firstYear) {
+        var fy = await fillExperienceDatePart(fields.firstYear, firstYear, handledElements, overwrite, "year");
+        if (fy === "ok") filledAny = true;
+      }
+    } catch (_) {}
+
+    try {
+      var lastYear = educationYearFromDate(saved.endDate);
+      if (lastYear && fields.lastYear) {
+        var ly = await fillExperienceDatePart(fields.lastYear, lastYear, handledElements, overwrite, "year");
+        if (ly === "ok") filledAny = true;
+      }
+    } catch (_) {}
+
+    if (failedRequired) return "failed";
+    if (filledAny) return "filled";
+    return "skipped";
+  }
+
+  async function fillEducation(context, handledElements) {
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var saved = savedEducationRecords(ctx.profile, ctx.inventory);
+    if (!saved.length) return [];
+    var results = [];
+    var used = [];
+    var i;
+    var rows;
+    var target;
+    var status;
+    var label;
+
+    for (i = 0; i < saved.length; i += 1) {
+      label = "Education " + (i + 1);
+      rows = collectEducationRows(root);
+      target = findMatchingEducationRow(rows, saved[i], used);
+      if (target) {
+        used.push(target);
+        try {
+          status = await fillOneEducationRow(target, saved[i], handledElements);
+        } catch (_) {
+          status = "failed";
+        }
+        if (status === "filled") {
+          results.push(resultRow("education", label, "filled", "", true, saved[i].institution || saved[i].degree));
+        } else if (status === "failed") {
+          results.push(resultRow("education", label, "failed", "Could not persist school name.", false, ""));
+        } else {
+          results.push(resultRow("education", label, "skipped", "Education is already present.", false, ""));
+        }
+        continue;
+      }
+
+      target = findBlankEducationRow(rows, used);
+      if (!target) {
+        var created = await createEducationRow(root, handledElements);
+        if (!created.ok) {
+          results.push(resultRow("education", label, "failed", created.reason, false, ""));
+          break;
+        }
+        rows = created.rows;
+        target = findBlankEducationRow(rows, used) || rows[rows.length - 1];
+      }
+
+      if (!target) {
+        results.push(resultRow("education", label, "failed", "Could not create an Education row.", false, ""));
+        break;
+      }
+
+      used.push(target);
+      try {
+        status = await fillOneEducationRow(target, saved[i], handledElements);
+      } catch (_) {
+        status = "failed";
+      }
+      if (status === "filled") {
+        results.push(resultRow("education", label, "filled", "", true, saved[i].institution || saved[i].degree));
+      } else if (status === "failed") {
+        results.push(resultRow("education", label, "failed", "Could not persist school name.", false, ""));
+      } else {
+        results.push(resultRow("education", label, "skipped", "Education is already present.", false, ""));
+      }
+    }
+
+    return results;
+  }
+
   async function fillSupportedFields(context) {
     if (!isSupportedPage()) {
       var handled = (context && context.handledElements) || [];
@@ -2501,7 +3961,8 @@
     var handledElements = (info && info.handledElements) || (context && context.handledElements) || [];
     var resumeRows = await fillResumeCvUpload(context, handledElements);
     var experienceRows = await fillWorkExperience(context, handledElements);
-    return summarize(((info && info.results) || []).concat(resumeRows, experienceRows), handledElements);
+    var educationRows = await fillEducation(context, handledElements);
+    return summarize(((info && info.results) || []).concat(resumeRows, experienceRows, educationRows), handledElements);
   }
 
   global.ImpulsoWorkdayAdapter = {

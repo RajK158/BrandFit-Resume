@@ -232,6 +232,9 @@
       if (Array.isArray(latestMaster.education)) {
         profile.education = latestMaster.education;
       }
+      if (Array.isArray(latestMaster.experience)) {
+        profile.experience = latestMaster.experience;
+      }
       if (latestMaster.personal && typeof latestMaster.personal === "object") {
         profile.personal = Object.assign({}, profile.personal || {}, latestMaster.personal);
       }
