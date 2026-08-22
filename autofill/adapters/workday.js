@@ -5295,6 +5295,27 @@
     return "";
   }
 
+  function looksLikeGenderDeclineOption(label) {
+    var t = normalizeText(label);
+    if (!t) return false;
+    if (t === "not declared") return true;
+    return isPreferNotToAnswerValue(label);
+  }
+
+  function genderOptionMatchesSaved(label, saved) {
+    var mapped = mapWorkdayGenderOption(saved);
+    if (!mapped) return false;
+    if (mapped === "Not declared") return looksLikeGenderDeclineOption(label);
+    return normalizeText(label) === normalizeText(mapped);
+  }
+
+  function hispanicOptionMatchesSaved(label, saved) {
+    var answer = explicitYesNo(saved);
+    if (answer) return normalizeText(label) === answer;
+    if (isPreferNotToAnswerValue(saved)) return isPreferNotToAnswerValue(label);
+    return false;
+  }
+
   function canonicalWorkdayRaceLabel(value) {
     var text = normalizeText(value);
     if (!text) return "";
@@ -5341,7 +5362,8 @@
   }
 
   async function fillVoluntaryGender(root, saved, handledElements) {
-    var field = findDisclosureField(root, isGenderDisclosureLabel);
+    var field =
+      findFormField(root, "formField-gender") || findDisclosureField(root, isGenderDisclosureLabel);
     var target;
     if (!field) return [];
     target = mapWorkdayGenderOption(saved.gender);
@@ -5356,7 +5378,7 @@
         "gender",
         "Gender",
         function (label) {
-          return normalizeText(label) === normalizeText(target);
+          return genderOptionMatchesSaved(label, saved.gender);
         },
         handledElements
       )
@@ -5364,11 +5386,15 @@
   }
 
   async function fillVoluntaryHispanic(root, saved, handledElements) {
-    var field = findDisclosureField(root, isHispanicDisclosureLabel);
+    var field =
+      findFormField(root, "formField-hispanicOrLatino") ||
+      findDisclosureField(root, isHispanicDisclosureLabel);
     var answer;
+    var preferDecline;
     if (!field) return [];
     answer = explicitYesNo(saved.hispanicLatino);
-    if (!answer) {
+    preferDecline = isPreferNotToAnswerValue(saved.hispanicLatino);
+    if (!answer && !preferDecline) {
       return [
         resultRow(
           "hispanic_latino",
@@ -5386,7 +5412,7 @@
         "hispanic_latino",
         "Ethnicity: Hispanic or Latino",
         function (label) {
-          return normalizeText(label) === answer;
+          return hispanicOptionMatchesSaved(label, saved.hispanicLatino);
         },
         handledElements
       )
@@ -5394,18 +5420,28 @@
   }
 
   async function fillVoluntaryRace(root, saved, handledElements) {
-    var field = findDisclosureField(root, isRaceDisclosureLabel);
+    var ethnicityField = findFormField(root, "formField-ethnicity");
+    var field = ethnicityField || findDisclosureField(root, isRaceDisclosureLabel);
     var savedCanon;
     if (!field) return [];
     savedCanon = canonicalWorkdayRaceLabel(saved.raceEthnicity);
     if (!savedCanon) {
-      return [resultRow("race_ethnicity", "Race", "skipped", "No saved answer.", false, "")];
+      return [
+        resultRow(
+          "race_ethnicity",
+          ethnicityField ? "Ethnicity" : "Race",
+          "skipped",
+          "No saved answer.",
+          false,
+          ""
+        )
+      ];
     }
     return [
       await fillWorkdayDisclosureDropdown(
         field,
         "race_ethnicity",
-        "Race",
+        ethnicityField ? "Ethnicity" : "Race",
         function (label) {
           return canonicalWorkdayRaceLabel(label) === savedCanon;
         },
@@ -5415,7 +5451,9 @@
   }
 
   async function fillVoluntaryVeteran(root, saved, handledElements) {
-    var field = findDisclosureField(root, isVeteranDisclosureLabel);
+    var field =
+      findFormField(root, "formField-veteranStatus") ||
+      findDisclosureField(root, isVeteranDisclosureLabel);
     var kind;
     if (!field) return [];
     kind = mapWorkdayVeteranKind(saved);
