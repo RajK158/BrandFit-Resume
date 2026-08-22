@@ -4904,15 +4904,217 @@
     return [resultRow("work_authorization", "Work Authorization", "filled", "", true, after)];
   }
 
-  async function fillApplicationQuestions(context, handledElements) {
-    var ctx = context || {};
-    return fillWorkAuthorizationQuestion(
-      ctx.root || document,
-      ctx.inventory || {},
-      ctx.profile || null,
-      ctx.workAuthorization || null,
+  function normalizeApplicationQuestionText(value) {
+    return normalizeText(String(value || ""))
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function applicationQuestionText(field) {
+    var label = containerLabel(field);
+    var formLabel;
+    var prev;
+    if (label) return label;
+    if (field && field.querySelector) {
+      formLabel = field.querySelector(
+        '[data-automation-id="formLabel"], [data-automation-id="label"], label, legend'
+      );
+      if (formLabel) {
+        label = trimText(formLabel.innerText || formLabel.textContent || "");
+        if (label) return label;
+      }
+    }
+    prev = field && field.previousElementSibling;
+    if (prev) {
+      label = trimText(prev.innerText || prev.textContent || "");
+      if (label) return label;
+    }
+    return questionFieldLabel(field);
+  }
+
+  function isExcludedApplicationQuestion(text) {
+    var t = normalizeApplicationQuestionText(text);
+    if (!t) return true;
+    if (/\b18 years\b/.test(t) || /\bage or older\b/.test(t)) return true;
+    if (/\baccommodation\b/.test(t) || /\bjob description\b/.test(t)) return true;
+    if (/\brelative\b/.test(t) || /\bfamily member\b/.test(t)) return true;
+    if (/\brelocate\b/.test(t) || /\brelocation\b/.test(t)) return true;
+    if (/\bstart date\b/.test(t) || /\bdesired start\b/.test(t)) return true;
+    if (/\bcompensation\b/.test(t) || /\bsalary\b/.test(t)) return true;
+    if (/\bitar\b/.test(t) || /\bsecurity clearance\b/.test(t) || /\bgovernment\b/.test(t)) return true;
+    return false;
+  }
+
+  function looksLikeWorkdaySponsorshipQuestion(label) {
+    var text = normalizeApplicationQuestionText(label);
+    if (!text || isExcludedApplicationQuestion(label)) return false;
+    if (/\brequire immigration sponsorship\b/.test(text)) return true;
+    if (/\brequire sponsorship\b/.test(text)) return true;
+    if (/\bfuture require immigration sponsorship\b/.test(text)) return true;
+    if (/\btransfer of sponsorship\b/.test(text)) return true;
+    if (/\bvisa sponsorship\b/.test(text)) return true;
+    if (/\bimmigration sponsorship\b/.test(text) && /\brequire\b/.test(text)) return true;
+    return false;
+  }
+
+  function looksLikeWorkdayEligibleToWorkQuestion(label) {
+    var text = normalizeApplicationQuestionText(label);
+    var hasUs;
+    if (!text || isExcludedApplicationQuestion(label)) return false;
+    if (looksLikeWorkdaySponsorshipQuestion(label)) return false;
+    hasUs = /\bu s\b/.test(text) || /\bus\b/.test(text) || /\bunited states\b/.test(text);
+    if (!hasUs) return false;
+    return (
+      /\beligible to work in the u s\b/.test(text) ||
+      /\beligible to work in the us\b/.test(text) ||
+      /\bauthorized to work in the u s\b/.test(text) ||
+      /\bauthorized to work in the us\b/.test(text) ||
+      /\beligible to work\b/.test(text) ||
+      /\bauthorized to work\b/.test(text) ||
+      /\blegally authorized\b/.test(text) ||
+      /\blegally eligible to work\b/.test(text)
+    );
+  }
+
+  function findApplicationQuestionGroup(root, testFn) {
+    var doc = root || document;
+    var i;
+    var field;
+    var label;
+    var next;
+    var parent;
+    var fields;
+    var labels;
+    if (!doc || !doc.querySelectorAll) return null;
+    fields = doc.querySelectorAll('[data-automation-id^="formField-"]');
+    for (i = 0; i < fields.length; i += 1) {
+      field = fields[i];
+      if (testFn(applicationQuestionText(field))) return field;
+    }
+    labels = doc.querySelectorAll(
+      '[data-automation-id="formLabel"], [data-automation-id="label"], label, legend'
+    );
+    for (i = 0; i < labels.length; i += 1) {
+      label = trimText(labels[i].innerText || labels[i].textContent || "");
+      if (!testFn(label)) continue;
+      field =
+        (labels[i].closest && labels[i].closest('[data-automation-id^="formField-"]')) || null;
+      if (field) return field;
+      next = labels[i].nextElementSibling;
+      if (next && (findDropdownButton(next) || comboboxControlIn(next))) return next;
+      parent = labels[i].parentElement;
+      if (parent && (findDropdownButton(parent) || comboboxControlIn(parent))) return parent;
+    }
+    return null;
+  }
+
+  function resolveEligibleToWorkYesNo(inventory, profile, workAuthorization) {
+    var work = (profile && profile.workAuthorization) || workAuthorization || {};
+    var inv = inventory || {};
+    var auth = explicitYesNo(work.legallyAuthorizedToWork || inv.work_authorization);
+    if (auth === "yes") return "Yes";
+    if (auth === "no") return "No";
+    return "";
+  }
+
+  function resolveSponsorshipYesNo(inventory, profile, workAuthorization) {
+    var work = (profile && profile.workAuthorization) || workAuthorization || {};
+    var inv = inventory || {};
+    var now = explicitYesNo(work.requireSponsorshipNow || inv.sponsorship_now);
+    var later = explicitYesNo(work.requireSponsorshipFuture || inv.sponsorship_later);
+    if (now === "yes" || later === "yes") return "Yes";
+    if (now === "no" && later === "no") return "No";
+    return "";
+  }
+
+  function yesNoOptionMatches(label, target) {
+    return Boolean(target && normalizeText(label) === normalizeText(target));
+  }
+
+  async function fillYesNoApplicationQuestion(field, category, displayLabel, target, handledElements) {
+    var control;
+    var current;
+    var selected;
+    var after;
+    if (!field) return [];
+    control = findDropdownButton(field) || comboboxControlIn(field);
+    if (!control) {
+      return [
+        resultRow(category, displayLabel, "skipped", displayLabel + " dropdown was not found.", false, "")
+      ];
+    }
+    markHandled(handledElements, control);
+    current = displayedDropdownValue(field, control) || readComboboxText(control);
+    if (current && (yesNoOptionMatches(current, "Yes") || yesNoOptionMatches(current, "No"))) {
+      if (target && yesNoOptionMatches(current, target)) {
+        return [resultRow(category, displayLabel, "filled", "", true, current)];
+      }
+      return [resultRow(category, displayLabel, "skipped", "Field is already completed.", false, "")];
+    }
+    if (!target) {
+      return [
+        resultRow(
+          category,
+          displayLabel,
+          "skipped",
+          "Saved work-authorization and sponsorship answers are incomplete or contradictory.",
+          false,
+          ""
+        )
+      ];
+    }
+    selected = await selectComboboxOption(control, function (label) {
+      return yesNoOptionMatches(label, target);
+    });
+    after = displayedDropdownValue(field, control) || selected.value || "";
+    if (!selected.ok || !yesNoOptionMatches(after, target)) {
+      return [resultRow(category, displayLabel, "skipped", "No matching " + displayLabel + " option.", false, "")];
+    }
+    return [resultRow(category, displayLabel, "filled", "", true, after)];
+  }
+
+  async function fillEligibleToWorkQuestion(root, inventory, profile, workAuthorization, handledElements) {
+    var field = findApplicationQuestionGroup(root, looksLikeWorkdayEligibleToWorkQuestion);
+    var target = resolveEligibleToWorkYesNo(inventory, profile, workAuthorization);
+    return fillYesNoApplicationQuestion(
+      field,
+      "work_authorization",
+      "Eligible to work in the U.S.",
+      target,
       handledElements
     );
+  }
+
+  async function fillSponsorshipYesNoQuestion(root, inventory, profile, workAuthorization, handledElements) {
+    var field = findApplicationQuestionGroup(root, looksLikeWorkdaySponsorshipQuestion);
+    var target = resolveSponsorshipYesNo(inventory, profile, workAuthorization);
+    return fillYesNoApplicationQuestion(
+      field,
+      "sponsorship_now",
+      "Immigration sponsorship",
+      target,
+      handledElements
+    );
+  }
+
+  async function fillApplicationQuestions(context, handledElements) {
+    var ctx = context || {};
+    var root = ctx.root || document;
+    var inventory = ctx.inventory || {};
+    var profile = ctx.profile || null;
+    var workAuthorization = ctx.workAuthorization || null;
+    var results = [];
+    results = results.concat(
+      await fillWorkAuthorizationQuestion(root, inventory, profile, workAuthorization, handledElements)
+    );
+    results = results.concat(
+      await fillEligibleToWorkQuestion(root, inventory, profile, workAuthorization, handledElements)
+    );
+    results = results.concat(
+      await fillSponsorshipYesNoQuestion(root, inventory, profile, workAuthorization, handledElements)
+    );
+    return results;
   }
 
   function disclosureLabelKey(label) {
@@ -5696,6 +5898,7 @@
       if (nextHeading && node.contains && node.contains(nextHeading) && node !== nextHeading) break;
       best = node;
       if (node.querySelector && node.querySelector('input[name="url"]')) return node;
+      if (findWebsitesAddButton(node) || findWebsitesAddAnotherButton(node)) return node;
       node = node.parentElement;
     }
     return best;
@@ -5726,6 +5929,20 @@
       btn = buttons[i];
       if (!addButtonVisible(btn)) continue;
       if (isAddAnotherLabel(visibleAddButtonText(btn))) return btn;
+    }
+    return null;
+  }
+
+  function findWebsitesAddButton(section) {
+    var buttons;
+    var i;
+    var btn;
+    if (!section || !section.querySelectorAll) return null;
+    buttons = section.querySelectorAll('button[data-automation-id="add-button"]');
+    for (i = 0; i < buttons.length; i += 1) {
+      btn = buttons[i];
+      if (!addButtonVisible(btn)) continue;
+      if (isExactAddLabel(visibleAddButtonText(btn))) return btn;
     }
     return null;
   }
@@ -5816,7 +6033,7 @@
 
   async function addWebsiteRow(section, handledElements) {
     var before = collectWebsiteUrlInputs(section).length;
-    var btn = findWebsitesAddAnotherButton(section);
+    var btn = before === 0 ? findWebsitesAddButton(section) : findWebsitesAddAnotherButton(section);
     var inputs;
     if (!btn) {
       return { ok: false, inputs: collectWebsiteUrlInputs(section) };
@@ -5912,9 +6129,7 @@
       ? await fillSkills(ctx, handledElements)
       : [];
     var websiteRows = findWebsitesSection(root) ? await fillWebsites(ctx, handledElements) : [];
-    var questionRows = findWorkAuthorizationQuestion(root)
-      ? await fillApplicationQuestions(ctx, handledElements)
-      : [];
+    var questionRows = await fillApplicationQuestions(ctx, handledElements);
     var disclosureRows = await fillVoluntaryDisclosures(ctx, handledElements);
     return summarize(
       ((info && info.results) || []).concat(
