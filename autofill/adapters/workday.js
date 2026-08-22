@@ -2591,7 +2591,35 @@
     ) {
       return "BS";
     }
+    if (
+      compact === "aa" ||
+      /\bassociates? of arts\b/.test(text) ||
+      /(^|\s)a a($|\s)/.test(text)
+    ) {
+      return "AA";
+    }
+    if (
+      compact === "as" ||
+      /\bassociates? of science\b/.test(text) ||
+      /(^|\s)a s($|\s)/.test(text)
+    ) {
+      return "AS";
+    }
     return "";
+  }
+
+  function workdayDegreeRenderedAliases(savedDegree) {
+    var code = workdayDegreeCode(savedDegree);
+    if (code === "MS") return ["Master of Science (M.S)"];
+    if (code === "BS") return ["Bachelor of Science (B.S)"];
+    if (code === "MA") return ["Master of Arts (M.A)"];
+    if (code === "BA") return ["Bachelor of Arts (B.A)"];
+    if (code === "MBA") return ["Master of Business Administration (MBA)"];
+    if (code === "PhD") return ["Doctor of Philosophy (Ph.D)"];
+    if (code === "JD") return ["Juris Doctor (J.D)"];
+    if (code === "AS") return ["Associates of Science (A.S)"];
+    if (code === "AA") return ["Associates of Arts (A.A)"];
+    return [];
   }
 
   function isAbbreviatedDegreeOption(optionLabel) {
@@ -2627,21 +2655,65 @@
 
   function pickDegreeOption(options, savedDegree) {
     var code = workdayDegreeCode(savedDegree);
-    if (!code) return null;
+    var aliases = workdayDegreeRenderedAliases(savedDegree);
     var i;
+    var j;
     var opt;
+    var aliasMatches = [];
+    if (!code) return null;
     for (i = 0; i < (options || []).length; i += 1) {
       opt = options[i];
-      if (opt && normalizeText(opt.label) === normalizeText(code)) return opt;
+      if (opt && !isPlaceholderValue(opt.label) && normalizeText(opt.label) === normalizeText(code)) {
+        return opt;
+      }
     }
+    for (i = 0; i < (options || []).length; i += 1) {
+      opt = options[i];
+      if (!opt || isPlaceholderValue(opt.label)) continue;
+      for (j = 0; j < aliases.length; j += 1) {
+        if (normalizeText(opt.label) === normalizeText(aliases[j])) {
+          aliasMatches.push(opt);
+          break;
+        }
+      }
+    }
+    if (aliasMatches.length === 1) return aliasMatches[0];
     return null;
+  }
+
+  function collectDegreeListOptions() {
+    var options = [];
+    var nodes;
+    var i;
+    var el;
+    var label;
+    try {
+      nodes = document.querySelectorAll('li[role="option"]');
+    } catch (_) {
+      nodes = [];
+    }
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      if (!isVisibleEnough(el)) continue;
+      label = trimText(el.innerText || el.textContent || "");
+      if (!label || isPlaceholderValue(label)) continue;
+      options.push({ el: el, label: label });
+    }
+    return options;
   }
 
   function degreeAlreadyFilled(current, savedDegree) {
     var code = workdayDegreeCode(savedDegree);
     var currentText = trimText(current);
+    var aliases;
+    var i;
     if (!code || !currentText || isPlaceholderValue(currentText)) return false;
-    return normalizeText(currentText) === normalizeText(code);
+    if (normalizeText(currentText) === normalizeText(code)) return true;
+    aliases = workdayDegreeRenderedAliases(savedDegree);
+    for (i = 0; i < aliases.length; i += 1) {
+      if (normalizeText(currentText) === normalizeText(aliases[i])) return true;
+    }
+    return false;
   }
 
   function canonicalFieldOfStudy(value) {
@@ -2722,26 +2794,72 @@
     return parts.length ? parts : [raw];
   }
 
-  function closestEducationRow(schoolInput) {
-    var node = schoolInput;
+  function closestEducationRow(anchor) {
+    var node = anchor;
+    var schoolInput = anchor && normalizeText(anchor.name || "") === "schoolname" ? anchor : null;
+    var schoolField =
+      anchor && automationId(anchor) === "formField-school"
+        ? anchor
+        : anchor && anchor.closest
+          ? anchor.closest('[data-automation-id="formField-school"]')
+          : null;
     while (node && node !== document.documentElement) {
       if (node.querySelectorAll) {
-        var schools = node.querySelectorAll('input[name="schoolName"]');
-        if (schools.length === 1 && schools[0] === schoolInput) {
-          if (node.querySelector('button[name="degree"], [name="degree"]')) return node;
+        if (schoolField) {
+          var fields = node.querySelectorAll('[data-automation-id="formField-school"]');
+          if (fields.length === 1 && fields[0] === schoolField) {
+            if (
+              node.querySelector(
+                '[data-automation-id="formField-degree"], button[name="degree"], [name="degree"]'
+              ) ||
+              node.querySelector('[data-automation-id="formField-fieldOfStudy"]')
+            ) {
+              return node;
+            }
+          }
+        } else if (schoolInput) {
+          var schools = node.querySelectorAll('input[name="schoolName"]');
+          if (schools.length === 1 && schools[0] === schoolInput) {
+            if (
+              node.querySelector(
+                'button[name="degree"], [name="degree"], [data-automation-id="formField-degree"]'
+              )
+            ) {
+              return node;
+            }
+          }
         }
       }
       node = node.parentElement;
     }
-    return schoolInput && schoolInput.parentElement;
+    return (anchor && anchor.parentElement) || anchor;
   }
 
   function collectEducationRows(root) {
     var doc = root || document;
     var rows = [];
+    var anchors = [];
     if (!doc.querySelectorAll) return rows;
-    Array.prototype.forEach.call(doc.querySelectorAll('input[name="schoolName"]'), function (schoolInput) {
-      var row = closestEducationRow(schoolInput);
+    Array.prototype.forEach.call(doc.querySelectorAll('[data-automation-id="formField-school"]'), function (field) {
+      anchors.push(field);
+    });
+    Array.prototype.forEach.call(doc.querySelectorAll('input[name="schoolName"]'), function (input) {
+      var i;
+      for (i = 0; i < anchors.length; i += 1) {
+        if (anchors[i].contains && anchors[i].contains(input)) return;
+      }
+      anchors.push(input);
+    });
+    if (anchors.length > 1 && anchors[0] && anchors[0].compareDocumentPosition) {
+      anchors.sort(function (a, b) {
+        var pos = a.compareDocumentPosition(b);
+        if (pos & 2) return 1;
+        if (pos & 4) return -1;
+        return 0;
+      });
+    }
+    Array.prototype.forEach.call(anchors, function (anchor) {
+      var row = closestEducationRow(anchor);
       if (row && rows.indexOf(row) === -1) rows.push(row);
     });
     return rows;
@@ -2798,6 +2916,131 @@
       if (named) return named;
     }
     return null;
+  }
+
+  function findSchoolFormField(row) {
+    if (!row || !row.querySelector) return null;
+    var field = row.querySelector('[data-automation-id="formField-school"]');
+    return field && row.contains(field) ? field : null;
+  }
+
+  function schoolUsesPicker(row) {
+    var field = findSchoolFormField(row);
+    return Boolean(
+      field &&
+        field.querySelector(
+          '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
+        )
+    );
+  }
+
+  function findSchoolControl(row) {
+    if (!row || !row.querySelector) return null;
+    var named = row.querySelector('input[name="schoolName"]');
+    var field = findSchoolFormField(row);
+    var container;
+    var input;
+    if (named && row.contains(named) && (!field || field.contains(named))) return named;
+    if (!field) return named && row.contains(named) ? named : null;
+    container = field.querySelector(
+      '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
+    );
+    if (container) {
+      input = container.querySelector('input:not([type="hidden"])');
+      return input || container;
+    }
+    input = field.querySelector('input:not([type="hidden"])');
+    return input || (named && row.contains(named) ? named : null);
+  }
+
+  function canonicalSchoolKey(value) {
+    return normalizeText(value)
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function readSchoolSelectedItemLabel(row) {
+    var field = findSchoolFormField(row);
+    var items;
+    var labels = [];
+    if (!field || !field.querySelectorAll) return "";
+    items = field.querySelectorAll('[data-automation-id="selectedItem"]');
+    Array.prototype.forEach.call(items, function (item) {
+      var prompt;
+      var label;
+      if (!field.contains(item)) return;
+      prompt = item.querySelector && item.querySelector('[data-automation-id="promptOption"]');
+      label = trimText(
+        (prompt && prompt.getAttribute && prompt.getAttribute("data-automation-label")) || ""
+      );
+      if (!label) {
+        label =
+          trimText((item.getAttribute && item.getAttribute("data-automation-label")) || "") ||
+          trimText(item.innerText || item.textContent || "");
+      }
+      if (label && !isPlaceholderValue(label) && labels.indexOf(label) === -1) labels.push(label);
+    });
+    return labels.join("; ");
+  }
+
+  function readSchoolCommitted(row) {
+    var field = findSchoolFormField(row);
+    var scope = field || row;
+    var list;
+    var chips = "";
+    var labels = [];
+    var named;
+    var namedVal;
+    if (!scope) return "";
+    chips = readSchoolSelectedItemLabel(row);
+    if (chips && !isPlaceholderValue(chips)) return chips;
+    list = scope.querySelector && scope.querySelector('[data-automation-id="selectedItemList"]');
+    if (list) {
+      chips = readPromptSelectedText(list);
+    } else if (scope.querySelectorAll) {
+      Array.prototype.forEach.call(
+        scope.querySelectorAll(
+          '[data-automation-id="promptSelectedItem"], [data-automation-id="selectedItem"], [data-automation-id="pill"]'
+        ),
+        function (chip) {
+          var text;
+          if (isSearchInput(chip) || isTextLikeInput(chip)) return;
+          text =
+            trimText((chip.getAttribute && chip.getAttribute("data-automation-label")) || "") ||
+            trimText(chip.innerText || chip.textContent || "");
+          if (text && !isPlaceholderValue(text) && labels.indexOf(text) === -1) labels.push(text);
+        }
+      );
+      chips = labels.join("; ");
+    }
+    if (chips && !isPlaceholderValue(chips)) return chips;
+    if (schoolUsesPicker(row)) return "";
+    named = row && row.querySelector && row.querySelector('input[name="schoolName"]');
+    if (named && !isSearchInput(named)) {
+      namedVal = readInputValue(named);
+      if (namedVal && !isPlaceholderValue(namedVal)) return namedVal;
+    }
+    return "";
+  }
+
+  function schoolMatchesSaved(current, saved) {
+    var want = trimText(saved);
+    var chunks;
+    var i;
+    var wantKey;
+    var chunkKey;
+    if (!want || !trimText(current)) return false;
+    if (experienceNamesMatch(current, want)) return true;
+    wantKey = canonicalSchoolKey(want);
+    if (wantKey && canonicalSchoolKey(current) === wantKey) return true;
+    chunks = String(current || "").split(/\s*[;,\n]\s*/);
+    for (i = 0; i < chunks.length; i += 1) {
+      if (experienceNamesMatch(chunks[i], want)) return true;
+      chunkKey = canonicalSchoolKey(chunks[i]);
+      if (wantKey && chunkKey && chunkKey === wantKey) return true;
+    }
+    return false;
   }
 
   function findFieldOfStudyContainer(row) {
@@ -2886,7 +3129,8 @@
 
   function educationRowFields(row) {
     return {
-      school: row.querySelector('input[name="schoolName"]'),
+      school: findSchoolControl(row),
+      schoolField: findSchoolFormField(row),
       degree: findDegreeControl(row),
       fieldContainer: findFieldOfStudyContainer(row),
       gpa: findEducationGpaInput(row),
@@ -2897,15 +3141,33 @@
 
   function isBlankEducationRow(row) {
     var fields = educationRowFields(row);
+    var school = readSchoolCommitted(row);
     var degreeText = readComboboxText(fields.degree);
-    return !readInputValue(fields.school) && (!degreeText || isPlaceholderValue(degreeText));
+    if (
+      !school &&
+      !schoolUsesPicker(row) &&
+      fields.school &&
+      !isSearchInput(fields.school) &&
+      isTextLikeInput(fields.school)
+    ) {
+      school = readInputValue(fields.school);
+    }
+    return !school && (!degreeText || isPlaceholderValue(degreeText));
   }
 
   function rowMatchesEducation(row, saved) {
     var fields = educationRowFields(row);
-    var school = readInputValue(fields.school);
+    var school = readSchoolCommitted(row);
     var degree = readComboboxText(fields.degree);
-    if (!trimText(saved.institution) || !experienceNamesMatch(school, saved.institution)) return false;
+    if (
+      !school &&
+      !schoolUsesPicker(row) &&
+      fields.school &&
+      !isSearchInput(fields.school)
+    ) {
+      school = readInputValue(fields.school);
+    }
+    if (!trimText(saved.institution) || !schoolMatchesSaved(school, saved.institution)) return false;
     if (trimText(saved.degree) && degree && !isPlaceholderValue(degree)) {
       var savedCode = workdayDegreeCode(saved.degree);
       var currentCode = workdayDegreeCode(degree);
@@ -2916,10 +3178,43 @@
     return true;
   }
 
+  function educationRowIsUsed(row, used) {
+    var field;
+    var usedField;
+    var i;
+    if (!row || !used || !used.length) return false;
+    field = findSchoolFormField(row);
+    for (i = 0; i < used.length; i += 1) {
+      if (!used[i]) continue;
+      if (used[i] === row || used[i] === field) return true;
+      usedField = findSchoolFormField(used[i]) || used[i];
+      if (field && usedField === field) return true;
+      if (field && used[i].contains && used[i].contains(field)) return true;
+      if (field && field.contains && field.contains(used[i])) return true;
+    }
+    return false;
+  }
+
+  function liveEducationRow(root, row) {
+    var rows = collectEducationRows(root);
+    var field = findSchoolFormField(row);
+    var i;
+    if (field) {
+      for (i = 0; i < rows.length; i += 1) {
+        if (findSchoolFormField(rows[i]) === field) return rows[i];
+        if (rows[i] && rows[i].contains && rows[i].contains(field)) return rows[i];
+      }
+    }
+    for (i = 0; i < rows.length; i += 1) {
+      if (rows[i] === row) return rows[i];
+    }
+    return row;
+  }
+
   function findMatchingEducationRow(rows, saved, used) {
     var i;
     for (i = 0; i < rows.length; i += 1) {
-      if (used && used.indexOf(rows[i]) !== -1) continue;
+      if (educationRowIsUsed(rows[i], used)) continue;
       if (rowMatchesEducation(rows[i], saved)) return rows[i];
     }
     return null;
@@ -2928,7 +3223,7 @@
   function findBlankEducationRow(rows, used) {
     var i;
     for (i = 0; i < rows.length; i += 1) {
-      if (used && used.indexOf(rows[i]) !== -1) continue;
+      if (educationRowIsUsed(rows[i], used)) continue;
       if (isBlankEducationRow(rows[i])) return rows[i];
     }
     return null;
@@ -3082,6 +3377,13 @@
     } catch (_) {}
   }
 
+  async function closeEducationPickers() {
+    closeOpenList();
+    await sleep(120);
+    closeOpenList();
+    await sleep(80);
+  }
+
   function isTextLikeInput(el) {
     if (!el) return false;
     var tag = (el.tagName || "").toLowerCase();
@@ -3187,8 +3489,43 @@
     if (optionRoot && optionRoot !== el && optionRoot !== radio) clickElement(optionRoot);
   }
 
+  function isInsideSchoolPicker(el) {
+    if (!el || !el.closest) return false;
+    var field = el.closest('[data-automation-id="formField-school"]');
+    if (!field) return false;
+    return Boolean(
+      field.querySelector(
+        '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
+      )
+    );
+  }
+
+  function findSchoolPickerSearchInput(control) {
+    var field;
+    var container;
+    var input;
+    if (!isInsideSchoolPicker(control)) return null;
+    field = control.closest('[data-automation-id="formField-school"]');
+    container =
+      (field &&
+        field.querySelector(
+          '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
+        )) ||
+      field;
+    if (!container || !container.querySelector) {
+      return isTextLikeInput(control) && isVisibleEnough(control) ? control : null;
+    }
+    input = container.querySelector(
+      '[data-automation-id="searchBox"], [data-automation-id="promptSearchField"], [data-automation-id="searchField"], [data-automation-id="textInputBox"], input[type="search"], input:not([type="hidden"])'
+    );
+    if (isTextLikeInput(input) && isVisibleEnough(input)) return input;
+    if (isTextLikeInput(control) && isVisibleEnough(control)) return control;
+    return null;
+  }
+
   function findActiveWorkdaySearchInput(control) {
     var active = document.activeElement;
+    var schoolSearch;
     if (isTextLikeInput(active) && isVisibleEnough(active) && !isEducationAuxiliaryInput(active)) return active;
     var selectors =
       '[data-automation-id="searchBox"], [data-automation-id="promptSearchField"], [data-automation-id="searchField"], [data-automation-id="textInputBox"], input[type="search"]';
@@ -3210,6 +3547,11 @@
       if (isTextLikeInput(input) && isVisibleEnough(input) && !isEducationAuxiliaryInput(input)) return input;
     }
     if (isTextLikeInput(control) && isVisibleEnough(control) && !isEducationAuxiliaryInput(control)) return control;
+    if (isInsideSchoolPicker(control)) {
+      if (isTextLikeInput(active) && isVisibleEnough(active) && isInsideSchoolPicker(active)) return active;
+      schoolSearch = findSchoolPickerSearchInput(control);
+      if (schoolSearch) return schoolSearch;
+    }
     return null;
   }
 
@@ -3272,6 +3614,473 @@
     return { ok: true, value: picked.label };
   }
 
+  function acquireSchoolPickerControls(row) {
+    var field = findSchoolFormField(row);
+    var container = null;
+    var input = null;
+    if (field && field.querySelector) {
+      container = field.querySelector(
+        '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
+      );
+    }
+    if (container && container.querySelector) {
+      input = container.querySelector('input:not([type="hidden"])');
+    }
+    if (input && field && !field.contains(input)) input = null;
+    if (container && field && !field.contains(container)) container = null;
+    return {
+      field: field,
+      container: container,
+      control: container || input || null
+    };
+  }
+
+  function findCurrentRowSchoolSearch(row, control) {
+    var field = findSchoolFormField(row);
+    var container;
+    var input;
+    if (!field || !field.querySelector) return null;
+    container = field.querySelector(
+      '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
+    );
+    if (container && field.contains(container) && container.querySelector) {
+      input = container.querySelector(
+        '[data-automation-id="searchBox"], [data-automation-id="promptSearchField"], [data-automation-id="searchField"], [data-automation-id="textInputBox"], input[type="search"], input:not([type="hidden"])'
+      );
+      if (isTextLikeInput(input) && field.contains(input)) return input;
+    }
+    input = field.querySelector(
+      '[data-automation-id="searchBox"], [data-automation-id="promptSearchField"], [data-automation-id="searchField"], [data-automation-id="textInputBox"], input[type="search"], input:not([type="hidden"])'
+    );
+    if (isTextLikeInput(input) && field.contains(input)) return input;
+    if (control && isTextLikeInput(control) && field.contains(control)) return control;
+    return null;
+  }
+
+  async function waitForCurrentRowSchoolSearch(row) {
+    var i;
+    var search;
+    var field;
+    for (i = 0; i < 16; i += 1) {
+      field = findSchoolFormField(row);
+      search = findCurrentRowSchoolSearch(row, acquireSchoolPickerControls(row).control);
+      if (search && field && field.contains(search)) return search;
+      await sleep(120);
+    }
+    search = findCurrentRowSchoolSearch(row, acquireSchoolPickerControls(row).control);
+    field = findSchoolFormField(row);
+    return search && field && field.contains(search) ? search : null;
+  }
+
+  async function finishCurrentRowSchoolPicker(row) {
+    var field = findSchoolFormField(row);
+    var search;
+    var active;
+    var committed;
+    if (!field) return;
+    committed = readSchoolSelectedItemLabel(row);
+    search = findCurrentRowSchoolSearch(row, acquireSchoolPickerControls(row).control);
+    active = document.activeElement;
+    if (search && field.contains(search) && (active === search || (field.contains(active) && isTextLikeInput(active)))) {
+      try {
+        (active && field.contains(active) ? active : search).blur();
+      } catch (_) {}
+    }
+    await sleep(120);
+    search = findCurrentRowSchoolSearch(row, acquireSchoolPickerControls(row).control);
+    active = document.activeElement;
+    if (search && active === search && field.contains(search)) {
+      try {
+        search.blur();
+      } catch (_) {}
+      await sleep(80);
+    }
+    if (committed && !readSchoolSelectedItemLabel(row)) {
+      return;
+    }
+  }
+
+  function isSchoolCommittedChipNode(el) {
+    return Boolean(
+      el &&
+        el.closest &&
+        el.closest(
+          '[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"], [data-automation-id="promptSelectedItem"]'
+        )
+    );
+  }
+
+  function findVisibleSchoolResultPrompt() {
+    var prompts;
+    var visible = [];
+    var i;
+    var prompt;
+    var list;
+    try {
+      prompts = document.querySelectorAll('[data-automation-id="responsiveMonikerPrompt"]');
+    } catch (_) {
+      prompts = [];
+    }
+    for (i = 0; i < prompts.length; i += 1) {
+      prompt = prompts[i];
+      if (!isVisibleEnough(prompt)) continue;
+      list = prompt.querySelector(
+        '[data-automation-id="activeListContainer"][role="listbox"], [data-automation-id="activeListContainer"], [role="listbox"]'
+      );
+      if (!list || !isVisibleEnough(list)) continue;
+      visible.push(prompt);
+    }
+    if (visible.length === 1) return visible[0];
+    for (i = 0; i < visible.length; i += 1) {
+      if (visible[i].querySelector('[data-automation-id="menuItem"][role="option"]')) return visible[i];
+    }
+    return visible.length ? visible[0] : null;
+  }
+
+  function schoolMenuItemLabel(menuItem) {
+    var prompt;
+    if (!menuItem || !menuItem.querySelector) return "";
+    prompt = menuItem.querySelector('[data-automation-id="promptOption"][data-automation-label]');
+    if (!prompt || !prompt.getAttribute) return "";
+    return trimText(prompt.getAttribute("data-automation-label") || "");
+  }
+
+  function collectVisibleSchoolSearchResults() {
+    var prompt = findVisibleSchoolResultPrompt();
+    var items;
+    var out = [];
+    if (!prompt || !prompt.querySelectorAll) return out;
+    items = prompt.querySelectorAll('[data-automation-id="menuItem"][role="option"]');
+    Array.prototype.forEach.call(items, function (item) {
+      var label;
+      if (!isVisibleEnough(item)) return;
+      if (isSchoolCommittedChipNode(item)) return;
+      label = schoolMenuItemLabel(item);
+      if (!label || isPlaceholderValue(label) || looksLikeSaveOrContinue(label)) return;
+      out.push({ el: item, label: label });
+    });
+    return out;
+  }
+
+  function findExactSchoolSearchResult(savedSchool) {
+    var results = collectVisibleSchoolSearchResults();
+    var matches = [];
+    var seen = {};
+    var i;
+    var key;
+    var opt;
+    if (!trimText(savedSchool)) return null;
+    for (i = 0; i < results.length; i += 1) {
+      opt = results[i];
+      if (!opt || !schoolMatchesSaved(opt.label, savedSchool)) continue;
+      key = canonicalSchoolKey(opt.label) || normalizeText(opt.label);
+      if (!key || seen[key]) continue;
+      seen[key] = true;
+      matches.push(opt);
+    }
+    if (matches.length !== 1) return null;
+    return matches[0];
+  }
+
+  function schoolPickerSelectedItemMatches(row, savedSchool) {
+    var label = readSchoolSelectedItemLabel(row);
+    return Boolean(label && schoolMatchesSaved(label, savedSchool));
+  }
+
+  async function waitForSchoolSelectedItem(row, savedSchool, maxTries) {
+    var i;
+    var live;
+    var tries = typeof maxTries === "number" && maxTries > 0 ? maxTries : 20;
+    for (i = 0; i < tries; i += 1) {
+      live = liveEducationRow(document, row) || row;
+      if (schoolPickerSelectedItemMatches(live, savedSchool)) return readSchoolSelectedItemLabel(live);
+      await sleep(120);
+    }
+    live = liveEducationRow(document, row) || row;
+    return schoolPickerSelectedItemMatches(live, savedSchool) ? readSchoolSelectedItemLabel(live) : "";
+  }
+
+  function currentRowSchoolSearch(row) {
+    var live = liveEducationRow(document, row) || row;
+    var field = findSchoolFormField(live);
+    var search = findCurrentRowSchoolSearch(live, acquireSchoolPickerControls(live).control);
+    if (!search || !field || !field.contains(search)) return null;
+    return search;
+  }
+
+  function nativeClickWorkdaySchoolEl(el) {
+    var proto;
+    if (!el) return;
+    try {
+      if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+    } catch (_) {}
+    try {
+      el.focus();
+    } catch (_) {}
+    proto = window.HTMLElement && window.HTMLElement.prototype;
+    if (proto && typeof proto.click === "function") {
+      try {
+        proto.click.call(el);
+        return;
+      } catch (_) {}
+    }
+    try {
+      el.click();
+    } catch (_) {}
+  }
+
+  function pointerClickWorkdaySchoolEl(el) {
+    if (!el) return;
+    try {
+      if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    nativeClickWorkdaySchoolEl(el);
+  }
+
+  async function waitForSchoolSelectedItemOrExactResult(row, savedSchool) {
+    var i;
+    var live;
+    var exact;
+    for (i = 0; i < 16; i += 1) {
+      live = liveEducationRow(document, row) || row;
+      if (schoolPickerSelectedItemMatches(live, savedSchool)) {
+        return { committed: readSchoolSelectedItemLabel(live), exact: null };
+      }
+      exact = findExactSchoolSearchResult(savedSchool);
+      if (exact) return { committed: "", exact: exact };
+      await sleep(120);
+    }
+    live = liveEducationRow(document, row) || row;
+    if (schoolPickerSelectedItemMatches(live, savedSchool)) {
+      return { committed: readSchoolSelectedItemLabel(live), exact: null };
+    }
+    exact = findExactSchoolSearchResult(savedSchool);
+    return { committed: "", exact: exact };
+  }
+
+  async function clearUncommittedSchoolSearchQuery(row) {
+    var live = liveEducationRow(document, row) || row;
+    var field = findSchoolFormField(live);
+    var search;
+    if (readSchoolSelectedItemLabel(live)) return;
+    search = currentRowSchoolSearch(live);
+    if (!search || !field || !field.contains(search)) return;
+    if (!trimText(search.value || "")) return;
+    try {
+      search.focus();
+    } catch (_) {}
+    setInputValue(search, "");
+    try {
+      search.blur();
+    } catch (_) {}
+  }
+
+  async function selectWorkdayEducationSchool(row, savedSchool) {
+    var attempt;
+    var result;
+    if (!trimText(savedSchool)) return { ok: false, value: "" };
+
+    async function runOnce(currentRow) {
+      var live;
+      var field;
+      var container;
+      var search;
+      var wait;
+      var exact;
+      var committed;
+      var promptOption;
+      var leaf;
+      var menuItem;
+
+      live = liveEducationRow(document, currentRow) || currentRow;
+      if (schoolPickerSelectedItemMatches(live, savedSchool)) {
+        return { ok: true, value: readSchoolSelectedItemLabel(live) };
+      }
+
+      field = findSchoolFormField(live);
+      container =
+        (field &&
+          field.querySelector &&
+          field.querySelector('[data-automation-id="multiselectInputContainer"]')) ||
+        acquireSchoolPickerControls(live).container;
+      if (!field || !container || !field.contains(container)) return { ok: false, value: "" };
+      clickElement(container);
+      await waitForCurrentRowSchoolSearch(live);
+      live = liveEducationRow(document, live) || live;
+      field = findSchoolFormField(live);
+      search = currentRowSchoolSearch(live);
+      if (!search || !field || !field.contains(search)) return { ok: false, value: "" };
+
+      try {
+        search.focus();
+      } catch (_) {}
+      await typeIntoWorkdaySearch(search, savedSchool);
+      live = liveEducationRow(document, live) || live;
+      field = findSchoolFormField(live);
+      search = currentRowSchoolSearch(live);
+      if (!search || !field || !field.contains(search)) return { ok: false, value: "" };
+      try {
+        search.focus();
+      } catch (_) {}
+
+      wait = await waitForSchoolSelectedItemOrExactResult(live, savedSchool);
+      if (wait.committed) return { ok: true, value: wait.committed };
+
+      if (!wait.exact) {
+        live = liveEducationRow(document, live) || live;
+        field = findSchoolFormField(live);
+        search = currentRowSchoolSearch(live);
+        if (!search || !field || !field.contains(search)) return { ok: false, value: "" };
+        try {
+          search.focus();
+        } catch (_) {}
+        dispatchSearchKey(search, "Enter");
+        wait = await waitForSchoolSelectedItemOrExactResult(live, savedSchool);
+        if (wait.committed) return { ok: true, value: wait.committed };
+      }
+
+      exact = wait.exact || findExactSchoolSearchResult(savedSchool);
+      if (!exact) return { ok: false, value: "" };
+
+      live = liveEducationRow(document, live) || live;
+      exact = findExactSchoolSearchResult(savedSchool);
+      promptOption =
+        exact &&
+        exact.el &&
+        exact.el.querySelector &&
+        exact.el.querySelector('[data-automation-id="promptOption"]');
+      if (promptOption) {
+        nativeClickWorkdaySchoolEl(promptOption);
+        committed = await waitForSchoolSelectedItem(live, savedSchool, 12);
+        live = liveEducationRow(document, live) || live;
+        if (committed && schoolPickerSelectedItemMatches(live, savedSchool)) {
+          return { ok: true, value: committed };
+        }
+      }
+
+      live = liveEducationRow(document, live) || live;
+      exact = findExactSchoolSearchResult(savedSchool);
+      leaf =
+        exact &&
+        exact.el &&
+        exact.el.querySelector &&
+        exact.el.querySelector('[data-automation-id="promptLeafNode"]');
+      if (leaf) {
+        pointerClickWorkdaySchoolEl(leaf);
+        committed = await waitForSchoolSelectedItem(live, savedSchool, 12);
+        live = liveEducationRow(document, live) || live;
+        if (committed && schoolPickerSelectedItemMatches(live, savedSchool)) {
+          return { ok: true, value: committed };
+        }
+      }
+
+      live = liveEducationRow(document, live) || live;
+      exact = findExactSchoolSearchResult(savedSchool);
+      menuItem = exact && exact.el;
+      if (menuItem) {
+        pointerClickWorkdaySchoolEl(menuItem);
+        committed = await waitForSchoolSelectedItem(live, savedSchool, 12);
+        live = liveEducationRow(document, live) || live;
+        if (committed && schoolPickerSelectedItemMatches(live, savedSchool)) {
+          return { ok: true, value: committed };
+        }
+      }
+
+      live = liveEducationRow(document, live) || live;
+      exact = findExactSchoolSearchResult(savedSchool);
+      field = findSchoolFormField(live);
+      search = currentRowSchoolSearch(live);
+      if (search && field && field.contains(search) && exact) {
+        try {
+          search.focus();
+        } catch (_) {}
+        dispatchSearchKey(search, "Enter");
+        committed = await waitForSchoolSelectedItem(live, savedSchool, 16);
+        live = liveEducationRow(document, live) || live;
+        if (committed && schoolPickerSelectedItemMatches(live, savedSchool)) {
+          return { ok: true, value: committed };
+        }
+      }
+
+      return { ok: false, value: "" };
+    }
+
+    for (attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt) {
+        row = liveEducationRow(document, row) || row;
+        await finishCurrentRowSchoolPicker(row);
+        closeOpenList();
+        await sleep(120);
+        row = liveEducationRow(document, row) || row;
+      }
+      result = await runOnce(row);
+      row = liveEducationRow(document, row) || row;
+      if (result && result.ok && schoolPickerSelectedItemMatches(row, savedSchool)) {
+        return { ok: true, value: readSchoolSelectedItemLabel(row) };
+      }
+    }
+    await clearUncommittedSchoolSearchQuery(row);
+    return { ok: false, value: "" };
+  }
+
+  async function fillEducationSchool(row, savedInstitution, handledElements, overwrite) {
+    var field;
+    var control;
+    var current;
+    var selected;
+    var waitReady;
+    row = liveEducationRow(document, row) || row;
+    if (!trimText(savedInstitution)) return "skip";
+    if (findSchoolFormField(row) && !schoolUsesPicker(row) && !(row.querySelector && row.querySelector('input[name="schoolName"]'))) {
+      for (waitReady = 0; waitReady < 12; waitReady += 1) {
+        if (schoolUsesPicker(row) || findSchoolControl(row)) break;
+        await sleep(120);
+      }
+    }
+    field = findSchoolFormField(row);
+    control = findSchoolControl(row);
+    if (!control && !field) return "missing";
+    if (!schoolUsesPicker(row)) {
+      current = readSchoolCommitted(row);
+      if (
+        !current &&
+        control &&
+        !isSearchInput(control) &&
+        isTextLikeInput(control)
+      ) {
+        current = readInputValue(control);
+      }
+      if (current && schoolMatchesSaved(current, savedInstitution)) return "already";
+      if (current && !overwrite) return "skip-existing";
+      return fillExperienceTextField(control, savedInstitution, handledElements, overwrite);
+    }
+    current = readSchoolSelectedItemLabel(row);
+    if (current && schoolMatchesSaved(current, savedInstitution)) return "already";
+    if (current && !overwrite) return "skip-existing";
+    field = findSchoolFormField(row);
+    control = acquireSchoolPickerControls(row).control;
+    if (control) markHandled(handledElements, control);
+    selected = await selectWorkdayEducationSchool(row, savedInstitution);
+    row = liveEducationRow(document, row) || row;
+    if (selected && selected.ok && schoolPickerSelectedItemMatches(row, savedInstitution)) {
+      await finishCurrentRowSchoolPicker(row);
+      return "ok";
+    }
+    return "fail";
+  }
+
   async function fillEducationDegree(control, savedDegree, handledElements, overwrite) {
     if (!control) return "missing";
     markHandled(handledElements, control);
@@ -3291,7 +4100,11 @@
       control,
       [code],
       function (options) {
-        return pickDegreeOption(options, savedDegree) || findExactVisibleOption(code);
+        var list = collectDegreeListOptions();
+        return (
+          pickDegreeOption(list.length ? list : options, savedDegree) ||
+          findExactVisibleOption(code)
+        );
       },
       function () {
         return degreeAlreadyFilled(readComboboxText(control), savedDegree);
@@ -3833,14 +4646,22 @@
   }
 
   async function fillOneEducationRow(row, saved, handledElements) {
-    var fields = educationRowFields(row);
-    var overwrite = isBlankEducationRow(row);
+    var overwrite;
     var filledAny = false;
     var failedRequired = false;
+    var schoolStatus;
+    var fields;
+    row = liveEducationRow(document, row) || row;
+    overwrite = isBlankEducationRow(row);
 
-    var schoolStatus = await fillExperienceTextField(fields.school, saved.institution, handledElements, overwrite);
+    await finishCurrentRowSchoolPicker(row);
+    schoolStatus = await fillEducationSchool(row, saved.institution, handledElements, overwrite);
     if (schoolStatus === "ok") filledAny = true;
     if (saved.institution && schoolStatus === "fail") failedRequired = true;
+    row = liveEducationRow(document, row) || row;
+    await finishCurrentRowSchoolPicker(row);
+
+    fields = educationRowFields(row);
 
     try {
       var degreeStatus = await fillEducationDegree(fields.degree, saved.degree, handledElements, overwrite);
@@ -3904,7 +4725,8 @@
       rows = collectEducationRows(root);
       target = findMatchingEducationRow(rows, saved[i], used);
       if (target) {
-        used.push(target);
+        target = liveEducationRow(root, target) || target;
+        used.push(findSchoolFormField(target) || target);
         try {
           status = await fillOneEducationRow(target, saved[i], handledElements);
         } catch (_) {
@@ -3917,9 +4739,11 @@
         } else {
           results.push(resultRow("education", label, "skipped", "Education is already present.", false, ""));
         }
+        await finishCurrentRowSchoolPicker(liveEducationRow(root, target) || target);
         continue;
       }
 
+      rows = collectEducationRows(root);
       target = findBlankEducationRow(rows, used);
       if (!target) {
         var created = await createEducationRow(root, handledElements);
@@ -3927,8 +4751,16 @@
           results.push(resultRow("education", label, "failed", created.reason, false, ""));
           break;
         }
-        rows = created.rows;
+        rows = collectEducationRows(root);
         target = findBlankEducationRow(rows, used) || rows[rows.length - 1];
+        if (target) {
+          var waitSchool;
+          for (waitSchool = 0; waitSchool < 16; waitSchool += 1) {
+            target = liveEducationRow(root, target) || target;
+            if (findSchoolFormField(target) && acquireSchoolPickerControls(target).control) break;
+            await sleep(120);
+          }
+        }
       }
 
       if (!target) {
@@ -3936,7 +4768,8 @@
         break;
       }
 
-      used.push(target);
+      target = liveEducationRow(root, target) || target;
+      used.push(findSchoolFormField(target) || target);
       try {
         status = await fillOneEducationRow(target, saved[i], handledElements);
       } catch (_) {
@@ -3949,6 +4782,7 @@
       } else {
         results.push(resultRow("education", label, "skipped", "Education is already present.", false, ""));
       }
+      await finishCurrentRowSchoolPicker(liveEducationRow(root, target) || target);
     }
 
     return results;
@@ -5897,6 +6731,43 @@
     return Boolean(found && found.input);
   }
 
+  function looksLikeWebsiteCollectionText(text) {
+    return /\badd any relevant websites\b/.test(normalizeText(text));
+  }
+
+  function nextCollectedHeadingAfter(root, node) {
+    var headings = collectMyExperienceHeadings(root);
+    var i;
+    var best = null;
+    if (!node) return null;
+    for (i = 0; i < headings.length; i += 1) {
+      if (headings[i].node === node) continue;
+      if (!nodeIsAfter(node, headings[i].node)) continue;
+      if (!best || nodeIsBefore(best, headings[i].node)) best = headings[i].node;
+    }
+    return best;
+  }
+
+  function portfolioHeadingHasWebsiteContext(heading) {
+    var doc;
+    var node = heading;
+    var hops = 0;
+    var nextHeading;
+    var blob;
+    if (!heading) return false;
+    doc = heading.ownerDocument || document;
+    nextHeading = nextMyExperienceHeadingNode(doc, heading) || nextCollectedHeadingAfter(doc, heading);
+    while (node && node !== document.body && node !== document.documentElement && hops < 8) {
+      if (nextHeading && node.contains && node.contains(nextHeading) && node !== nextHeading) break;
+      blob = normalizeText(String((node.innerText || node.textContent || "")).slice(0, 1200));
+      if (looksLikeWebsiteCollectionText(blob)) return true;
+      if (node.querySelector && node.querySelector('input[name="url"]')) return true;
+      node = node.parentElement;
+      hops += 1;
+    }
+    return false;
+  }
+
   function findWebsitesHeadingNode(root) {
     var doc = root || document;
     var el;
@@ -5906,11 +6777,17 @@
     if (!doc || !doc.querySelector) return null;
     el = doc.querySelector("#Websites-section");
     if (el) return el;
+    el = doc.querySelector("#Portfolio-section");
+    if (el && portfolioHeadingHasWebsiteContext(el)) return el;
     if (!doc.querySelectorAll) return null;
     nodes = doc.querySelectorAll('h1, h2, h3, h4, h5, legend, [role="heading"]');
     for (i = 0; i < nodes.length; i += 1) {
       text = normalizeText(headingVisibleText(nodes[i])).replace(/\s*\*+\s*$/, "").trim();
       if (text === "websites") return nodes[i];
+    }
+    for (i = 0; i < nodes.length; i += 1) {
+      text = normalizeText(headingVisibleText(nodes[i])).replace(/\s*\*+\s*$/, "").trim();
+      if (text === "portfolio" && portfolioHeadingHasWebsiteContext(nodes[i])) return nodes[i];
     }
     return null;
   }
@@ -5927,9 +6804,19 @@
       doc.querySelector('[role="group"][aria-labelledby="Websites-section"]') ||
       doc.querySelector('[aria-labelledby="Websites-section"]');
     if (labelled) return labelled;
+    labelled =
+      doc.querySelector('[role="group"][aria-labelledby="Portfolio-section"]') ||
+      doc.querySelector('[aria-labelledby="Portfolio-section"]');
+    if (
+      labelled &&
+      (looksLikeWebsiteCollectionText(labelled.innerText || labelled.textContent || "") ||
+        (labelled.querySelector && labelled.querySelector('input[name="url"]')))
+    ) {
+      return labelled;
+    }
     heading = findWebsitesHeadingNode(doc);
     if (!heading) return null;
-    nextHeading = nextMyExperienceHeadingNode(doc, heading);
+    nextHeading = nextMyExperienceHeadingNode(doc, heading) || nextCollectedHeadingAfter(doc, heading);
     node = heading.parentElement || heading;
     best = node;
     while (node && node !== document.body && node !== document.documentElement) {
