@@ -6144,6 +6144,12 @@
     var hasUs;
     if (!text || isExcludedApplicationQuestion(label)) return false;
     if (looksLikeWorkdaySponsorshipQuestion(label)) return false;
+    if (
+      /\b(legally )?(eligible|authorized) to work in this country\b/.test(text) ||
+      /\b(legally )?(eligible|authorized) to work in the country to which you are applying\b/.test(text)
+    ) {
+      return true;
+    }
     hasUs = /\bu s\b/.test(text) || /\bus\b/.test(text) || /\bunited states\b/.test(text);
     if (!hasUs) return false;
     return (
@@ -6323,6 +6329,8 @@
     return (
       /\bwillingly accept\b/.test(t) ||
       /\baccept the terms\b/.test(t) ||
+      /\bconsent to the terms\b/.test(t) ||
+      /\bhave read and consent\b/.test(t) ||
       /\bsubmitting an application\b/.test(t)
     );
   }
@@ -6338,6 +6346,15 @@
 
   function isRaceDisclosureLabel(label) {
     return disclosureLabelKey(label) === "race";
+  }
+
+  function isCombinedEthnicityDisclosureLabel(label) {
+    var key = disclosureLabelKey(label);
+    if (!key || looksLikeTermsAndConditionsText(label)) return false;
+    if (isHispanicDisclosureLabel(label) || isRaceDisclosureLabel(label)) return false;
+    if (/\bethnicity with which you most closely identify\b/.test(key)) return true;
+    if (/\bplease select the ethnicity\b/.test(key) && /\bidentify\b/.test(key)) return true;
+    return false;
   }
 
   function isVeteranDisclosureLabel(label) {
@@ -6503,6 +6520,150 @@
     return text.replace(/\s*\(\s*united states of america\s*\)\s*$/g, "").trim();
   }
 
+  function normalizeCombinedDemographicOption(value) {
+    var text = normalizeText(value);
+    if (!text || isPlaceholderValue(text)) return "";
+    return text
+      .replace(/\s*\(\s*united states of america\s*\)\s*$/g, "")
+      .replace(/[.,]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function combinedRaceKey(value) {
+    var text = normalizeCombinedDemographicOption(value);
+    if (!text) return "";
+    text = text
+      .replace(/\s*\(\s*not hispanic or latino\s*\)\s*/g, " ")
+      .replace(/\bnot hispanic or latino\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (text === "native hawaiian or pacific islander") return "native hawaiian or other pacific islander";
+    if (text === "two or more race") return "two or more races";
+    return text;
+  }
+
+  function isCombinedHispanicLatinoOption(label) {
+    var text = normalizeCombinedDemographicOption(label);
+    if (!text || /\bnot hispanic or latino\b/.test(text)) return false;
+    return text === "hispanic or latino" || text === "hispanic latino";
+  }
+
+  function isCombinedNotHispanicRaceOption(label) {
+    var text = normalizeCombinedDemographicOption(label);
+    return Boolean(text && /\bnot hispanic or latino\b/.test(text));
+  }
+
+  function looksLikeCombinedDemographicDeclineOption(label) {
+    var text = normalizeCombinedDemographicOption(label);
+    if (!text) return false;
+    if (isPreferNotToAnswerValue(label)) return true;
+    if (text === "not declared" || text === "decline to self identify") return true;
+    if (/\bi do not want to answer\b/.test(text)) return true;
+    if (/\bprefer not to (answer|say|self identify)\b/.test(text)) return true;
+    if (/\bdecline to self-identify\b/.test(text) || /\bdecline to self identify\b/.test(text)) return true;
+    return false;
+  }
+
+  function looksLikeCombinedRaceEthnicityOptions(options) {
+    var notHispanic = 0;
+    var hispanic = 0;
+    var i;
+    var label;
+    for (i = 0; i < (options || []).length; i += 1) {
+      label = options[i] && options[i].label;
+      if (!label || isPlaceholderValue(label)) continue;
+      if (isCombinedHispanicLatinoOption(label)) hispanic += 1;
+      if (isCombinedNotHispanicRaceOption(label)) notHispanic += 1;
+    }
+    return notHispanic >= 2 || (notHispanic >= 1 && hispanic >= 1);
+  }
+
+  function disclosureListboxForControl(control) {
+    var refs;
+    var i;
+    var id;
+    var el;
+    var inner;
+    if (!control || !control.getAttribute) return null;
+    refs = String(
+      (control.getAttribute("aria-controls") || "") + " " + (control.getAttribute("aria-owns") || "")
+    )
+      .replace(/^\s+|\s+$/g, "")
+      .split(/\s+/);
+    for (i = 0; i < refs.length; i += 1) {
+      id = refs[i];
+      if (!id) continue;
+      try {
+        el = document.getElementById(id);
+      } catch (_) {
+        el = null;
+      }
+      if (!el) continue;
+      if (el.getAttribute && el.getAttribute("role") === "listbox") return el;
+      inner = el.querySelector && (el.querySelector('[role="listbox"]') || el.querySelector('[role="option"]'));
+      if (inner && inner.getAttribute && inner.getAttribute("role") === "listbox") return inner;
+      if (el.querySelector && el.querySelector('[data-automation-id="promptOption"], [role="option"]')) return el;
+    }
+    return null;
+  }
+
+  function optionsBelongingToDisclosure(control, options) {
+    var box = disclosureListboxForControl(control);
+    var scoped = [];
+    var i;
+    if (!box) return options || [];
+    for (i = 0; i < (options || []).length; i += 1) {
+      if (options[i] && options[i].el && box.contains(options[i].el)) scoped.push(options[i]);
+    }
+    return scoped.length ? scoped : options || [];
+  }
+
+  function uniqueCombinedDemographicMatches(options, testFn) {
+    var matches = [];
+    var seen = {};
+    var i;
+    var opt;
+    var key;
+    for (i = 0; i < (options || []).length; i += 1) {
+      opt = options[i];
+      if (!opt || !testFn(opt.label)) continue;
+      key = normalizeCombinedDemographicOption(opt.label);
+      if (!key || seen[key]) continue;
+      seen[key] = true;
+      matches.push(opt);
+    }
+    return matches;
+  }
+
+  function resolveCombinedRaceEthnicity(savedRace, savedHispanic, renderedOptions) {
+    var hispanic = explicitYesNo(savedHispanic);
+    var raceDecline = isPreferNotToAnswerValue(savedRace);
+    var hispanicDecline = isPreferNotToAnswerValue(savedHispanic);
+    var raceKey = combinedRaceKey(savedRace);
+    var matches;
+    if (hispanicDecline) {
+      matches = uniqueCombinedDemographicMatches(renderedOptions, looksLikeCombinedDemographicDeclineOption);
+      return matches.length === 1 ? matches[0] : null;
+    }
+    if (!hispanic) return null;
+    if (hispanic === "yes") {
+      matches = uniqueCombinedDemographicMatches(renderedOptions, isCombinedHispanicLatinoOption);
+      return matches.length === 1 ? matches[0] : null;
+    }
+    if (raceDecline) {
+      matches = uniqueCombinedDemographicMatches(renderedOptions, looksLikeCombinedDemographicDeclineOption);
+      return matches.length === 1 ? matches[0] : null;
+    }
+    if (!raceKey || isCombinedHispanicLatinoOption(savedRace)) return null;
+    matches = uniqueCombinedDemographicMatches(renderedOptions, function (label) {
+      if (isPlaceholderValue(label) || looksLikeCombinedDemographicDeclineOption(label)) return false;
+      if (isCombinedHispanicLatinoOption(label)) return false;
+      return combinedRaceKey(label) === raceKey;
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   function mapWorkdayVeteranKind(saved) {
     var general = normalizeText(saved.generalVeteranStatus);
     var prot = normalizeText(saved.veteranStatus);
@@ -6602,15 +6763,66 @@
 
   async function fillVoluntaryRace(root, saved, handledElements) {
     var ethnicityField = findFormField(root, "formField-ethnicity");
-    var field = ethnicityField || findDisclosureField(root, isRaceDisclosureLabel);
+    var field =
+      ethnicityField ||
+      findDisclosureField(root, isCombinedEthnicityDisclosureLabel) ||
+      findDisclosureField(root, isRaceDisclosureLabel);
+    var control;
+    var options;
+    var picked;
+    var current;
+    var selected;
+    var i;
     var savedCanon;
+    var displayLabel;
     if (!field) return [];
+    displayLabel =
+      ethnicityField || isCombinedEthnicityDisclosureLabel(questionFieldLabel(field)) ? "Ethnicity" : "Race";
+    control = findDropdownButton(field) || comboboxControlIn(field);
+    if (!control) {
+      return [resultRow("race_ethnicity", displayLabel, "skipped", displayLabel + " dropdown was not found.", false, "")];
+    }
+    options = optionsBelongingToDisclosure(control, await collectWorkdayDropdownOptions(control));
+    if (looksLikeCombinedRaceEthnicityOptions(options)) {
+      markHandled(handledElements, control);
+      picked = resolveCombinedRaceEthnicity(saved.raceEthnicity, saved.hispanicLatino, options);
+      current = displayedDropdownValue(field, control) || readComboboxText(control);
+      if (
+        current &&
+        picked &&
+        normalizeCombinedDemographicOption(current) === normalizeCombinedDemographicOption(picked.label)
+      ) {
+        closeWorkdayDropdown(control);
+        return [resultRow("race_ethnicity", "Ethnicity", "filled", "", true, current)];
+      }
+      if (!picked) {
+        closeWorkdayDropdown(control);
+        return [
+          resultRow("race_ethnicity", "Ethnicity", "skipped", "No safe matching Ethnicity option.", false, "")
+        ];
+      }
+      clickElement(picked.el);
+      await sleep(220);
+      for (i = 0; i < 8; i += 1) {
+        selected = displayedDropdownValue(field, control) || readComboboxText(control);
+        if (
+          selected &&
+          normalizeCombinedDemographicOption(selected) === normalizeCombinedDemographicOption(picked.label)
+        ) {
+          return [resultRow("race_ethnicity", "Ethnicity", "filled", "", true, selected)];
+        }
+        await sleep(50);
+      }
+      closeWorkdayDropdown(control);
+      return [resultRow("race_ethnicity", "Ethnicity", "skipped", "No safe matching Ethnicity option.", false, "")];
+    }
+    closeWorkdayDropdown(control);
     savedCanon = canonicalWorkdayRaceLabel(saved.raceEthnicity);
     if (!savedCanon) {
       return [
         resultRow(
           "race_ethnicity",
-          ethnicityField ? "Ethnicity" : "Race",
+          displayLabel,
           "skipped",
           "No saved answer.",
           false,
@@ -6622,7 +6834,7 @@
       await fillWorkdayDisclosureDropdown(
         field,
         "race_ethnicity",
-        ethnicityField ? "Ethnicity" : "Race",
+        displayLabel,
         function (label) {
           return canonicalWorkdayRaceLabel(label) === savedCanon;
         },
