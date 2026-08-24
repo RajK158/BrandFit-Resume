@@ -2538,44 +2538,83 @@
     return match ? match[1] : "";
   }
 
-  function compactDegreeText(value) {
+  function normalizeWorkdayDegreeText(value) {
     return normalizeText(value)
       .replace(/['’`]/g, "")
       .replace(/\./g, "")
+      .replace(/[()]/g, " ")
       .replace(/[^a-z0-9]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
   }
 
-  function workdayDegreeCode(value) {
-    var text = compactDegreeText(value);
+  function compactDegreeText(value) {
+    return normalizeWorkdayDegreeText(value);
+  }
+
+  function workdayDegreeCompareText(value) {
+    return normalizeWorkdayDegreeText(value)
+      .replace(/\bassociates\b/g, "associate")
+      .replace(/\bbachelors\b/g, "bachelor")
+      .replace(/\bmasters\b/g, "master")
+      .replace(/\bdoctorates\b/g, "doctorate")
+      .replace(/\bdoctoral\b/g, "doctorate");
+  }
+
+  function workdayDegreeCategory(value) {
+    var text = workdayDegreeCompareText(value);
     var compact = text.replace(/\s+/g, "");
     if (!text) return "";
-    if (compact === "mba" || /\bmba\b/.test(text) || /\bmaster of business administration\b/.test(text)) return "MBA";
+    if (compact === "ged" || /\bged\b/.test(text) || /\bgeneral education/.test(text)) return "GED";
+    if (
+      compact === "hs" ||
+      compact === "highschool" ||
+      compact === "highschooldiploma" ||
+      compact === "hsdiploma" ||
+      /\bhigh school\b/.test(text) ||
+      /\bsecondary school\b/.test(text)
+    ) {
+      return "HIGH_SCHOOL";
+    }
+    if (compact === "jd" || /\bjuris doctor/.test(text) || /(^|\s)j d($|\s)/.test(text)) return "JURIS_DOCTOR";
+    if (compact === "mba" || /\bmba\b/.test(text) || /\bmaster of business administration\b/.test(text)) {
+      return "MASTER_BUSINESS_ADMINISTRATION";
+    }
     if (
       compact === "phd" ||
+      compact === "dphil" ||
       /\bphd\b/.test(text) ||
       /\bdoctor of philosophy\b/.test(text) ||
-      /\bdoctorate\b/.test(text) ||
-      /\bdoctoral\b/.test(text)
+      /(^|\s)ph d($|\s)/.test(text)
     ) {
-      return "PhD";
+      return "DOCTOR_PHILOSOPHY";
     }
-    if (compact === "jd" || /\bjd\b/.test(text) || /\bjuris doctor\b/.test(text)) return "JD";
-    if (compact === "ma" || /\bmaster of arts\b/.test(text) || /(^|\s)m a($|\s)/.test(text)) return "MA";
+    if (
+      compact === "doctorate" ||
+      /\bdoctorate\b/.test(text) ||
+      /\bdoctoral degree\b/.test(text) ||
+      /\bdoctor degree\b/.test(text)
+    ) {
+      return "DOCTOR_GENERIC";
+    }
     if (
       compact === "ms" ||
       compact === "msc" ||
       compact === "me" ||
       compact === "meng" ||
       /\bmaster of science\b/.test(text) ||
+      /\bmaster science\b/.test(text) ||
       /\bmaster of engineering\b/.test(text) ||
       /(^|\s)m s($|\s)/.test(text) ||
       /(^|\s)m e($|\s)/.test(text)
     ) {
-      return "MS";
+      return "MASTER_SCIENCE";
     }
-    if (compact === "ba" || /\bbachelor of arts\b/.test(text) || /(^|\s)b a($|\s)/.test(text)) return "BA";
+    if (compact === "ma" || /\bmaster of arts\b/.test(text) || /(^|\s)m a($|\s)/.test(text)) return "MASTER_ARTS";
+    if (compact === "master" || compact === "masterdegree" || /\bmaster degree\b/.test(text)) {
+      return "MASTER_GENERIC";
+    }
+    if (compact === "ba" || /\bbachelor of arts\b/.test(text) || /(^|\s)b a($|\s)/.test(text)) return "BACHELOR_ARTS";
     if (
       compact === "bs" ||
       compact === "bsc" ||
@@ -2583,53 +2622,47 @@
       compact === "beng" ||
       compact === "btech" ||
       /\bbachelor of science\b/.test(text) ||
+      /\bbachelor science\b/.test(text) ||
       /\bbachelor of engineering\b/.test(text) ||
       /\bbachelor of technology\b/.test(text) ||
       /(^|\s)b s($|\s)/.test(text) ||
       /(^|\s)b e($|\s)/.test(text) ||
       /(^|\s)b tech($|\s)/.test(text)
     ) {
-      return "BS";
+      return "BACHELOR_SCIENCE";
     }
-    if (
-      compact === "aa" ||
-      /\bassociates? of arts\b/.test(text) ||
-      /(^|\s)a a($|\s)/.test(text)
-    ) {
-      return "AA";
+    if (compact === "bachelor" || compact === "bachelordegree" || /\bbachelor degree\b/.test(text)) {
+      return "BACHELOR_GENERIC";
     }
-    if (
-      compact === "as" ||
-      /\bassociates? of science\b/.test(text) ||
-      /(^|\s)a s($|\s)/.test(text)
-    ) {
-      return "AS";
+    if (compact === "aa" || /\bassociate of arts\b/.test(text) || /(^|\s)a a($|\s)/.test(text)) {
+      return "ASSOCIATE_ARTS";
+    }
+    if (compact === "as" || /\bassociate of science\b/.test(text) || /(^|\s)a s($|\s)/.test(text)) {
+      return "ASSOCIATE_SCIENCE";
+    }
+    if (compact === "associate" || compact === "associatedegree" || /\bassociate degree\b/.test(text)) {
+      return "ASSOCIATE_GENERIC";
     }
     return "";
   }
 
-  function workdayDegreeRenderedAliases(savedDegree) {
-    var code = workdayDegreeCode(savedDegree);
-    if (code === "MS") return ["Master of Science (M.S)"];
-    if (code === "BS") return ["Bachelor of Science (B.S)"];
-    if (code === "MA") return ["Master of Arts (M.A)"];
-    if (code === "BA") return ["Bachelor of Arts (B.A)"];
-    if (code === "MBA") return ["Master of Business Administration (MBA)"];
-    if (code === "PhD") return ["Doctor of Philosophy (Ph.D)"];
-    if (code === "JD") return ["Juris Doctor (J.D)"];
-    if (code === "AS") return ["Associates of Science (A.S)"];
-    if (code === "AA") return ["Associates of Arts (A.A)"];
-    return [];
-  }
-
-  function isAbbreviatedDegreeOption(optionLabel) {
-    var t = trimText(optionLabel);
-    return /^(AA|AS|AAS|BA|BS|BSc|BE|BEng|MA|MS|MSc|MBA|MEng|PhD|JD|MD)$/i.test(t);
+  function workdayDegreeGenericFallback(category) {
+    if (category === "ASSOCIATE_ARTS" || category === "ASSOCIATE_SCIENCE") return "ASSOCIATE_GENERIC";
+    if (category === "BACHELOR_ARTS" || category === "BACHELOR_SCIENCE") return "BACHELOR_GENERIC";
+    if (
+      category === "MASTER_ARTS" ||
+      category === "MASTER_SCIENCE" ||
+      category === "MASTER_BUSINESS_ADMINISTRATION"
+    ) {
+      return "MASTER_GENERIC";
+    }
+    if (category === "DOCTOR_PHILOSOPHY") return "DOCTOR_GENERIC";
+    return "";
   }
 
   function degreesEqualNormalized(a, b) {
-    var left = compactDegreeText(a);
-    var right = compactDegreeText(b);
+    var left = normalizeWorkdayDegreeText(a);
+    var right = normalizeWorkdayDegreeText(b);
     return Boolean(left && right && left === right);
   }
 
@@ -2641,79 +2674,412 @@
     return degreesEqualNormalized(saved, option);
   }
 
-  function degreeAliasMatch(savedDegree, optionLabel) {
-    var option = trimText(optionLabel);
-    if (!option || isPlaceholderValue(option) || !isAbbreviatedDegreeOption(option)) return false;
-    var savedCode = workdayDegreeCode(savedDegree);
-    if (!savedCode) return false;
-    return normalizeText(option) === normalizeText(savedCode) || workdayDegreeCode(option) === savedCode;
+  function degreeLabelHasFullWording(label, category) {
+    var t = workdayDegreeCompareText(label);
+    if (category === "MASTER_SCIENCE") return /\bmaster of science\b/.test(t);
+    if (category === "MASTER_ARTS") return /\bmaster of arts\b/.test(t);
+    if (category === "MASTER_BUSINESS_ADMINISTRATION") {
+      return /\bmaster of business administration\b/.test(t);
+    }
+    if (category === "BACHELOR_SCIENCE") return /\bbachelor of science\b/.test(t);
+    if (category === "BACHELOR_ARTS") return /\bbachelor of arts\b/.test(t);
+    if (category === "DOCTOR_PHILOSOPHY") return /\bdoctor of philosophy\b/.test(t);
+    if (category === "JURIS_DOCTOR") return /\bjuris doctor\b/.test(t);
+    if (category === "ASSOCIATE_SCIENCE") return /\bassociate of science\b/.test(t);
+    if (category === "ASSOCIATE_ARTS") return /\bassociate of arts\b/.test(t);
+    if (category === "HIGH_SCHOOL") return /\bhigh school\b/.test(t);
+    if (category === "GED") return /\bgeneral education/.test(t);
+    if (category === "MASTER_GENERIC") return /\bmaster degree\b/.test(t);
+    if (category === "BACHELOR_GENERIC") return /\bbachelor degree\b/.test(t);
+    if (category === "ASSOCIATE_GENERIC") return /\bassociate degree\b/.test(t);
+    if (category === "DOCTOR_GENERIC") return /\bdoctorate\b/.test(t) || /\bdoctoral degree\b/.test(t);
+    return false;
   }
 
-  function degreeOptionMatches(savedDegree, optionLabel) {
-    return degreeExactMatch(savedDegree, optionLabel) || degreeAliasMatch(savedDegree, optionLabel);
+  function degreeLabelHasAbbreviation(label, category) {
+    var t = workdayDegreeCompareText(label);
+    if (category === "MASTER_SCIENCE") return /(^|\s)(m s|ms|msc)(\s|$)/.test(t);
+    if (category === "MASTER_ARTS") return /(^|\s)(m a|ma)(\s|$)/.test(t);
+    if (category === "MASTER_BUSINESS_ADMINISTRATION") return /(^|\s)mba(\s|$)/.test(t);
+    if (category === "BACHELOR_SCIENCE") return /(^|\s)(b s|bs|bsc)(\s|$)/.test(t);
+    if (category === "BACHELOR_ARTS") return /(^|\s)(b a|ba)(\s|$)/.test(t);
+    if (category === "DOCTOR_PHILOSOPHY") return /(^|\s)(ph d|phd)(\s|$)/.test(t);
+    if (category === "JURIS_DOCTOR") return /(^|\s)(j d|jd)(\s|$)/.test(t);
+    if (category === "ASSOCIATE_SCIENCE") return /(^|\s)(a s|as)(\s|$)/.test(t);
+    if (category === "ASSOCIATE_ARTS") return /(^|\s)(a a|aa)(\s|$)/.test(t);
+    if (category === "GED") return /(^|\s)ged(\s|$)/.test(t);
+    return false;
   }
 
-  function pickDegreeOption(options, savedDegree) {
-    var code = workdayDegreeCode(savedDegree);
-    var aliases = workdayDegreeRenderedAliases(savedDegree);
+  function pickPreferredDegreeWording(pool, category, savedDegree) {
+    var exact = [];
+    var fullAndAbbr = [];
+    var full = [];
+    var abbr = [];
     var i;
-    var j;
     var opt;
-    var aliasMatches = [];
-    if (!code) return null;
-    for (i = 0; i < (options || []).length; i += 1) {
-      opt = options[i];
-      if (opt && !isPlaceholderValue(opt.label) && normalizeText(opt.label) === normalizeText(code)) {
-        return opt;
+    if (!pool || !pool.length) return null;
+    if (pool.length === 1) return pool[0];
+    for (i = 0; i < pool.length; i += 1) {
+      opt = pool[i];
+      if (!opt) continue;
+      if (degreeExactMatch(savedDegree, opt.label)) exact.push(opt);
+      if (degreeLabelHasFullWording(opt.label, category) && degreeLabelHasAbbreviation(opt.label, category)) {
+        fullAndAbbr.push(opt);
+      } else if (degreeLabelHasFullWording(opt.label, category)) {
+        full.push(opt);
+      } else if (degreeLabelHasAbbreviation(opt.label, category)) {
+        abbr.push(opt);
       }
     }
-    for (i = 0; i < (options || []).length; i += 1) {
-      opt = options[i];
-      if (!opt || isPlaceholderValue(opt.label)) continue;
-      for (j = 0; j < aliases.length; j += 1) {
-        if (normalizeText(opt.label) === normalizeText(aliases[j])) {
-          aliasMatches.push(opt);
-          break;
-        }
-      }
-    }
-    if (aliasMatches.length === 1) return aliasMatches[0];
+    if (exact.length === 1) return exact[0];
+    if (fullAndAbbr.length === 1) return fullAndAbbr[0];
+    if (fullAndAbbr.length > 1) return null;
+    if (full.length === 1) return full[0];
+    if (full.length > 1) return null;
+    if (abbr.length === 1) return abbr[0];
     return null;
   }
 
-  function collectDegreeListOptions() {
+  function resolveWorkdayDegreeOption(options, savedDegree) {
+    var savedCat = workdayDegreeCategory(savedDegree);
+    var fallbackCat = workdayDegreeGenericFallback(savedCat);
+    var exact = [];
+    var generic = [];
+    var i;
+    var opt;
+    var cat;
+    var pool;
+    if (!savedCat) return null;
+    for (i = 0; i < (options || []).length; i += 1) {
+      opt = options[i];
+      if (!opt || isPlaceholderValue(opt.label)) continue;
+      cat = workdayDegreeCategory(opt.label);
+      if (cat === savedCat) exact.push(opt);
+      else if (fallbackCat && cat === fallbackCat) generic.push(opt);
+    }
+    if (exact.length) {
+      pool = exact;
+      if (pool.length === 1) return pool[0];
+      return pickPreferredDegreeWording(pool, savedCat, savedDegree);
+    }
+    if (generic.length === 1) return generic[0];
+    if (generic.length > 1) return pickPreferredDegreeWording(generic, fallbackCat, savedDegree);
+    return null;
+  }
+
+  function workdayDegreeSelectionSatisfied(current, savedDegree) {
+    var savedCat;
+    var currentCat;
+    if (!trimText(current) || isPlaceholderValue(current) || !trimText(savedDegree)) return false;
+    if (degreeExactMatch(savedDegree, current)) return true;
+    savedCat = workdayDegreeCategory(savedDegree);
+    currentCat = workdayDegreeCategory(current);
+    if (!savedCat || !currentCat) return false;
+    if (savedCat === currentCat) return true;
+    return currentCat === workdayDegreeGenericFallback(savedCat);
+  }
+
+  function findDegreeFormField(row) {
+    if (!row || !row.querySelector) return null;
+    var field = row.querySelector('[data-automation-id="formField-degree"]');
+    return field && row.contains(field) ? field : null;
+  }
+
+  function readDegreeOptionLabel(el) {
+    var label;
+    if (!el) return "";
+    label = trimText((el.getAttribute && el.getAttribute("data-automation-label")) || "");
+    if (!label) label = trimText(el.innerText || el.textContent || "");
+    if (!label) {
+      label = trimText((el.getAttribute && el.getAttribute("aria-label")) || "");
+      label = label.replace(/\s+not checked$/i, "").replace(/\s+checked$/i, "").trim();
+    }
+    return label;
+  }
+
+  function readDegreeOptionsFromListbox(listbox) {
     var options = [];
     var nodes;
     var i;
     var el;
     var label;
+    if (!listbox) return options;
+    if ((listbox.tagName || "").toLowerCase() === "select") {
+      for (i = 0; i < (listbox.options || []).length; i += 1) {
+        el = listbox.options[i];
+        label = trimText((el && (el.text || el.label || el.value)) || "");
+        if (!label || isPlaceholderValue(label)) continue;
+        options.push({ el: el, label: label });
+      }
+      return options;
+    }
+    if (!listbox.querySelectorAll) return options;
     try {
-      nodes = document.querySelectorAll('li[role="option"]');
+      nodes = listbox.querySelectorAll('li[role="option"], [role="option"]');
     } catch (_) {
       nodes = [];
     }
     for (i = 0; i < nodes.length; i += 1) {
       el = nodes[i];
+      if (!listbox.contains(el)) continue;
       if (!isVisibleEnough(el)) continue;
-      label = trimText(el.innerText || el.textContent || "");
+      label = readDegreeOptionLabel(el);
       if (!label || isPlaceholderValue(label)) continue;
       options.push({ el: el, label: label });
     }
     return options;
   }
 
-  function degreeAlreadyFilled(current, savedDegree) {
-    var code = workdayDegreeCode(savedDegree);
-    var currentText = trimText(current);
-    var aliases;
+  function looksLikeWorkdayDegreeListbox(container) {
+    var options;
+    var hits = 0;
     var i;
-    if (!code || !currentText || isPlaceholderValue(currentText)) return false;
-    if (normalizeText(currentText) === normalizeText(code)) return true;
-    aliases = workdayDegreeRenderedAliases(savedDegree);
-    for (i = 0; i < aliases.length; i += 1) {
-      if (normalizeText(currentText) === normalizeText(aliases[i])) return true;
+    if (!container || !isVisibleEnough(container)) return false;
+    options = readDegreeOptionsFromListbox(container);
+    if (!options.length) return false;
+    for (i = 0; i < options.length; i += 1) {
+      if (workdayDegreeCategory(options[i].label)) hits += 1;
     }
-    return false;
+    if (!hits) return false;
+    if (hits >= 2) return true;
+    return hits * 2 >= options.length;
+  }
+
+  function collectVisibleWorkdayOptionContainers() {
+    var nodes;
+    var out = [];
+    try {
+      nodes = document.querySelectorAll(
+        '[role="listbox"], [data-automation-id="activeListContainer"], [data-automation-id="wd-Popup"], [data-automation-id="wd-popup"], [data-automation-widget="wd-popup"], [data-automation-id="promptBox"], [data-automation-id="responsiveMonikerPrompt"]'
+      );
+    } catch (_) {
+      nodes = [];
+    }
+    Array.prototype.forEach.call(nodes, function (node) {
+      if (isVisibleEnough(node) && out.indexOf(node) === -1) out.push(node);
+    });
+    return out;
+  }
+
+  function degreeListboxFromAria(button) {
+    var refs;
+    var i;
+    var id;
+    var el;
+    var inner;
+    if (!button || !button.getAttribute) return null;
+    refs = String(
+      (button.getAttribute("aria-controls") || "") + " " + (button.getAttribute("aria-owns") || "")
+    ).replace(/^\s+|\s+$/g, "").split(/\s+/);
+    for (i = 0; i < refs.length; i += 1) {
+      id = refs[i];
+      if (!id) continue;
+      try {
+        el = document.getElementById(id);
+      } catch (_) {
+        el = null;
+      }
+      if (!el) continue;
+      if ((el.getAttribute && el.getAttribute("role") === "listbox") || (el.tagName || "").toLowerCase() === "select") {
+        return el;
+      }
+      inner =
+        (el.querySelector &&
+          (el.querySelector('[role="listbox"]') ||
+            el.querySelector('[data-automation-id="activeListContainer"]'))) ||
+        null;
+      if (inner) return inner;
+      if (el.querySelector && el.querySelector('li[role="option"], [role="option"]')) return el;
+    }
+    id = button.getAttribute("aria-activedescendant") || "";
+    if (id) {
+      try {
+        el = document.getElementById(id);
+      } catch (_) {
+        el = null;
+      }
+      if (el && el.closest) return el.closest('[role="listbox"]');
+    }
+    return null;
+  }
+
+  function relatedDegreeListbox(button) {
+    var field;
+    var node;
+    if (!button) return null;
+    if ((button.tagName || "").toLowerCase() === "select") return button;
+    field = button.closest && button.closest('[data-automation-id="formField-degree"]');
+    if (!field || !field.querySelector) return null;
+    node = field.querySelector('[role="listbox"], [data-automation-id="activeListContainer"], select');
+    if (node && field.contains(node)) return node;
+    return null;
+  }
+
+  function resolveDegreeListboxForButton(button, beforeNodes) {
+    var associated;
+    var related;
+    var now;
+    var appeared = [];
+    var unique = [];
+    var i;
+    var seen;
+    associated = degreeListboxFromAria(button);
+    if (associated && looksLikeWorkdayDegreeListbox(associated)) return associated;
+    related = relatedDegreeListbox(button);
+    if (related && looksLikeWorkdayDegreeListbox(related)) return related;
+    now = collectVisibleWorkdayOptionContainers();
+    seen = beforeNodes || [];
+    for (i = 0; i < now.length; i += 1) {
+      if (seen.indexOf(now[i]) !== -1) continue;
+      if (!looksLikeWorkdayDegreeListbox(now[i])) continue;
+      appeared.push(now[i]);
+    }
+    if (appeared.length === 1) return appeared[0];
+    for (i = 0; i < now.length; i += 1) {
+      if (looksLikeWorkdayDegreeListbox(now[i])) unique.push(now[i]);
+    }
+    if (unique.length === 1) return unique[0];
+    return null;
+  }
+
+  async function waitForDegreeListbox(row, beforeNodes) {
+    var i;
+    var live;
+    var button;
+    var listbox;
+    for (i = 0; i < 20; i += 1) {
+      live = liveEducationRow(document, row) || row;
+      button = findDegreeControl(live);
+      if (button) {
+        listbox = resolveDegreeListboxForButton(button, beforeNodes);
+        if (listbox) return listbox;
+      }
+      await sleep(120);
+    }
+    live = liveEducationRow(document, row) || row;
+    return resolveDegreeListboxForButton(findDegreeControl(live), beforeNodes);
+  }
+
+  function pointerClickWorkdayDegreeOption(el) {
+    if (!el) return;
+    try {
+      if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window, button: 0 }));
+    } catch (_) {}
+    clickElement(el);
+  }
+
+  async function waitForDegreeCommitted(row, savedDegree) {
+    var i;
+    var live;
+    var control;
+    var shown;
+    for (i = 0; i < 12; i += 1) {
+      live = liveEducationRow(document, row) || row;
+      control = findDegreeControl(live);
+      shown = readComboboxText(control);
+      if (workdayDegreeSelectionSatisfied(shown, savedDegree)) return shown;
+      await sleep(120);
+    }
+    live = liveEducationRow(document, row) || row;
+    shown = readComboboxText(findDegreeControl(live));
+    return workdayDegreeSelectionSatisfied(shown, savedDegree) ? shown : "";
+  }
+
+  async function closeTransientDegreeUnrelatedPrompt(button) {
+    var active = document.activeElement;
+    if (active && active !== button && isTextLikeInput(active)) {
+      try {
+        active.blur();
+      } catch (_) {}
+    }
+    closeOpenList();
+    await sleep(80);
+  }
+
+  async function selectWorkdayEducationDegree(row, savedDegree) {
+    var live;
+    var button;
+    var current;
+    var before;
+    var listbox;
+    var options;
+    var picked;
+    var committed;
+    live = liveEducationRow(document, row) || row;
+    if (!trimText(savedDegree) || !workdayDegreeCategory(savedDegree)) return { ok: false, value: "" };
+    if (!findDegreeFormField(live)) return { ok: false, value: "" };
+    button = findDegreeControl(live);
+    if (!button) return { ok: false, value: "" };
+    current = readComboboxText(button);
+    if (workdayDegreeSelectionSatisfied(current, savedDegree)) {
+      return { ok: true, value: current };
+    }
+    await closeTransientDegreeUnrelatedPrompt(button);
+    live = liveEducationRow(document, live) || live;
+    button = findDegreeControl(live);
+    if (!button) return { ok: false, value: "" };
+    before = collectVisibleWorkdayOptionContainers();
+    clickElement(button);
+    live = liveEducationRow(document, live) || live;
+    button = findDegreeControl(live) || button;
+    listbox = await waitForDegreeListbox(live, before);
+    if (!listbox) return { ok: false, value: "" };
+    options = readDegreeOptionsFromListbox(listbox);
+    picked = resolveWorkdayDegreeOption(options, savedDegree);
+    if (!picked) {
+      closeOpenList();
+      return { ok: false, value: "" };
+    }
+    try {
+      if (picked.el && typeof picked.el.scrollIntoView === "function") {
+        picked.el.scrollIntoView({ block: "nearest" });
+      }
+    } catch (_) {}
+    clickPickerOption(picked);
+    committed = await waitForDegreeCommitted(live, savedDegree);
+    if (committed) {
+      closeOpenList();
+      return { ok: true, value: committed };
+    }
+    live = liveEducationRow(document, live) || live;
+    button = findDegreeControl(live);
+    if (!button) return { ok: false, value: "" };
+    if ((button.getAttribute && button.getAttribute("aria-expanded")) !== "true") {
+      before = collectVisibleWorkdayOptionContainers();
+      clickElement(button);
+      listbox = await waitForDegreeListbox(live, before);
+    } else {
+      listbox = resolveDegreeListboxForButton(button, []);
+    }
+    if (!listbox) return { ok: false, value: "" };
+    options = readDegreeOptionsFromListbox(listbox);
+    picked = resolveWorkdayDegreeOption(options, savedDegree);
+    if (!picked) {
+      closeOpenList();
+      return { ok: false, value: "" };
+    }
+    pointerClickWorkdayDegreeOption(picked.el);
+    committed = await waitForDegreeCommitted(live, savedDegree);
+    closeOpenList();
+    live = liveEducationRow(document, live) || live;
+    current = readComboboxText(findDegreeControl(live));
+    if (committed || workdayDegreeSelectionSatisfied(current, savedDegree)) {
+      return { ok: true, value: committed || current };
+    }
+    return { ok: false, value: "" };
   }
 
   function canonicalFieldOfStudy(value) {
@@ -3169,11 +3535,7 @@
     }
     if (!trimText(saved.institution) || !schoolMatchesSaved(school, saved.institution)) return false;
     if (trimText(saved.degree) && degree && !isPlaceholderValue(degree)) {
-      var savedCode = workdayDegreeCode(saved.degree);
-      var currentCode = workdayDegreeCode(degree);
-      if (savedCode && currentCode) return savedCode === currentCode;
-      if (degreeExactMatch(saved.degree, degree) || degreeOptionMatches(saved.degree, degree)) return true;
-      return false;
+      return workdayDegreeSelectionSatisfied(degree, saved.degree);
     }
     return true;
   }
@@ -4081,40 +4443,25 @@
     return "fail";
   }
 
-  async function fillEducationDegree(control, savedDegree, handledElements, overwrite) {
+  async function fillEducationDegree(row, control, savedDegree, handledElements, overwrite) {
+    var live;
+    var current;
+    var selected;
+    live = liveEducationRow(document, row) || row;
+    control = findDegreeControl(live) || control;
     if (!control) return "missing";
     markHandled(handledElements, control);
     if (!trimText(savedDegree)) return "skip";
-    var code = workdayDegreeCode(savedDegree);
-    if (!code) return "skip";
-    var current = readComboboxText(control);
-    if (degreeAlreadyFilled(current, savedDegree)) return "already";
-    var longSameLevel = Boolean(
-      current &&
-        !isPlaceholderValue(current) &&
-        workdayDegreeCode(current) === code &&
-        !isAbbreviatedDegreeOption(current)
-    );
-    if (current && !isPlaceholderValue(current) && !overwrite && !longSameLevel) return "skip-existing";
-    var selected = await selectEducationPickerOption(
-      control,
-      [code],
-      function (options) {
-        var list = collectDegreeListOptions();
-        return (
-          pickDegreeOption(list.length ? list : options, savedDegree) ||
-          findExactVisibleOption(code)
-        );
-      },
-      function () {
-        return degreeAlreadyFilled(readComboboxText(control), savedDegree);
-      }
-    );
-    if (!selected.ok) {
-      closeOpenList();
-      return "skip";
-    }
-    return "ok";
+    if (!workdayDegreeCategory(savedDegree)) return "skip";
+    current = readComboboxText(control);
+    if (workdayDegreeSelectionSatisfied(current, savedDegree)) return "already";
+    if (current && !isPlaceholderValue(current) && !overwrite) return "skip-existing";
+    selected = await selectWorkdayEducationDegree(live, savedDegree);
+    live = liveEducationRow(document, live) || live;
+    control = findDegreeControl(live) || control;
+    current = readComboboxText(control);
+    if (selected && selected.ok && workdayDegreeSelectionSatisfied(current, savedDegree)) return "ok";
+    return "skip";
   }
 
   function isFieldOfStudySelectable(el) {
@@ -4664,7 +5011,7 @@
     fields = educationRowFields(row);
 
     try {
-      var degreeStatus = await fillEducationDegree(fields.degree, saved.degree, handledElements, overwrite);
+      var degreeStatus = await fillEducationDegree(row, fields.degree, saved.degree, handledElements, overwrite);
       if (degreeStatus === "ok") filledAny = true;
     } catch (_) {
       closeOpenList();
