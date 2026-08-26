@@ -576,6 +576,24 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
 
 // 3. Current job extraction is handled by window.ImpulsoJob (job.js).
 
+async function scanActiveApplicationForm(tabId, inventory) {
+  await chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    files: ["autofill.js", "autofill/adapters/smartrecruiters.js"]
+  });
+  const injection = await chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    func: function (answers) {
+      if (!window.ImpulsoAutofill || typeof window.ImpulsoAutofill.scanPage !== "function") {
+        return { error: "Scanner failed to load on this page." };
+      }
+      return window.ImpulsoAutofill.scanPage(answers || {});
+    },
+    args: [inventory || {}]
+  });
+  return injection && injection[0] ? injection[0].result : null;
+}
+
 // 4. Form Filling Orchestration Call
 document.getElementById("fillBtn").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -590,6 +608,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
 
   let resumeBase64 = "";
   let resumeName = "";
+  let resumeMime = "";
   try {
     if (window.ImpulsoStorage) {
       const currentJob = await window.ImpulsoStorage.getCurrentJob();
@@ -599,6 +618,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         if (selected && selected.document && selected.document.fileData) {
           resumeBase64 = selected.document.fileData;
           resumeName = selected.document.name || "";
+          resumeMime = selected.document.type || "";
         }
       } else {
         const defaultResume = await window.ImpulsoStorage.getDefaultResume();
@@ -606,6 +626,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         if (defaultResume && defaultResume.fileData) {
           resumeBase64 = defaultResume.fileData;
           resumeName = defaultResume.name || "";
+          resumeMime = defaultResume.type || "";
         }
       }
     }
@@ -632,6 +653,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         "autofill/adapters/ashby.js",
         "autofill/adapters/lever.js",
         "autofill/adapters/workday.js",
+        "autofill/adapters/smartrecruiters.js",
         "content.js"
       ]
     });
@@ -643,7 +665,8 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
       fillDemographics: true,
       resume: {
         resumeBase64: resumeBase64,
-        resumeName: resumeName
+        resumeName: resumeName,
+        resumeMime: resumeMime
       }
     });
 
@@ -653,6 +676,34 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
     }
 
     const summary = (response.report && response.report.summary) || {};
+    const filled = summary.filled || 0;
+    const skipped = summary.skipped || 0;
+    const failedCount = summary.failed || 0;
+    try {
+      const inventory = await buildScanAnswerInventory();
+      const postScan = await scanActiveApplicationForm(tab.id, inventory);
+      if (postScan && !postScan.error) {
+        latestFormScan = postScan;
+        refreshFormScanView();
+      }
+    } catch (scanError) {
+      console.error("Post-autofill rescan failed:", scanError);
+    }
+    const scanView = latestFormScan ? applyScanSkipState(latestFormScan) : null;
+    const readyCount = scanView
+      ? scanView.fields.filter(function (f) {
+          return f && f.fillStatus === "ready";
+        }).length
+      : 0;
+    if (readyCount > 0 && filled === 0 && skipped === 0 && failedCount === 0) {
+      setFormScanStatus(
+        "Autofill did not run. " +
+          readyCount +
+          " ready field(s) were not attempted. Reload the extension and try again.",
+        true
+      );
+      return;
+    }
     const failed = Array.isArray(response.report && response.report.results)
       ? response.report.results.filter(function (r) {
           return r && r.status === "failed";
@@ -671,15 +722,16 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         : "";
 
     setFormScanStatus(
-      "Autofill complete. " +
-        (summary.filled || 0) +
+      "Autofill result: " +
+        filled +
         " filled, " +
-        (summary.skipped || 0) +
+        skipped +
         " skipped, " +
-        (summary.failed || 0) +
+        failedCount +
         " failed." +
-        failHint,
-      Boolean(summary.failed)
+        failHint +
+        (latestFormScan ? " Scan refreshed from the live page." : ""),
+      Boolean(failedCount)
     );
   } catch (error) {
     console.error("Trigger Auto-Apply failed:", error);
@@ -823,6 +875,11 @@ function renderFormScanCard(field) {
     '">' +
     escapeScanHtml(requiredLabel) +
     "</span></div>" +
+    (field.actionHint
+      ? '<div class="form-scan-row"><span class="form-scan-k">Action</span><span class="form-scan-v">' +
+        escapeScanHtml(field.actionHint) +
+        "</span></div>"
+      : "") +
     (field.isSensitive
       ? '<div class="form-scan-sensitive-note">Sensitive — uses only your locally saved answer. Never inferred.</div>'
       : "") +
@@ -959,24 +1016,7 @@ if (scanFormBtn) {
       }
 
       const inventory = await buildScanAnswerInventory();
-
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["autofill.js"]
-      });
-
-      const injection = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: function (answers) {
-          if (!window.ImpulsoAutofill || typeof window.ImpulsoAutofill.scanPage !== "function") {
-            return { error: "Scanner failed to load on this page." };
-          }
-          return window.ImpulsoAutofill.scanPage(answers || {});
-        },
-        args: [inventory]
-      });
-
-      const payload = injection && injection[0] ? injection[0].result : null;
+      const payload = await scanActiveApplicationForm(tab.id, inventory);
       if (!payload || payload.error) {
         setFormScanStatus((payload && payload.error) || "Scan returned no data.", true);
         return;

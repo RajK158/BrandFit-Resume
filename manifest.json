@@ -69,6 +69,18 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://jobs.smartrecruiters.com/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/smartrecruiters.js",
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
     }
   ]
 }

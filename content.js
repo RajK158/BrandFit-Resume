@@ -182,6 +182,14 @@
     if (Workday && typeof Workday.isSupportedPage === "function" && Workday.isSupportedPage()) {
       return "workday";
     }
+    var SmartRecruiters = window.ImpulsoSmartRecruitersAdapter;
+    if (
+      SmartRecruiters &&
+      typeof SmartRecruiters.isSupportedPage === "function" &&
+      SmartRecruiters.isSupportedPage()
+    ) {
+      return "smartrecruiters";
+    }
     return "generic";
   }
 
@@ -275,6 +283,14 @@
         phone: nationalPhoneForSeparateCountryCode(inventory.phone, inventory.phone_country_code)
       });
     }
+    if (ats === "smartrecruiters" && inventory && inventory.phone) {
+      inventory = Object.assign({}, inventory, {
+        phone: nationalPhoneForSeparateCountryCode(
+          inventory.phone,
+          inventory.phone_country_code || "1"
+        )
+      });
+    }
 
     var fillOpts = {
       // Default on: include saved demographic answers automatically.
@@ -284,7 +300,12 @@
       workAuthorization: (profile && profile.workAuthorization) || null,
       handledElements: handledElements
     };
-    var report = fillFromInventory(inventory, fillOpts);
+    // SmartRecruiters fields live in nested Shadow DOM. Generic top-document fill
+    // cannot see them and must not run (or counters stay 0/0/0).
+    var report =
+      ats === "smartrecruiters"
+        ? { results: [], summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 } }
+        : fillFromInventory(inventory, fillOpts);
 
     if (ats === "ashby") {
       var Ashby = window.ImpulsoAshbyAdapter;
@@ -348,9 +369,27 @@
         });
         report = mergeReport(report, workdayReport);
       }
+    } else if (ats === "smartrecruiters") {
+      var SmartRecruiters = window.ImpulsoSmartRecruitersAdapter;
+      if (SmartRecruiters && typeof SmartRecruiters.fillSupportedFields === "function") {
+        var smartRecruitersReport = await SmartRecruiters.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, smartRecruitersReport);
+      }
     }
 
-    uploadResumeIfPresent(resume);
+    if (ats !== "smartrecruiters") {
+      uploadResumeIfPresent(resume);
+    }
     return {
       ok: !report.error,
       error: report.error || "",

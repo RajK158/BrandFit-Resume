@@ -33,6 +33,18 @@ const cases = [
     expected: "email"
   },
   {
+    name: "Confirm your email",
+    label: "Confirm your email",
+    inputType: "email",
+    expected: "email"
+  },
+  {
+    name: "Message to hiring manager",
+    label: "Message to hiring manager",
+    inputType: "textarea",
+    expected: "additional_information"
+  },
+  {
     name: "Phone Number",
     label: "Phone Number",
     inputType: "text",
