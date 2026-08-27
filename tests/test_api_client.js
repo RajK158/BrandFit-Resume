@@ -51,7 +51,7 @@ vm.runInNewContext(
 
 (async () => {
   await window.ImpulsoApi.request("/health", { method: "GET" });
-  assert.strictEqual(requests[0].url, "http://127.0.0.1:8000/health");
+  assert.strictEqual(requests[0].url, "https://impulso-api-h3bj.onrender.com/health");
   assert.strictEqual(
     requests[0].options.headers.get("X-Impulso-Client"),
     "12345678-1234-1234-1234-123456789abc"
