@@ -1,5 +1,4 @@
-// URL pointing to the local FastAPI job-match endpoint
-const JOB_MATCH_API_URL = "http://127.0.0.1:8000/api/v1/analyze-job-match";
+const JOB_MATCH_API_PATH = "/api/v1/analyze-job-match";
 const ACTIVE_SECTION_KEY = "impulsoActiveSection";
 const VALID_SECTIONS = [
   "home",
@@ -1207,7 +1206,7 @@ async function runJobMatchAnalysis(options) {
   if (analyzeBtn) analyzeBtn.disabled = true;
 
   try {
-    const response = await fetch(JOB_MATCH_API_URL, {
+    const response = await window.ImpulsoApi.request(JOB_MATCH_API_PATH, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -1229,12 +1228,12 @@ async function runJobMatchAnalysis(options) {
       throw new Error("Backend returned an invalid response.");
     }
 
-    if (!isValidJobMatchResponse(result)) {
-      throw new Error("Backend returned an invalid match response.");
-    }
-
     if (!response.ok) {
       throw new Error(result.detail || result.message || "HTTP " + response.status);
+    }
+
+    if (!isValidJobMatchResponse(result)) {
+      throw new Error("Backend returned an invalid match response.");
     }
 
     if (result.status === "dev_mode") {
