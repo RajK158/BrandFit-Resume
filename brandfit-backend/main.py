@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
+from starlette.concurrency import run_in_threadpool
 
 from ai import get_ai_provider
 from ai.base import AIProvider, AIProviderError, empty_profile_draft
@@ -187,7 +188,11 @@ async def optimize_resume(
         return provider_or_status
 
     try:
-        result = provider_or_status.analyze_job(payload.user_profile, payload.job_description)
+        result = await run_in_threadpool(
+            provider_or_status.analyze_job,
+            payload.user_profile,
+            payload.job_description,
+        )
         return result
     except Exception as error_context:
         print(f"CRITICAL BACKEND ERROR: {error_context}")
@@ -259,7 +264,8 @@ async def parse_resume(
         }
 
     try:
-        parse_result = provider_or_status.parse_resume(
+        parse_result = await run_in_threadpool(
+            provider_or_status.parse_resume,
             extracted.ai_text,
             detected_links=detected_links,
         )
@@ -333,7 +339,11 @@ async def analyze_job_match(
         return unavailable_job_match_result(provider_or_status)
 
     try:
-        return provider_or_status.analyze_job_match(profile_payload, job_payload)
+        return await run_in_threadpool(
+            provider_or_status.analyze_job_match,
+            profile_payload,
+            job_payload,
+        )
     except Exception as error_context:
         print(f"CRITICAL JOB MATCH ERROR: {type(error_context).__name__}")
         return empty_job_match_result(
