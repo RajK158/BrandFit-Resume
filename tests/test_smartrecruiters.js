@@ -7,6 +7,15 @@ const assert = require("assert");
 
 function loadScript(relPath) {
   const file = path.join(__dirname, "..", relPath);
+  function FakeInputEvent(type, init) {
+    const opts = init || {};
+    this.type = type;
+    this.bubbles = Boolean(opts.bubbles);
+    this.cancelable = Boolean(opts.cancelable);
+    this.composed = Boolean(opts.composed);
+    this.data = opts.data;
+    this.inputType = opts.inputType;
+  }
   const sandbox = { console: console };
   sandbox.window = sandbox;
   sandbox.self = sandbox;
@@ -15,6 +24,19 @@ function loadScript(relPath) {
   sandbox.Uint8Array = Uint8Array;
   sandbox.File = File;
   sandbox.Blob = Blob;
+  sandbox.Event = typeof Event === "function" ? Event : function Event(type, init) {
+    const opts = init || {};
+    this.type = type;
+    this.bubbles = Boolean(opts.bubbles);
+    this.cancelable = Boolean(opts.cancelable);
+    this.composed = Boolean(opts.composed);
+  };
+  sandbox.KeyboardEvent = typeof KeyboardEvent === "function" ? KeyboardEvent : sandbox.Event;
+  sandbox.InputEvent = FakeInputEvent;
+  sandbox.HTMLInputElement =
+    typeof HTMLInputElement === "function"
+      ? HTMLInputElement
+      : function HTMLInputElement() {};
   vm.runInNewContext(fs.readFileSync(file, "utf8"), sandbox, { filename: relPath });
   return sandbox;
 }
@@ -120,6 +142,36 @@ assert.strictEqual(
 );
 assert.strictEqual(
   AF.classifyLabel(
+    "Will you require sponsorship/support (including F-1 STEM OPT, F-1 OPT, F-1 CPT, H-1B or other listed benefits)?",
+    "radio"
+  ).category,
+  "sponsorship_later"
+);
+assert.strictEqual(
+  AF.classifyLabel("Are you a citizen of the country you’ll be employed in?", "radio").category,
+  "employment_country_citizenship"
+);
+assert.strictEqual(
+  AF.classifyLabel(
+    "Are you a citizen of the U.S., a lawful permanent resident of the U.S., or a non-U.S. citizen who is in the U.S. as an asylee or refugee?",
+    "radio"
+  ).category,
+  "us_immigration_status"
+);
+assert.strictEqual(
+  AF.classifyLabel("Are you a citizen of Cuba, Iran, North Korea or Syria?", "radio").category,
+  "sanctioned_country_citizenship"
+);
+assert.strictEqual(AF.classifyLabel("Current University", "text").category, "education_school");
+assert.strictEqual(AF.classifyLabel("Highest education", "select").category, "education_degree");
+assert.strictEqual(AF.classifyLabel("Hispanic or Latino", "radio").category, "hispanic_latino");
+assert.ok(
+  AF.looksLikeCompanySpecificUserConfirmation(
+    "Do you have a Family or Close Friend relationship with anyone employed by the company?"
+  )
+);
+assert.strictEqual(
+  AF.classifyLabel(
     "Do you have (or have a history/record of having) a disability? (definitions)",
     "radio"
   ).category,
@@ -128,6 +180,28 @@ assert.strictEqual(
 assert.strictEqual(
   AF.classifyLabel("Are you a protected veteran? (definitions)", "radio").category,
   "veteran_status"
+);
+assert.strictEqual(
+  AF.classifyLabel(
+    "Have you previously applied for a position with this company?",
+    "radio"
+  ).category,
+  "company_specific"
+);
+assert.strictEqual(
+  AF.classifyLabel(
+    "Are you subject to any export control restrictions that would prevent you from performing this role?",
+    "radio"
+  ).category,
+  "export_control_status"
+);
+assert.ok(
+  AF.looksLikePreviouslyAppliedQuestion("Have you previously applied for a position with this company?")
+);
+assert.ok(
+  AF.looksLikeExportControlRestrictionQuestion(
+    "Are you subject to any export control restrictions that would prevent you from performing this role?"
+  )
 );
 console.log("ok - SmartRecruiters first-page field classification");
 
@@ -366,6 +440,11 @@ function createScanNode(tagName) {
   };
   node.getBoundingClientRect = function () {
     return { width: 24, height: 24, top: 0, left: 0, right: 24, bottom: 24 };
+  };
+  node.dispatchEvent = function (ev) {
+    this.events = this.events || [];
+    this.events.push(ev);
+    return true;
   };
   Object.defineProperty(node, "innerText", {
     get() {
@@ -795,12 +874,17 @@ const COMPLETE_SCREENING_QUESTIONS = SCREENING_QUESTIONS.slice(0, 3)
   .concat(SCREENING_QUESTIONS.slice(3))
   .concat(SCREENING_DEMOGRAPHIC_QUESTIONS);
 
-function wireScreeningRadioGroup(radios) {
+function wireScreeningRadioGroup(radios, groupHost) {
   radios.forEach((radio) => {
     radio.click = function () {
       radios.forEach((other) => {
         other.setAttribute("aria-checked", other === radio ? "true" : "false");
       });
+      if (groupHost) {
+        groupHost.value = radio.getAttribute("value") || "";
+      } else if (radio.parentElement) {
+        radio.parentElement.value = radio.getAttribute("value") || "";
+      }
     };
   });
 }
@@ -1317,6 +1401,639 @@ function buildCompleteScreeningFixture(opts) {
   };
 }
 
+function yesNoFields() {
+  return [
+    { id: "y", label: "Yes", fieldValue: "1" },
+    { id: "n", label: "No", fieldValue: "0" }
+  ];
+}
+
+function optionFields(labels) {
+  return labels.map(function (label, index) {
+    return { id: "o" + index, label: label, fieldValue: String(index) };
+  });
+}
+
+const WD_SPONSOR_LABEL =
+  "Will you require sponsorship/support for this role? This includes F-1 STEM OPT, F-1 OPT, F-1 CPT, H-1B and other listed benefits.";
+const WD_PRIVACY_LABEL =
+  "You declare that you have read and agree to the privacy notice of Western Digital.";
+const WD_FAMILY_LABEL =
+  "Do you have a Family or Close Friend relationship with anyone employed by WD?";
+const WD_EMPLOYED_LABEL = "Have you ever been employed by WD or any subsidiaries?";
+const WD_RESTRICT_LABEL =
+  "Are you currently party to a restrictive employment/consulting/personal-services agreement?";
+const WD_COI_LABEL =
+  "Do you have outside business activities or transactions that may create a conflict of interest with WD?";
+const WD_SANCTION_LABEL = "Are you a citizen of Cuba, Iran, North Korea or Syria?";
+const WD_FOLLOWUP_LABEL =
+  "If Yes to the previous question, have you subsequently obtained citizenship, permanent residence, or asylum elsewhere?";
+
+const WD_SCREENING_QUESTIONS = [
+  { id: "info-welcome", type: "info", label: "Please review the following application questions.", required: false },
+  {
+    id: "uni-1",
+    type: "text",
+    label: "Current University",
+    required: true,
+    questionsFields: []
+  },
+  {
+    id: "major-1",
+    type: "multiselect",
+    label: "Major",
+    required: true,
+    multipleChoice: true,
+    questionsFields: optionFields([
+      "Computer Science/Software Engineering",
+      "Electrical Engineering",
+      "Mechanical Engineering"
+    ])
+  },
+  {
+    id: "edu-1",
+    type: "autocomplete",
+    label: "Highest education",
+    required: true,
+    questionsFields: optionFields(["Bachelor of Science", "Master of Science", "Doctorate"])
+  },
+  {
+    id: "gpa-1",
+    type: "autocomplete",
+    label: "GPA",
+    required: true,
+    questionsFields: optionFields(["Less than 2.0", "2.1-2.5", "2.6-2.9", "3.0-3.4", "3.5 and above"])
+  },
+  {
+    id: "gmonth-1",
+    type: "autocomplete",
+    label: "Graduation month",
+    required: true,
+    questionsFields: optionFields(["January", "June", "December"])
+  },
+  {
+    id: "gyear-1",
+    type: "autocomplete",
+    label: "Graduation year",
+    required: true,
+    questionsFields: optionFields(["2025", "2026", "2027"])
+  },
+  {
+    id: "loc-1",
+    type: "multiselect",
+    label: "Desired work locations",
+    required: true,
+    multipleChoice: true,
+    questionsFields: optionFields([
+      "California - San Jose/Milpitas/Fremont/Roseville",
+      "Colorado - Longmont",
+      "Thailand - Bangkok"
+    ])
+  },
+  {
+    id: "interest-1",
+    type: "multiselect",
+    label: "Areas of interest",
+    required: true,
+    multipleChoice: true,
+    questionsFields: optionFields(["Hardware Engineering", "Software Engineering", "Operations"])
+  },
+  {
+    id: "auth-country",
+    type: "radio",
+    label: "Are you legally authorized or have the legal right to work in the country you have selected?",
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "auth-us",
+    type: "radio",
+    label: "Are you legally authorized to work in the United States?",
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "sponsor-opt",
+    type: "radio",
+    label: WD_SPONSOR_LABEL,
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "citizen-employ",
+    type: "radio",
+    label: "Are you a citizen of the country you’ll be employed in?",
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "citizen-us",
+    type: "radio",
+    label:
+      "Are you a citizen of the U.S., a lawful permanent resident of the U.S., or a non-U.S. citizen who is in the U.S. as an asylee or refugee?",
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "citizen-sanction",
+    type: "radio",
+    label: WD_SANCTION_LABEL,
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "citizen-followup",
+    type: "radio",
+    label: WD_FOLLOWUP_LABEL,
+    required: false,
+    questionsFields: yesNoFields()
+  },
+  { id: "info-export", type: "info", label: "Export control notice.", required: false },
+  {
+    id: "family-wd",
+    type: "radio",
+    label: WD_FAMILY_LABEL,
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "family-detail",
+    type: "text",
+    label: "If yes, please list the name and relationship of your family or close friend.",
+    required: false,
+    questionsFields: []
+  },
+  {
+    id: "employed-wd",
+    type: "radio",
+    label: WD_EMPLOYED_LABEL,
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "restrict-wd",
+    type: "radio",
+    label: WD_RESTRICT_LABEL,
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "coi-wd",
+    type: "radio",
+    label: WD_COI_LABEL,
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "coi-detail",
+    type: "text",
+    label: "If yes, please describe the conflict of interest details.",
+    required: false,
+    questionsFields: []
+  },
+  { id: "info-eeo", type: "info", label: "Equal employment opportunity information.", required: false },
+  {
+    id: "gender-1",
+    type: "autocomplete",
+    label: "Gender",
+    required: true,
+    diversity: true,
+    questionsFields: optionFields(["Male", "Female", "Prefer not to answer"])
+  },
+  {
+    id: "hispanic-1",
+    type: "radio",
+    label: "Hispanic/Latino",
+    required: true,
+    diversity: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "race-1",
+    type: "autocomplete",
+    label: "Race",
+    required: true,
+    diversity: true,
+    questionsFields: optionFields(["White", "Asian", "Black or African American"])
+  },
+  {
+    id: "disability-1",
+    type: "radio",
+    label: "Do you have a disability?",
+    required: true,
+    diversity: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "disability-hist",
+    type: "radio",
+    label: "Do you have (or have a history/record of having) a disability? (definitions)",
+    required: true,
+    diversity: true,
+    questionsFields: [
+      {
+        id: "dh1",
+        label: "Yes, I have a disability, or have a history/record of having a disability",
+        fieldValue: "1"
+      },
+      {
+        id: "dh2",
+        label: "No, I don't have a disability, or a history/record of having a disability",
+        fieldValue: "0"
+      },
+      { id: "dh3", label: "I don't wish to answer", fieldValue: "9" }
+    ]
+  },
+  {
+    id: "veteran-1",
+    type: "radio",
+    label: "Are you a veteran?",
+    required: true,
+    diversity: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "veteran-protected",
+    type: "radio",
+    label: "Are you a protected veteran? (definitions)",
+    required: true,
+    diversity: true,
+    questionsFields: [
+      { id: "vp1", label: "I am a protected veteran", fieldValue: "1" },
+      { id: "vp2", label: "I am not a protected veteran", fieldValue: "0" },
+      { id: "vp3", label: "I don't wish to answer", fieldValue: "9" }
+    ]
+  },
+  {
+    id: "export-extra",
+    type: "radio",
+    label: "Are you subject to any export control restrictions that would prevent you from performing this role?",
+    required: true,
+    questionsFields: yesNoFields()
+  },
+  {
+    id: "applied-before",
+    type: "radio",
+    label: "Have you previously applied for a position with this company?",
+    required: false,
+    questionsFields: yesNoFields()
+  }
+];
+
+function wireScreeningMultiSelect(input, listbox, optionLabels, host) {
+  wireScreeningAutocomplete(input, listbox, optionLabels, {}, host);
+  const originalDispatch = input.dispatchEvent;
+  (listbox.children || []).forEach((opt, index) => {
+    function bind(el) {
+      const prev = el.click;
+      el.click = function () {
+        if (prev) prev.call(el);
+        const label = optionLabels[index];
+        const existing = (host.shadowRoot && host.shadowRoot.children) || [];
+        const already = existing.some(function (child) {
+          return (
+            (child.tagName || "").toLowerCase() === "spl-chip" &&
+            String(child.innerText || "").trim() === label
+          );
+        });
+        if (!already) {
+          const chip = createScanNode("spl-chip");
+          chip.innerText = label;
+          if (host.shadowRoot && host.shadowRoot.children) {
+            chip.parentNode = host.shadowRoot;
+            chip._rootNode = host.shadowRoot;
+            host.shadowRoot.children.push(chip);
+          }
+        }
+        input.value = "";
+        input.setAttribute("aria-expanded", "false");
+      };
+      (el.children || []).forEach(bind);
+    }
+    bind(opt);
+  });
+  input.dispatchEvent = function (ev) {
+    return originalDispatch.call(input, ev);
+  };
+}
+
+function buildWdSelectHost(question, multi, top) {
+  const tag = multi ? "spl-multiselect-autocomplete" : "spl-autocomplete";
+  const host = createScanNode(tag);
+  const labels = (question.questionsFields || []).map((field) => field.label);
+  host.id = "question_" + question.id;
+  host.setAttribute("id", "question_" + question.id);
+  host.setAttribute("data-spl-field", "");
+  host.setAttribute("closeonselect", "true");
+  assignRect(host, { width: 240, height: 240, top: top, left: 0, right: 240, bottom: top + 240 });
+  const splInput = createScanNode("spl-input");
+  const input = createScanNode("input");
+  input.type = "text";
+  input.setAttribute("type", "text");
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-expanded", "false");
+  input.value = "";
+  const listbox = createScanNode("div");
+  listbox.setAttribute("role", "listbox");
+  labels.forEach((label, index) => {
+    const option = createNestedSplSelectOption(label, String(index), question.id + "-opt-" + index);
+    assignRect(option, {
+      width: 220,
+      height: 32,
+      top: top + 48 + index * 36,
+      left: 8,
+      right: 228,
+      bottom: top + 80 + index * 36
+    });
+    listbox.appendChild(option);
+  });
+  attachShadow(splInput, [input]);
+  attachShadow(host, [splInput, listbox]);
+  if (multi) wireScreeningMultiSelect(input, listbox, labels, host);
+  else wireScreeningAutocomplete(input, listbox, labels, {}, host);
+  return { host: host, input: input, listbox: listbox };
+}
+
+function buildWdTextHost(question) {
+  const host = createScanNode("spl-input");
+  host.id = "question_" + question.id;
+  host.setAttribute("id", "question_" + question.id);
+  host.setAttribute("data-spl-field", "");
+  const input = createScanNode("input");
+  input.type = "text";
+  input.setAttribute("type", "text");
+  input.value = "";
+  input.events = [];
+  input.dispatchEvent = function (ev) {
+    input.events.push(ev);
+    return true;
+  };
+  attachShadow(host, [input]);
+  return { host: host, input: input };
+}
+
+function buildWdRadioGroup(question, index) {
+  const group = createScanNode("spl-radio-group");
+  group.id = "spl-form-element_" + (20 + index);
+  group.setAttribute("id", "spl-form-element_" + (20 + index));
+  const slot = createScanNode("span");
+  slot.setAttribute("slot", "label-content");
+  slot.innerText = question.label;
+  group.appendChild(slot);
+  const radios = (question.questionsFields || []).map((field) => {
+    const radio = createScanNode("spl-radio");
+    radio.setAttribute("label", field.label);
+    radio.setAttribute("value", String(field.fieldValue));
+    radio.setAttribute("role", "radio");
+    radio.setAttribute("aria-checked", "false");
+    group.appendChild(radio);
+    return radio;
+  });
+  wireScreeningRadioGroup(radios, group);
+  return { host: group, radios: radios, question: question };
+}
+
+function buildWdScreeningFixture(opts) {
+  const options = opts || {};
+  const empty = buildEmptyApplicationDoc();
+  const host = createScanNode("sr-screening-questions-form");
+  host.setAttribute("data-test", "screening-questions-form");
+  const definitionQuestions = WD_SCREENING_QUESTIONS.map(function (question) {
+    if (
+      options.definitionOmitsSelectOptions &&
+      (question.type === "autocomplete" || question.type === "multiselect")
+    ) {
+      return Object.assign({}, question, { questionsFields: [] });
+    }
+    return question;
+  });
+  host.setAttribute("definition", JSON.stringify({ questions: definitionQuestions }));
+  const children = [];
+  const byId = {};
+  let selectTop = 0;
+  WD_SCREENING_QUESTIONS.forEach(function (question, index) {
+    if (question.type === "info") return;
+    if (question.type === "radio") {
+      const radio = buildWdRadioGroup(question, index);
+      children.push(radio.host);
+      byId[question.id] = radio;
+      return;
+    }
+    if (question.type === "text") {
+      const text = buildWdTextHost(question);
+      children.push(text.host);
+      byId[question.id] = text;
+      return;
+    }
+    const multi = question.type === "multiselect" || question.multipleChoice;
+    const select = buildWdSelectHost(question, multi, selectTop);
+    selectTop += 280;
+    children.push(select.host);
+    byId[question.id] = select;
+  });
+  attachShadow(host, children);
+  empty.doc.body.appendChild(host);
+  stampOwnerDocument(host, empty.doc);
+  const selectHosts = children.filter(function (el) {
+    const tag = (el.tagName || "").toLowerCase();
+    return tag === "spl-autocomplete" || tag === "spl-multiselect-autocomplete";
+  });
+  wireDemographicHitTesting(empty.doc, selectHosts);
+
+  const consent = createScanNode("section");
+  const notice = createScanNode("p");
+  notice.innerText = WD_PRIVACY_LABEL;
+  const checkbox = createScanNode("spl-checkbox");
+  checkbox.setAttribute("role", "checkbox");
+  checkbox.setAttribute("aria-checked", "false");
+  checkbox.setAttribute("aria-label", "*");
+  const innerBox = createScanNode("input");
+  innerBox.type = "checkbox";
+  innerBox.setAttribute("type", "checkbox");
+  innerBox.checked = false;
+  innerBox.click = function () {
+    innerBox.checked = !innerBox.checked;
+    checkbox.setAttribute("aria-checked", innerBox.checked ? "true" : "false");
+  };
+  checkbox.click = function () {
+    innerBox.click();
+  };
+  attachShadow(checkbox, [innerBox]);
+  consent.appendChild(notice);
+  consent.appendChild(checkbox);
+  empty.doc.body.appendChild(consent);
+
+  const staleFirst = createScanNode("input");
+  staleFirst.type = "text";
+  staleFirst.setAttribute("type", "text");
+  staleFirst.setAttribute("aria-label", "First name");
+  staleFirst.isConnected = false;
+  empty.doc.body.appendChild(staleFirst);
+
+  let navClicks = 0;
+  ["Back", "Next", "Submit application"].forEach(function (label) {
+    const button = createScanNode("button");
+    button.innerText = label;
+    button.setAttribute("type", label === "Submit application" ? "submit" : "button");
+    button.click = function () {
+      navClicks += 1;
+    };
+    empty.doc.body.appendChild(button);
+  });
+
+  if (!options.omitJsonLd) {
+    const jsonLd = createScanNode("script");
+    jsonLd.setAttribute("type", "application/ld+json");
+    jsonLd.textContent = JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "JobPosting",
+      title: "Software Engineer",
+      jobLocation: {
+        "@type": "Place",
+        address: {
+          "@type": "PostalAddress",
+          addressLocality: "San Jose",
+          addressRegion: "CA",
+          addressCountry: "United States"
+        }
+      }
+    });
+    empty.doc.body.appendChild(jsonLd);
+  }
+
+  return {
+    doc: empty.doc,
+    screeningHost: host,
+    byId: byId,
+    privacyCheckbox: checkbox,
+    navClicks: function () {
+      return navClicks;
+    },
+    ocContext: {
+      consent: {
+        consentScopeConfigs: [{ required: true, checkboxRequired: true, label: WD_PRIVACY_LABEL }]
+      }
+    }
+  };
+}
+
+function wdInventory() {
+  return AF.buildAnswerInventory(
+    {
+      education: [
+        {
+          institution: "California State University, Long Beach",
+          degree: "Master of Science",
+          field: "Computer Science",
+          endDate: "2026-12",
+          gpa: "3.8",
+          isCurrent: true
+        }
+      ],
+      workAuthorization: {
+        legallyAuthorizedToWork: "Yes",
+        requireSponsorshipNow: "No",
+        requireSponsorshipFuture: "Yes",
+        citizenOfEmploymentCountry: "No",
+        usCitizenOrLpr: "No",
+        sanctionedCountryCitizen: "No"
+      },
+      demographics: {
+        gender: "Man",
+        hispanicLatino: "No",
+        raceEthnicity: "Asian",
+        disabilityStatus: "No, I don't have a disability, or a history/record of having a disability",
+        veteranStatus: "No"
+      }
+    },
+    {
+      currentJobTitle: "Software Engineer",
+      currentJobLocation: "San Jose, CA, United States"
+    }
+  );
+}
+
+function wdProductionMasterProfile() {
+  return {
+    personal: { firstName: "Raj", lastName: "Patel" },
+    education: [
+      {
+        institution: "Earlier University",
+        degree: "Bachelor of Science",
+        field: "Computer Science",
+        endDate: "2024-05",
+        gpa: "3.67",
+        isCurrent: true
+      },
+      {
+        institution: "California State University, Long Beach",
+        degree: "Master of Science",
+        field: "Computer Science",
+        endDate: "2026-12",
+        gpa: "3.8",
+        isCurrent: false
+      }
+    ],
+    workAuthorization: {
+      legallyAuthorizedToWork: "Yes",
+      requireSponsorshipNow: "No",
+      requireSponsorshipFuture: "Yes",
+      citizenOfEmploymentCountry: "No",
+      usCitizenOrLpr: "No",
+      sanctionedCountryCitizen: "No"
+    },
+    applicationPreferences: {
+      preferredLocations: "San Francisco, Chicago, Boston, New York"
+    },
+    demographics: {
+      gender: "Man",
+      hispanicLatino: "No",
+      raceEthnicity: "Asian",
+      disabilityStatus: "No, I don't have a disability, or a history/record of having a disability",
+      veteranStatus: "No"
+    },
+    commonAnswers: {}
+  };
+}
+
+function wdProductionInventory(extras) {
+  const payload = AF.resolveAutofillProfilePayload(wdProductionMasterProfile());
+  return AF.resolveAnswerInventory(payload, extras || {
+    currentJobTitle: "Software Engineer",
+    currentJobLocation: "San Jose, CA, United States"
+  });
+}
+
+const WD_GPA_RANGE_OPTIONS = ["Less than 2.0", "2.1-2.5", "2.6-2.9", "3.0-3.4", "3.5 and above"];
+assert.strictEqual(AF.mapNumericGpaToRangeOption("3.8", WD_GPA_RANGE_OPTIONS), "3.5 and above");
+assert.strictEqual(AF.mapNumericGpaToRangeOption("3.67", WD_GPA_RANGE_OPTIONS), "3.5 and above");
+assert.strictEqual(AF.mapNumericGpaToRangeOption("3.4", WD_GPA_RANGE_OPTIONS), "3.0-3.4");
+assert.strictEqual(AF.gpaForGenericScreeningQuestion(wdProductionMasterProfile().education), "3.8");
+(function testProductionInventoryUsesHighestDegreeGpa() {
+  const inv = wdProductionInventory();
+  assert.strictEqual(inv.education_gpa, "3.8");
+  assert.strictEqual(inv.preferred_locations, "San Francisco, Chicago, Boston, New York");
+  assert.strictEqual(inv.current_job_location, "San Jose, CA, United States");
+  assert.strictEqual(inv.current_job_title, "Software Engineer");
+  assert.strictEqual(inv.employment_country_citizenship, "No");
+  assert.strictEqual(inv.us_immigration_status, "No");
+  assert.strictEqual(inv.sanctioned_country_citizenship, "No");
+  const locField = {
+    category: "preferred_locations",
+    options: [
+      { label: "California - San Jose/Milpitas/Fremont/Roseville" },
+      { label: "Colorado - Longmont" },
+      { label: "Thailand - Bangkok" }
+    ]
+  };
+  assert.strictEqual(
+    AF.uniqueScreeningOptionMatch(locField, inv),
+    "California - San Jose/Milpitas/Fremont/Roseville"
+  );
+  assert.ok(AF.uniqueScreeningOptionMatch(locField, inv).indexOf("San Francisco") === -1);
+})();
+console.log("ok - production GPA source of truth and location mapping");
+
 assert.strictEqual(AF.parseSmartRecruitersScreeningDefinition("{not-json").length, 0);
 assert.strictEqual(
   AF.parseSmartRecruitersScreeningDefinition(JSON.stringify({ questions: SCREENING_QUESTIONS })).length,
@@ -1328,9 +2045,17 @@ assert.strictEqual(
   ).length,
   5
 );
+assert.strictEqual(WD_SCREENING_QUESTIONS.length, 33);
+assert.strictEqual(WD_SCREENING_QUESTIONS.filter((q) => q.type === "info").length, 3);
 assert.strictEqual(
-  AF.parseSmartRecruitersScreeningQuestions(JSON.stringify({ questions: COMPLETE_SCREENING_QUESTIONS })).length,
-  8
+  AF.parseSmartRecruitersScreeningQuestions(JSON.stringify({ questions: WD_SCREENING_QUESTIONS })).length,
+  33
+);
+assert.strictEqual(
+  AF.parseSmartRecruitersScreeningQuestions(JSON.stringify({ questions: WD_SCREENING_QUESTIONS })).filter(
+    (q) => q.type !== "info"
+  ).length,
+  30
 );
 assert.strictEqual(
   AF.looksLikeSmartRecruitersEmployeeReferral(SCREENING_REFERRAL_QUESTION.label),
@@ -1358,8 +2083,8 @@ assert.strictEqual(
     { label: "I am a protected veteran", value: "1" },
     { label: "I am not a protected veteran", value: "0" },
     { label: "I don't wish to answer", value: "9" }
-  ]),
-  null
+  ]).label,
+  "I am not a protected veteran"
 );
 assert.ok(
   /protected veteran/i.test(
@@ -1509,6 +2234,100 @@ console.log("ok - SmartRecruiters screening radio scan");
   assert.strictEqual(radioReady.length, 0);
 })();
 console.log("ok - SmartRecruiters complete screening scan");
+
+(function testWesternDigitalDefinitionScan() {
+  const fixture = buildWdScreeningFixture();
+  const loc = {
+    href: "https://jobs.smartrecruiters.com/oneclick-ui/company/WesternDigital/publication/abc/screening",
+    hostname: "jobs.smartrecruiters.com",
+    pathname: "/oneclick-ui/company/WesternDigital/publication/abc/screening"
+  };
+  autofillSandbox.location = loc;
+  autofillSandbox.document = fixture.doc;
+  autofillSandbox.__OC_CONTEXT__ = fixture.ocContext;
+  const inv = wdInventory();
+  const parsed = AF.parseSmartRecruitersScreeningQuestions(fixture.screeningHost.getAttribute("definition"));
+  assert.strictEqual(parsed.length, 33);
+  assert.ok(parsed.every((q) => q.type !== "info" || q.label));
+  const scan = AF.scanDocument(fixture.doc, inv);
+  const nonInfo = parsed.filter((q) => q.type !== "info");
+  assert.strictEqual(scan.fields.length, nonInfo.length + 1, "one logical field per non-info question plus privacy");
+  assert.ok(!scan.fields.some((field) => !field.label || field.label === "*"));
+  assert.ok(!scan.fields.some((field) => field.category === "first_name"));
+  assert.strictEqual(scan.fields.filter((field) => field.category === "unknown" && !field.label).length, 0);
+
+  function fieldFor(id) {
+    return scan.fields.find((field) => field.screeningQuestionId === id);
+  }
+  assert.strictEqual(fieldFor("uni-1").category, "education_school");
+  assert.strictEqual(fieldFor("uni-1").id, "uni-1");
+  assert.strictEqual(fieldFor("major-1").category, "education_discipline");
+  assert.strictEqual(fieldFor("edu-1").category, "education_degree");
+  assert.strictEqual(fieldFor("gpa-1").category, "education_gpa");
+  assert.strictEqual(fieldFor("gmonth-1").category, "education_end_month");
+  assert.strictEqual(fieldFor("gyear-1").category, "education_end_year");
+  assert.strictEqual(fieldFor("loc-1").category, "preferred_locations");
+  assert.strictEqual(fieldFor("interest-1").category, "areas_of_interest");
+  assert.strictEqual(fieldFor("sponsor-opt").category, "sponsorship_later");
+  assert.strictEqual(fieldFor("citizen-employ").category, "employment_country_citizenship");
+  assert.strictEqual(fieldFor("citizen-us").category, "us_immigration_status");
+  assert.strictEqual(fieldFor("citizen-sanction").category, "sanctioned_country_citizenship");
+  assert.notStrictEqual(fieldFor("citizen-employ").category, "country");
+  assert.strictEqual(fieldFor("family-wd").category, "company_specific");
+  assert.strictEqual(fieldFor("employed-wd").category, "company_specific");
+  assert.strictEqual(fieldFor("restrict-wd").category, "company_specific");
+  assert.strictEqual(fieldFor("coi-wd").category, "company_specific");
+  assert.strictEqual(fieldFor("applied-before").category, "company_specific");
+  assert.strictEqual(fieldFor("applied-before").fillStatus, "skipped");
+  assert.strictEqual(fieldFor("export-extra").category, "export_control_status");
+  assert.notStrictEqual(fieldFor("export-extra").category, "unknown");
+  assert.ok(
+    !scan.fields.some((field) => field.category === "unknown"),
+    "recognized conditional and confirmation questions must not stay Unknown"
+  );
+  assert.strictEqual(fieldFor("family-wd").fillStatus, "skipped");
+  assert.strictEqual(fieldFor("family-detail").conditionalState, "blocked");
+  assert.strictEqual(fieldFor("coi-detail").conditionalState, "blocked");
+  assert.strictEqual(fieldFor("citizen-followup").conditionalState, "blocked");
+  assert.strictEqual(fieldFor("gender-1").category, "gender");
+  assert.strictEqual(fieldFor("hispanic-1").category, "hispanic_latino");
+  assert.strictEqual(fieldFor("race-1").category, "race_ethnicity");
+  const privacy = scan.fields.find((field) => field.category === "privacy_consent");
+  assert.ok(privacy);
+  assert.strictEqual(privacy.label, WD_PRIVACY_LABEL);
+  assert.strictEqual(privacy.fillStatus, "missing");
+  assert.strictEqual(privacy.actionHint, "User confirmation required");
+
+  [
+    "uni-1",
+    "major-1",
+    "edu-1",
+    "gpa-1",
+    "gmonth-1",
+    "gyear-1",
+    "loc-1",
+    "interest-1",
+    "auth-country",
+    "auth-us",
+    "sponsor-opt",
+    "citizen-employ",
+    "citizen-us",
+    "citizen-sanction",
+    "gender-1",
+    "hispanic-1",
+    "race-1"
+  ].forEach(function (id) {
+    assert.strictEqual(fieldFor(id).fillStatus, "ready", id + " should be ready to fill");
+  });
+
+  const ignored = ["family-wd", "employed-wd", "restrict-wd", "coi-wd", "family-detail", "coi-detail", "citizen-followup"];
+  ignored.forEach(function (id) {
+    assert.notStrictEqual(fieldFor(id).fillStatus, "ready", id + " must not be ready");
+    assert.notStrictEqual(fieldFor(id).category, "unknown", id + " must not be unknown");
+  });
+  assert.ok(scan.fields.every((field) => field.inputType !== "radio" || field.options.length > 0));
+})();
+console.log("ok - Western Digital definition-driven screening scan");
 
 (function testSmartRecruitersResumePreflightRouting() {
   const page1 = buildSmartRecruitersResumeFixture("");
@@ -2197,9 +3016,284 @@ console.log("ok - SmartRecruiters screening demographic matching");
       });
     }).then(function () {
       console.log("ok - SmartRecruiters screening demographic autocomplete fill");
-    adapterSandbox.ImpulsoAutofill = AF;
-    adapterSandbox.setTimeout = setTimeout;
-    const page1 = buildSmartRecruitersResumeFixture("");
+      adapterSandbox.ImpulsoAutofill = AF;
+      adapterSandbox.setTimeout = setTimeout;
+      const wdLoc = {
+        href: "https://jobs.smartrecruiters.com/oneclick-ui/company/WesternDigital/publication/abc/screening",
+        hostname: "jobs.smartrecruiters.com",
+        pathname: "/oneclick-ui/company/WesternDigital/publication/abc/screening"
+      };
+      const wdFixture = buildWdScreeningFixture();
+      adapterSandbox.location = wdLoc;
+      adapterSandbox.document = wdFixture.doc;
+      autofillSandbox.location = wdLoc;
+      autofillSandbox.document = wdFixture.doc;
+      autofillSandbox.__OC_CONTEXT__ = wdFixture.ocContext;
+      const inventory = wdInventory();
+      return SR.fillSupportedFields({
+        root: wdFixture.doc,
+        inventory: inventory,
+        resume: null
+      }).then(function (report) {
+        const uni = wdFixture.byId["uni-1"];
+        assert.strictEqual(uni.input.value, "California State University, Long Beach");
+        assert.ok(
+          (uni.input.events || []).some(function (ev) {
+            return ev && ev.type === "input" && ev.composed && ev.inputType === "insertText";
+          }),
+          "university fill must dispatch composed InputEvent insertText"
+        );
+        assert.strictEqual(wdFixture.byId["edu-1"].input.value, "Master of Science");
+        assert.strictEqual(wdFixture.byId["gpa-1"].input.value, "3.5 and above");
+        assert.strictEqual(wdFixture.byId["gmonth-1"].input.value, "December");
+        assert.strictEqual(wdFixture.byId["gyear-1"].input.value, "2026");
+        assert.strictEqual(wdFixture.byId["gender-1"].input.value, "Male");
+        assert.strictEqual(wdFixture.byId["race-1"].input.value, "Asian");
+        assert.strictEqual(wdFixture.byId["edu-1"].input.getAttribute("aria-expanded"), "false");
+        assert.ok(wdFixture.byId["edu-1"].input.dispatchedKeys.indexOf("ArrowDown") === -1);
+        assert.ok(wdFixture.byId["major-1"].input.value === "");
+        assert.ok(
+          AF.readSmartRecruitersMultiselectValue(wdFixture.byId["major-1"].host).indexOf(
+            "Computer Science/Software Engineering"
+          ) !== -1
+        );
+        assert.ok(
+          AF.readSmartRecruitersMultiselectValue(wdFixture.byId["loc-1"].host).indexOf(
+            "California - San Jose/Milpitas/Fremont/Roseville"
+          ) !== -1
+        );
+        assert.ok(
+          AF.readSmartRecruitersMultiselectValue(wdFixture.byId["interest-1"].host).indexOf(
+            "Software Engineering"
+          ) !== -1
+        );
+        function selectedLabel(id) {
+          const radios = wdFixture.byId[id].radios;
+          const selected = radios.filter((radio) => radio.getAttribute("aria-checked") === "true");
+          assert.strictEqual(selected.length, 1, id + " should have exactly one aria-checked option");
+          return selected[0].getAttribute("label");
+        }
+        assert.strictEqual(selectedLabel("sponsor-opt"), "Yes");
+        assert.strictEqual(selectedLabel("citizen-employ"), "No");
+        assert.strictEqual(selectedLabel("citizen-us"), "No");
+        assert.strictEqual(selectedLabel("citizen-sanction"), "No");
+        assert.strictEqual(selectedLabel("hispanic-1"), "No");
+        assert.strictEqual(selectedLabel("auth-country"), "Yes");
+        assert.strictEqual(selectedLabel("auth-us"), "Yes");
+        ["family-wd", "employed-wd", "restrict-wd", "coi-wd", "citizen-followup"].forEach(function (id) {
+          const selected = wdFixture.byId[id].radios.filter(
+            (radio) => radio.getAttribute("aria-checked") === "true"
+          );
+          assert.strictEqual(selected.length, 0, id + " must remain untouched");
+        });
+        assert.strictEqual(wdFixture.byId["family-detail"].input.value, "");
+        assert.strictEqual(wdFixture.byId["coi-detail"].input.value, "");
+        assert.strictEqual(wdFixture.privacyCheckbox.getAttribute("aria-checked"), "false");
+        assert.strictEqual(wdFixture.navClicks(), 0);
+        const failedIgnored = (report.results || []).filter(function (row) {
+          return (
+            row.status === "failed" &&
+            /family|employed by wd|restrictive|conflict of interest|privacy/i.test(row.label || "")
+          );
+        });
+        assert.strictEqual(failedIgnored.length, 0);
+        const post = AF.scanDocument(wdFixture.doc, inventory);
+        [
+          "uni-1",
+          "major-1",
+          "edu-1",
+          "gpa-1",
+          "gmonth-1",
+          "gyear-1",
+          "loc-1",
+          "interest-1",
+          "sponsor-opt",
+          "citizen-employ",
+          "gender-1",
+          "hispanic-1",
+          "race-1"
+        ].forEach(function (id) {
+          const field = post.fields.find((item) => item.screeningQuestionId === id);
+          assert.strictEqual(field.fillStatus, "completed", id + " should be already completed after fill");
+        });
+        assert.ok(!post.fields.some((field) => field.fillStatus === "ready" && field.screeningQuestionId === "uni-1"));
+        assert.strictEqual(
+          post.fields.find((field) => field.screeningQuestionId === "citizen-followup").conditionalState,
+          "not_applicable"
+        );
+        assert.strictEqual(
+          post.fields.find((field) => field.category === "privacy_consent").fillStatus,
+          "missing"
+        );
+        console.log("ok - Western Digital screening autofill and live rescan");
+        adapterSandbox.ImpulsoAutofill = AF;
+        adapterSandbox.setTimeout = setTimeout;
+        const prodLoc = {
+          href: "https://jobs.smartrecruiters.com/oneclick-ui/company/WesternDigital/publication/abc/screening",
+          hostname: "jobs.smartrecruiters.com",
+          pathname: "/oneclick-ui/company/WesternDigital/publication/abc/screening"
+        };
+        const prodFixture = buildWdScreeningFixture({ definitionOmitsSelectOptions: true });
+        adapterSandbox.location = prodLoc;
+        adapterSandbox.document = prodFixture.doc;
+        autofillSandbox.location = prodLoc;
+        autofillSandbox.document = prodFixture.doc;
+        autofillSandbox.__OC_CONTEXT__ = prodFixture.ocContext;
+        function assertEmptySupported(fx) {
+          ["uni-1", "major-1", "edu-1", "gpa-1", "gmonth-1", "gyear-1", "loc-1", "interest-1", "gender-1", "race-1"].forEach(
+            function (id) {
+              assert.strictEqual(fx.byId[id].input.value, "", id + " must start empty");
+            }
+          );
+          ["citizen-employ", "citizen-us", "citizen-sanction", "family-wd", "employed-wd", "restrict-wd", "coi-wd", "citizen-followup"].forEach(
+            function (id) {
+              const selected = fx.byId[id].radios.filter(function (radio) {
+                return radio.getAttribute("aria-checked") === "true";
+              });
+              assert.strictEqual(selected.length, 0, id + " must start blank");
+            }
+          );
+          assert.strictEqual(fx.privacyCheckbox.getAttribute("aria-checked"), "false");
+        }
+        assertEmptySupported(prodFixture);
+        const prodInventory = wdProductionInventory();
+        assert.strictEqual(prodInventory.education_gpa, "3.8");
+        assert.strictEqual(prodInventory.preferred_locations, "San Francisco, Chicago, Boston, New York");
+        return SR.fillSupportedFields({
+          root: prodFixture.doc,
+          inventory: prodInventory,
+          resume: null
+        }).then(function (prodReport) {
+          const filled = (prodReport.results || []).filter(function (row) {
+            return row.status === "filled";
+          });
+          assert.ok((prodReport.summary && prodReport.summary.filled) > 0);
+          assert.ok(
+            AF.readSmartRecruitersMultiselectValue(prodFixture.byId["major-1"].host).indexOf(
+              "Computer Science/Software Engineering"
+            ) !== -1,
+            "Major must resolve to Computer Science/Software Engineering"
+          );
+          assert.strictEqual(prodFixture.byId["gpa-1"].input.value, "3.5 and above");
+          assert.ok(
+            AF.readSmartRecruitersMultiselectValue(prodFixture.byId["loc-1"].host).indexOf(
+              "California - San Jose/Milpitas/Fremont/Roseville"
+            ) !== -1,
+            "San Jose job location must map to the California San Jose metro option"
+          );
+          assert.ok(
+            AF.readSmartRecruitersMultiselectValue(prodFixture.byId["interest-1"].host).indexOf(
+              "Software Engineering"
+            ) !== -1,
+            "Software Engineer must map to Software Engineering"
+          );
+          function selectedLabel(id) {
+            const radios = prodFixture.byId[id].radios;
+            const selected = radios.filter(function (radio) {
+              return radio.getAttribute("aria-checked") === "true";
+            });
+            assert.strictEqual(selected.length, 1, id + " should have exactly one aria-checked option");
+            return selected[0].getAttribute("label");
+          }
+          assert.strictEqual(selectedLabel("citizen-employ"), "No");
+          assert.strictEqual(selectedLabel("citizen-us"), "No");
+          assert.strictEqual(selectedLabel("citizen-sanction"), "No");
+          ["family-wd", "employed-wd", "restrict-wd", "coi-wd", "citizen-followup"].forEach(function (id) {
+            const selected = prodFixture.byId[id].radios.filter(function (radio) {
+              return radio.getAttribute("aria-checked") === "true";
+            });
+            assert.strictEqual(selected.length, 0, id + " must remain untouched");
+          });
+          assert.strictEqual(prodFixture.byId["family-detail"].input.value, "");
+          assert.strictEqual(prodFixture.byId["coi-detail"].input.value, "");
+          assert.strictEqual(prodFixture.privacyCheckbox.getAttribute("aria-checked"), "false");
+          ["education_discipline", "education_gpa", "preferred_locations", "areas_of_interest", "employment_country_citizenship", "us_immigration_status"].forEach(
+            function (category) {
+              const bad = (prodReport.results || []).filter(function (row) {
+                return row.category === category && (row.status === "skipped" || row.status === "failed");
+              });
+              assert.strictEqual(bad.length, 0, category + " must not be skipped or failed");
+            }
+          );
+          const sanctionedRows = (prodReport.results || []).filter(function (row) {
+            return row.category === "sanctioned_country_citizenship";
+          });
+          assert.ok(
+            sanctionedRows.some(function (row) {
+              return row.status === "filled" && /cuba|iran|north korea|syria/i.test(row.label || "");
+            }),
+            "sanctioned-country citizenship parent must be filled"
+          );
+          assert.ok(
+            sanctionedRows.filter(function (row) {
+              return /if yes|subsequently obtained/i.test(row.label || "");
+            }).every(function (row) {
+              return row.status === "skipped";
+            }),
+            "sanctioned-country follow-up must stay skipped"
+          );
+          const post = AF.scanDocument(prodFixture.doc, prodInventory);
+          [
+            "major-1",
+            "gpa-1",
+            "loc-1",
+            "interest-1",
+            "citizen-employ",
+            "citizen-us",
+            "citizen-sanction"
+          ].forEach(function (id) {
+            const field = post.fields.find(function (item) {
+              return item.screeningQuestionId === id;
+            });
+            assert.ok(field, id + " should be present after fill");
+            assert.strictEqual(field.fillStatus, "completed", id + " should be Already completed");
+          });
+          assert.ok(
+            !post.fields.some(function (field) {
+              return field.category === "unknown";
+            }),
+            "no remaining unexplained Unknown fields"
+          );
+          assert.strictEqual(prodFixture.navClicks(), 0);
+          console.log("ok - production-path Western Digital Auto-Apply");
+          const gpa367Profile = wdProductionMasterProfile();
+          gpa367Profile.education = [
+            {
+              institution: "Earlier University",
+              degree: "Bachelor of Science",
+              field: "Computer Science",
+              endDate: "2024-05",
+              gpa: "3.67",
+              isCurrent: true
+            }
+          ];
+          const gpa367Inventory = AF.resolveAnswerInventory(
+            AF.resolveAutofillProfilePayload(gpa367Profile),
+            {
+              currentJobTitle: "Software Engineer",
+              currentJobLocation: "San Jose, CA, United States"
+            }
+          );
+          assert.strictEqual(gpa367Inventory.education_gpa, "3.67");
+          const gpaFixture = buildWdScreeningFixture({ definitionOmitsSelectOptions: true });
+          adapterSandbox.document = gpaFixture.doc;
+          autofillSandbox.document = gpaFixture.doc;
+          autofillSandbox.__OC_CONTEXT__ = gpaFixture.ocContext;
+          return SR.fillSupportedFields({
+            root: gpaFixture.doc,
+            inventory: gpa367Inventory,
+            resume: null
+          }).then(function (gpaReport) {
+            assert.strictEqual(gpaFixture.byId["gpa-1"].input.value, "3.5 and above");
+            const gpaRow = (gpaReport.results || []).find(function (row) {
+              return row.category === "education_gpa";
+            });
+            assert.ok(gpaRow, "GPA row must be present in the production-path report");
+            assert.strictEqual(gpaRow.status, "filled");
+            console.log("ok - production-path GPA 3.67 maps to 3.5 and above");
+            adapterSandbox.ImpulsoAutofill = AF;
+            adapterSandbox.setTimeout = setTimeout;
+            const page1 = buildSmartRecruitersResumeFixture("");
     adapterSandbox.location = {
       href: "https://jobs.smartrecruiters.com/oneclick-ui/company/Socotec/publication/abc",
       hostname: "jobs.smartrecruiters.com",
@@ -2287,6 +3381,9 @@ console.log("ok - SmartRecruiters screening demographic matching");
         pathname: "/apply"
       };
       return SR.fillSupportedFields({ inventory: { first_name: "Raj" } });
+    });
+    });
+    });
     });
     });
   });

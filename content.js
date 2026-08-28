@@ -67,12 +67,15 @@
     };
   }
 
-  function resolveInventory(profilePayload, resume) {
+  function resolveInventory(profilePayload, resume, extras) {
     var AF = window.ImpulsoAutofill;
     if (!AF) return {};
+    var extra = extras || {};
     var opts = {
       hasResume: Boolean(resume && resume.resumeBase64 && resume.resumeName),
-      resumeName: (resume && resume.resumeName) || ""
+      resumeName: (resume && resume.resumeName) || "",
+      currentJobTitle: extra.currentJobTitle || "",
+      currentJobLocation: extra.currentJobLocation || ""
     };
     var inventory = {};
     if (typeof AF.resolveAnswerInventory === "function") {
@@ -120,6 +123,42 @@
       inventory = inventory || {};
       inventory.export_control_status = exportControl;
       inventory.exportControlStatus = exportControl;
+    }
+
+    function copyWorkAuthAnswer(inventoryKey, workKeys) {
+      var current = inventory && inventory[inventoryKey];
+      var i;
+      var value = String(current || "").trim();
+      if (value) return value;
+      for (i = 0; i < workKeys.length; i += 1) {
+        value = String((work && work[workKeys[i]]) || "").trim();
+        if (value) return value;
+      }
+      return "";
+    }
+    var employmentCitizen = copyWorkAuthAnswer("employment_country_citizenship", [
+      "citizenOfEmploymentCountry",
+      "employmentCountryCitizenship"
+    ]);
+    var usImmigration = copyWorkAuthAnswer("us_immigration_status", [
+      "usCitizenOrLpr",
+      "usImmigrationStatus"
+    ]);
+    var sanctionedCitizen = copyWorkAuthAnswer("sanctioned_country_citizenship", [
+      "sanctionedCountryCitizen",
+      "cubaIranNorthKoreaSyriaCitizen"
+    ]);
+    if (employmentCitizen) {
+      inventory = inventory || {};
+      inventory.employment_country_citizenship = employmentCitizen;
+    }
+    if (usImmigration) {
+      inventory = inventory || {};
+      inventory.us_immigration_status = usImmigration;
+    }
+    if (sanctionedCitizen) {
+      inventory = inventory || {};
+      inventory.sanctioned_country_citizenship = sanctionedCitizen;
     }
     return inventory || {};
   }
@@ -261,7 +300,10 @@
       }
     }
 
-    var inventory = resolveInventory(profile, resume);
+    var inventory = resolveInventory(profile, resume, {
+      currentJobTitle: opts.currentJobTitle || "",
+      currentJobLocation: opts.currentJobLocation || ""
+    });
     var handledElements = [];
     var ats = detectActiveAts();
 
@@ -489,7 +531,9 @@
       if (message.profile && typeof message.profile === "object") {
         runAutofill(message.profile, resume, {
           fillDemographics: message.fillDemographics !== false,
-          tabId: tabId
+          tabId: tabId,
+          currentJobTitle: message.currentJobTitle || "",
+          currentJobLocation: message.currentJobLocation || ""
         })
           .then(sendResponse)
           .catch(function (error) {

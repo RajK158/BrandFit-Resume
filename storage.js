@@ -268,7 +268,10 @@
       currentVisaStatus: "",
       visaExpirationDate: "",
       // Explicitly saved only — never inferred from auth/sponsorship/visa/citizenship.
-      exportControlStatus: ""
+      exportControlStatus: "",
+      citizenOfEmploymentCountry: "",
+      usCitizenOrLpr: "",
+      sanctionedCountryCitizen: ""
     };
     return { ...base, ...(overrides || {}) };
   }

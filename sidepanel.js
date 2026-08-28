@@ -645,6 +645,12 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
       typeof window.ImpulsoAutofill.resolveAutofillProfilePayload === "function"
         ? window.ImpulsoAutofill.resolveAutofillProfilePayload(masterProfile)
         : masterProfile;
+    let currentJob = null;
+    try {
+      currentJob = await window.ImpulsoStorage.getCurrentJob();
+    } catch (_) {
+      currentJob = null;
+    }
 
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -663,6 +669,8 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
       profile: profilePayload,
       // Always include saved demographic answers when an exact value exists.
       fillDemographics: true,
+      currentJobTitle: currentJob && currentJob.title ? currentJob.title : "",
+      currentJobLocation: currentJob && currentJob.location ? currentJob.location : "",
       resume: {
         resumeBase64: resumeBase64,
         resumeName: resumeName,
@@ -763,6 +771,15 @@ function applyScanSkipState(scan) {
   const fields = scan.fields.map(function (field) {
     const copy = Object.assign({}, field);
     const skipped = skippedScanFieldIds.has(copy.fieldId);
+    const preserveSkip =
+      copy.category === "company_specific" ||
+      copy.conditionalState === "not_applicable" ||
+      copy.conditionalState === "blocked";
+    if (preserveSkip) {
+      copy.skipped = true;
+      copy.fillStatus = "skipped";
+      return copy;
+    }
     copy.skipped = skipped;
     if (skipped) {
       copy.fillStatus = "skipped";
@@ -963,8 +980,9 @@ async function buildScanAnswerInventory() {
   const profile = await window.ImpulsoStorage.getMasterProfile();
   let hasResume = false;
   let resumeName = "";
+  let currentJob = null;
   try {
-    const currentJob = await window.ImpulsoStorage.getCurrentJob();
+    currentJob = await window.ImpulsoStorage.getCurrentJob();
     if (currentJob && currentJob.id) {
       const selected = await window.ImpulsoStorage.getSelectedResumeDocumentForJob(currentJob.id);
       if (selected && selected.document && selected.document.fileData) {
@@ -986,12 +1004,16 @@ async function buildScanAnswerInventory() {
   if (typeof window.ImpulsoAutofill.resolveAnswerInventory === "function") {
     return window.ImpulsoAutofill.resolveAnswerInventory(profile, {
       hasResume: hasResume,
-      resumeName: resumeName
+      resumeName: resumeName,
+      currentJobTitle: currentJob && currentJob.title ? currentJob.title : "",
+      currentJobLocation: currentJob && currentJob.location ? currentJob.location : ""
     });
   }
   return window.ImpulsoAutofill.buildAnswerInventory(profile, {
     hasResume: hasResume,
-    resumeName: resumeName
+    resumeName: resumeName,
+    currentJobTitle: currentJob && currentJob.title ? currentJob.title : "",
+    currentJobLocation: currentJob && currentJob.location ? currentJob.location : ""
   });
 }
 

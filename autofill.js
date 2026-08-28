@@ -27,12 +27,20 @@
     "salary",
     "relocation",
     "preferred_locations",
+    "areas_of_interest",
     "veteran_status",
     "disability_status",
     "gender",
     "hispanic_latino",
     "transgender",
     "race_ethnicity",
+    "employment_country_citizenship",
+    "us_immigration_status",
+    "sanctioned_country_citizenship",
+    "company_specific",
+    "education_school",
+    "education_discipline",
+    "education_degree",
     "education_gpa",
     "education_gpa_undergraduate",
     "education_gpa_graduate",
@@ -40,6 +48,7 @@
     "education_anticipated_graduation",
     "education_start_month",
     "education_end_month",
+    "education_end_year",
     "education",
     "experience",
     "skills",
@@ -84,12 +93,21 @@
     salary: "Salary",
     relocation: "Relocation",
     preferred_locations: "Preferred locations",
+    areas_of_interest: "Areas of interest",
     veteran_status: "Veteran status",
     disability_status: "Disability status",
     gender: "Gender",
     hispanic_latino: "Hispanic/Latino",
     transgender: "Transgender",
     race_ethnicity: "Race/ethnicity",
+    employment_country_citizenship: "Employment-country citizenship",
+    us_immigration_status: "U.S. citizenship / immigration status",
+    sanctioned_country_citizenship: "Sanctioned-country citizenship",
+    company_specific: "Company-specific question",
+    education_school: "University / school",
+    education_discipline: "Major / field of study",
+    education_degree: "Highest education",
+    education_end_year: "Graduation year",
     cover_letter: "Cover letter",
     project_highlight: "Project highlight",
     referral_source: "Referral source",
@@ -112,7 +130,8 @@
     project_highlight: true,
     referral_source: true,
     additional_information: true,
-    cover_letter: true
+    cover_letter: true,
+    education_school: true
   };
 
   var SENSITIVE_CATEGORIES = {
@@ -121,7 +140,10 @@
     transgender: true,
     race_ethnicity: true,
     veteran_status: true,
-    disability_status: true
+    disability_status: true,
+    employment_country_citizenship: true,
+    us_immigration_status: true,
+    sanctioned_country_citizenship: true
   };
 
   var NO_SAVED_ANSWER = "No saved answer";
@@ -244,6 +266,21 @@
     },
     {
       category: "sponsorship_later",
+      confidence: 0.97,
+      include: [
+        /\b(f-?1\s+)?stem\s+opt\b/,
+        /\bf-?1\s+opt\b/,
+        /\bf-?1\s+cpt\b/,
+        /\bh-?1b\b/,
+        /\bsponsorship\/support\b/,
+        /\bimmigration\s+support\b/,
+        /\b(opt|cpt)\b.*\bsponsor/,
+        /\bsponsor.*\b(opt|cpt|h-?1b)\b/
+      ],
+      exclude: []
+    },
+    {
+      category: "sponsorship_later",
       confidence: 0.9,
       include: [
         /\bsponsorship\b.*\b(future|later)\b/,
@@ -262,7 +299,7 @@
         /\bwill\s+you\s+.*\bsponsor/,
         /\bnow\s+or\s+in\s+the\s+future\b/
       ],
-      exclude: []
+      exclude: [/\b(f-?1\s+)?stem\s+opt\b/, /\bf-?1\s+opt\b/, /\bf-?1\s+cpt\b/, /\bh-?1b\b/]
     },
     {
       category: "export_control_status",
@@ -295,7 +332,14 @@
         /\bexport\s+control\b/,
         /\bitar\b/,
         /\bu\.?\s*s\.?\s+person\b/,
-        /\brelocatem?\b/
+        /\brelocatem?\b/,
+        /\basylee\b/,
+        /\brefugee\b/,
+        /\bcuba\b/,
+        /\biran\b/,
+        /\bnorth\s+korea\b/,
+        /\bsyria\b/,
+        /\bcitizen of the country\b/
       ]
     },
     {
@@ -401,7 +445,7 @@
       category: "country",
       confidence: 0.88,
       include: [/\bcountry\b/, /\bnation\b/],
-      exclude: []
+      exclude: [/\bcitizen/, /\bcitizenship\b/, /\basylee\b/, /\brefugee\b/, /\bemploy/]
     },
     {
       category: "address",
@@ -798,6 +842,130 @@
     );
   }
 
+  function looksLikeCompanySpecificUserConfirmation(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (
+      (/\bfamily\b/.test(text) || /\bclose\s+friend\b/.test(text)) &&
+      /\b(friend|relationship)\b/.test(text) &&
+      /\bemploy/.test(text)
+    ) {
+      return true;
+    }
+    if (/\bhave you ever been employed\b/.test(text) || (/\bemployed by\b/.test(text) && /\bsubsidiar/.test(text))) {
+      return true;
+    }
+    if (
+      /\brestrictive\b/.test(text) &&
+      (/\bagreement\b/.test(text) || /\bconsulting\b/.test(text) || /\bpersonal[-\s]?services\b/.test(text))
+    ) {
+      return true;
+    }
+    if (/\bconflict of interest\b/.test(text)) return true;
+    if (/\boutside business\b/.test(text) && (/\bactivit/.test(text) || /\btransaction/.test(text))) return true;
+    if (looksLikePreviouslyAppliedQuestion(text)) return true;
+    return false;
+  }
+
+  function looksLikePreviouslyAppliedQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\bpreviously applied\b/.test(text)) return true;
+    return /\bhave you\b/.test(text) && /\bapplied\b/.test(text) && /\b(this company|this employer|our company)\b/.test(text);
+  }
+
+  function looksLikeExportControlRestrictionQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\bu\.?\s*s\.?\s+person\b/.test(text) || /\bwhich statement best applies\b/.test(text)) return false;
+    return (
+      /\bexport control restrictions?\b/.test(text) ||
+      (/\bexport control\b/.test(text) && /\brestrictions?\b/.test(text) && /\bprevent\b/.test(text))
+    );
+  }
+
+  function looksLikeEmploymentCountryCitizenshipQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\basylee\b/.test(text) || /\brefugee\b/.test(text) || /\blawful permanent resident\b/.test(text)) {
+      return false;
+    }
+    if (/\bcuba\b/.test(text) && /\biran\b/.test(text)) return false;
+    return (
+      /\bcitizen of the country\b/.test(text) ||
+      (/\bcitizen\b/.test(text) && /\bemployed in\b/.test(text)) ||
+      (/\bcitizen\b/.test(text) && /\byou.?ll be employed\b/.test(text)) ||
+      (/\bcitizen\b/.test(text) && /\bcountry you (have )?selected\b/.test(text))
+    );
+  }
+
+  function looksLikeUsImmigrationStatusQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\bcuba\b/.test(text) && /\biran\b/.test(text)) return false;
+    return (
+      /\blawful permanent resident\b/.test(text) ||
+      (/\basylee\b/.test(text) && /\brefugee\b/.test(text)) ||
+      (/\bcitizen of the u\.?\s*s/.test(text) && /\bpermanent resident\b/.test(text))
+    );
+  }
+
+  function looksLikeSanctionedCountryCitizenshipQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    if (/\bsubsequently obtained\b/.test(text) || /\basylum elsewhere\b/.test(text)) return false;
+    return (
+      (/\bcuba\b/.test(text) && /\biran\b/.test(text) && (/\bnorth korea\b/.test(text) || /\bsyria\b/.test(text))) ||
+      /\bcitizen of cuba\b/.test(text)
+    );
+  }
+
+  function looksLikeSanctionedCountryFollowUpQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    return (
+      /\bif yes to the previous\b/.test(text) ||
+      /\bsubsequently obtained citizenship\b/.test(text) ||
+      (/\bpermanent residence\b/.test(text) && /\basylum elsewhere\b/.test(text))
+    );
+  }
+
+  function classifyScreeningEducationCategory(ownLabel) {
+    var text = normalizeText(ownLabel);
+    if (!text) return "";
+    if (/\bgpa\b/.test(text) || /\bgrade\s+point\s+average\b/.test(text)) return "";
+    if (/\bgraduation\s+month\b/.test(text) || (/\bmonth\b/.test(text) && /\bgraduat/.test(text))) {
+      return "education_end_month";
+    }
+    if (/\bgraduation\s+year\b/.test(text) || (/\byear\b/.test(text) && /\bgraduat/.test(text) && !/\bmonth\b/.test(text))) {
+      return "education_end_year";
+    }
+    if (
+      /\bcurrent\s+university\b/.test(text) ||
+      (/\buniversity\b/.test(text) && !/\bdegree\b/.test(text) && !/\bmajor\b/.test(text) && !/\beducation\b/.test(text))
+    ) {
+      return "education_school";
+    }
+    if (/\bmajor\b/.test(text) || /\bfield of study\b/.test(text) || /\bdiscipline\b/.test(text)) {
+      return "education_discipline";
+    }
+    if (
+      /\bhighest\s+(level\s+of\s+)?education\b/.test(text) ||
+      (/\beducation\b/.test(text) && /\bdegree\b/.test(text)) ||
+      text === "education" ||
+      text === "highest education"
+    ) {
+      return "education_degree";
+    }
+    return "";
+  }
+
+  function looksLikeAreasOfInterestQuestion(blob) {
+    var text = normalizeText(blob);
+    if (!text) return false;
+    return /\bareas?\s+of\s+interest\b/.test(text) || /\bjob\s+categor(?:y|ies)\b/.test(text);
+  }
+
   function looksLikeEducationDateField(blob) {
     var text = normalizeText(blob);
     if (!text) return false;
@@ -835,6 +1003,7 @@
       return false;
     }
     if (/\bpreferred\s+(work\s+)?locations?\b/.test(text)) return true;
+    if (/\bdesired\s+(work\s+)?locations?\b/.test(text)) return true;
     if (/\bselect\s+all\s+locations\b/.test(text)) return true;
     if (/\bopen\s+to\s+being\s+placed\b/.test(text)) return true;
     if (/\blocations?\b/.test(text) && /\bopen\s+to\b/.test(text)) return true;
@@ -1019,6 +1188,125 @@
     return "doctorate";
   }
 
+  function educationDegreeRank(level) {
+    if (level === "doctorate") return 3;
+    if (level === "graduate") return 2;
+    if (level === "undergraduate") return 1;
+    return 0;
+  }
+
+  function selectHighestDegreeEducation(educationList) {
+    var valid = listValidEducationRecords(educationList);
+    if (!valid.length) return null;
+    var best = valid[0];
+    var bestRank = educationDegreeRank(educationDegreeLevel(best.degree));
+    var i;
+    var rank;
+    for (i = 1; i < valid.length; i += 1) {
+      rank = educationDegreeRank(educationDegreeLevel(valid[i].degree));
+      if (rank > bestRank) {
+        best = valid[i];
+        bestRank = rank;
+      } else if (rank === bestRank) {
+        if (isEducationInProgress(valid[i]) && !isEducationInProgress(best)) {
+          best = valid[i];
+        } else if (
+          !isEducationInProgress(best) &&
+          educationEndSortValue(valid[i]) > educationEndSortValue(best)
+        ) {
+          best = valid[i];
+        }
+      }
+    }
+    return best;
+  }
+
+  function gpaForGenericScreeningQuestion(educationList) {
+    var highest = selectHighestDegreeEducation(educationList);
+    if (highest && trimText(highest.gpa)) return trimText(highest.gpa);
+    var graduate = educationGpaForLevel(educationList, "graduate");
+    if (graduate) return graduate;
+    var doctorate = educationGpaForLevel(educationList, "doctorate");
+    if (doctorate) return doctorate;
+    var primary = selectPrimaryEducation(educationList);
+    return (primary && trimText(primary.gpa)) || "";
+  }
+
+  function parseGpaRangeLabel(label) {
+    var text = normalizeText(label).replace(/,/g, ".");
+    var match;
+    var min;
+    var max;
+    if (!text) return null;
+    match = text.match(/(\d+(?:\.\d+)?)\s*(?:\+|and above|or above|or higher|and higher|and over)/);
+    if (match) {
+      min = parseFloat(match[1]);
+      if (!isFinite(min)) return null;
+      return { min: min, max: Infinity, exclusiveMax: false };
+    }
+    match = text.match(/(?:above|over|greater than|more than)\s+(\d+(?:\.\d+)?)/);
+    if (match) {
+      min = parseFloat(match[1]);
+      if (!isFinite(min)) return null;
+      return { min: min, max: Infinity, exclusiveMax: false };
+    }
+    match = text.match(/(?:less than|below|under)\s+(\d+(?:\.\d+)?)/);
+    if (match) {
+      max = parseFloat(match[1]);
+      if (!isFinite(max)) return null;
+      return { min: -Infinity, max: max, exclusiveMax: true };
+    }
+    match = text.match(/(\d+(?:\.\d+)?)\s*(?:[-–—]|to)\s*(\d+(?:\.\d+)?)/);
+    if (match) {
+      min = parseFloat(match[1]);
+      max = parseFloat(match[2]);
+      if (!isFinite(min) || !isFinite(max)) return null;
+      return { min: min, max: max, exclusiveMax: false };
+    }
+    return null;
+  }
+
+  function optionsLookLikeGpaRanges(optionLabels) {
+    var labels = optionLabels || [];
+    var i;
+    var hits = 0;
+    for (i = 0; i < labels.length; i += 1) {
+      if (parseGpaRangeLabel(labels[i])) hits += 1;
+    }
+    return hits >= 2;
+  }
+
+  function gpaValueInParsedRange(value, range) {
+    if (!range || !isFinite(value)) return false;
+    if (range.min !== -Infinity && value < range.min - 1e-9) return false;
+    if (range.max === Infinity) return true;
+    if (range.exclusiveMax) return value < range.max - 1e-9;
+    return value <= range.max + 1e-9;
+  }
+
+  function mapNumericGpaToRangeOption(saved, optionLabels) {
+    var options = (optionLabels || []).map(trimText).filter(Boolean);
+    var exact = trimText(saved);
+    var n;
+    var i;
+    var label;
+    var hits;
+    if (!options.length) return "";
+    if (exact) {
+      for (i = 0; i < options.length; i += 1) {
+        if (normalizeText(options[i]) === normalizeText(exact)) return options[i];
+      }
+    }
+    n = parseFloat(String(saved == null ? "" : saved).replace(/[^0-9.]/g, ""));
+    if (!isFinite(n)) return "";
+    hits = [];
+    for (i = 0; i < options.length; i += 1) {
+      label = options[i];
+      if (gpaValueInParsedRange(n, parseGpaRangeLabel(label))) hits.push(label);
+    }
+    return hits.length === 1 ? hits[0] : "";
+  }
+
   function educationGpaForLevel(educationList, level) {
     if (level !== "undergraduate" && level !== "graduate" && level !== "doctorate") return "";
     var valid = listValidEducationRecords(educationList);
@@ -1086,7 +1374,7 @@
       education_start_month: extractMonthFromEducationDate(primary.startDate),
       education_end_month: extractMonthFromEducationDate(primary.endDate),
       education_anticipated_graduation: primary.endDate || "",
-      education_gpa: primary.gpa || ""
+      education_gpa: gpaForGenericScreeningQuestion(educationList) || primary.gpa || ""
     };
   }
 
@@ -1161,6 +1449,43 @@
         return validateDetection({ category: "referral_source", confidence: 0.96 }, inputType);
       }
     }
+    if (looksLikeCompanySpecificUserConfirmation(questionBlob) || looksLikeCompanySpecificUserConfirmation(ownLabel)) {
+      return validateDetection({ category: "company_specific", confidence: 0.99 }, inputType, optionLabels);
+    }
+    if (looksLikeExportControlRestrictionQuestion(questionBlob) || looksLikeExportControlRestrictionQuestion(ownLabel)) {
+      return validateDetection({ category: "export_control_status", confidence: 0.98 }, inputType, optionLabels);
+    }
+    if (looksLikeSanctionedCountryFollowUpQuestion(questionBlob) || looksLikeSanctionedCountryFollowUpQuestion(ownLabel)) {
+      return validateDetection(
+        { category: "sanctioned_country_citizenship", confidence: 0.98 },
+        inputType,
+        optionLabels
+      );
+    }
+    if (looksLikeSanctionedCountryCitizenshipQuestion(questionBlob) || looksLikeSanctionedCountryCitizenshipQuestion(ownLabel)) {
+      return validateDetection(
+        { category: "sanctioned_country_citizenship", confidence: 0.99 },
+        inputType,
+        optionLabels
+      );
+    }
+    if (looksLikeUsImmigrationStatusQuestion(questionBlob) || looksLikeUsImmigrationStatusQuestion(ownLabel)) {
+      return validateDetection({ category: "us_immigration_status", confidence: 0.99 }, inputType, optionLabels);
+    }
+    if (looksLikeEmploymentCountryCitizenshipQuestion(questionBlob) || looksLikeEmploymentCountryCitizenshipQuestion(ownLabel)) {
+      return validateDetection(
+        { category: "employment_country_citizenship", confidence: 0.99 },
+        inputType,
+        optionLabels
+      );
+    }
+    if (looksLikeAreasOfInterestQuestion(ownLabel) || looksLikeAreasOfInterestQuestion(questionBlob)) {
+      return validateDetection({ category: "areas_of_interest", confidence: 0.97 }, inputType, optionLabels);
+    }
+    var educationKind = classifyScreeningEducationCategory(ownLabel) || classifyScreeningEducationCategory(questionBlob);
+    if (educationKind) {
+      return validateDetection({ category: educationKind, confidence: 0.98 }, inputType, optionLabels);
+    }
     var ownWebsiteExact = (normalizeText(label) || normalizeText(ariaLabel))
       .replace(/\s*\*+\s*$/g, "")
       .trim();
@@ -1219,6 +1544,10 @@
         );
       }
       return validateDetection({ category: "education_gpa", confidence: 0.98 }, inputType);
+    }
+
+    if (looksLikePreferredLocationsQuestion(ownLabel) || looksLikePreferredLocationsQuestion(questionBlob)) {
+      return validateDetection({ category: "preferred_locations", confidence: 0.98 }, inputType);
     }
 
     if (
@@ -1903,6 +2232,18 @@
       .replace(/&gt;/g, ">");
   }
 
+  function normalizeScreeningQuestionLabel(value) {
+    return trimText(String(value == null ? "" : value))
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/[^\w\s]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
   function isScreeningDefinitionRadioQuestion(node) {
     if (!node || typeof node !== "object" || Array.isArray(node)) return false;
     var type = normalizeText(node.type || node.questionType || node.inputType || node.component || "");
@@ -2053,6 +2394,11 @@
         (parent.getAttribute("label") || parent.getAttribute("aria-label") || parent.getAttribute("legend"))
     );
     if (text && text.length < 420) return text;
+    var slotNodes = querySelectorAllDeep(parent, '[slot="label-content"]');
+    if (slotNodes && slotNodes.length) {
+      text = trimText(slotNodes[0].innerText || slotNodes[0].textContent || "");
+      if (text && text.length < 420) return text;
+    }
     prev = parent.previousElementSibling;
     if (prev && !isSmartRecruitersSplRadio(prev)) {
       text = trimText(prev.innerText || prev.textContent || "");
@@ -2078,61 +2424,135 @@
   }
 
   function screeningLabelsAlign(definitionLabel, liveLabel) {
-    var a = normalizeText(definitionLabel);
-    var b = normalizeText(liveLabel);
+    var a = normalizeScreeningQuestionLabel(definitionLabel);
+    var b = normalizeScreeningQuestionLabel(liveLabel);
     if (!a || !b) return 0;
     if (a === b) return 100;
-    if (a.indexOf(b) !== -1 || b.indexOf(a) !== -1) return 70;
+    if (a.indexOf(b) !== -1 || b.indexOf(a) !== -1) return 80;
+    var aWords = a.split(" ").filter(function (w) {
+      return w.length > 3;
+    });
+    var overlap = 0;
+    aWords.forEach(function (word) {
+      if (b.indexOf(word) !== -1) overlap += 1;
+    });
+    if (aWords.length && overlap / aWords.length >= 0.7) return 60;
     if (a.slice(0, 48) && a.slice(0, 48) === b.slice(0, 48)) return 50;
     return 0;
   }
 
+  function screeningOptionsAreGenericYesNo(options) {
+    var labels = (options || [])
+      .map(function (opt) {
+        return normalizeText((opt && (opt.label || opt.value)) || "");
+      })
+      .filter(Boolean);
+    var yesNo = labels.filter(function (label) {
+      return label === "yes" || label === "no";
+    });
+    return yesNo.length >= 2 && labels.length <= 4;
+  }
+
   function associateScreeningQuestionsToGroups(questions, groups) {
     var used = [];
+    var assigned = [];
     var pairs = [];
-    (questions || []).forEach(function (question, qi) {
+
+    function groupLiveLabel(group) {
+      return nearbyScreeningGroupQuestionText(group);
+    }
+
+    function groupLiveOptions(group) {
+      return ((group && group.radios) || []).map(function (radio) {
+        return {
+          label: readSmartRecruitersSplRadioLabel(radio),
+          value: readSmartRecruitersSplRadioValue(radio)
+        };
+      });
+    }
+
+    function scoreQuestionGroup(question, group) {
+      var score = screeningLabelsAlign(question.label, groupLiveLabel(group));
+      var liveLabels = groupLiveOptions(group);
+      if (
+        question.options &&
+        question.options.length &&
+        screeningOptionLabelKey(question.options) &&
+        screeningOptionLabelKey(question.options) === screeningOptionLabelKey(liveLabels)
+      ) {
+        score += screeningOptionsAreGenericYesNo(question.options) ? 10 : 40;
+      }
+      return score;
+    }
+
+    function uniqueBestIndex(question, minScore) {
       var best = -1;
       var bestScore = 0;
+      var ties = 0;
       var gi;
       var score;
-      var liveLabels;
       for (gi = 0; gi < (groups || []).length; gi += 1) {
         if (used.indexOf(gi) !== -1) continue;
-        score = 0;
-        score += screeningLabelsAlign(question.label, nearbyScreeningGroupQuestionText(groups[gi]));
-        liveLabels = (groups[gi].radios || []).map(function (radio) {
-          return {
-            label: readSmartRecruitersSplRadioLabel(radio),
-            value: readSmartRecruitersSplRadioValue(radio)
-          };
-        });
-        if (
-          question.options &&
-          question.options.length &&
-          screeningOptionLabelKey(question.options) &&
-          screeningOptionLabelKey(question.options) === screeningOptionLabelKey(liveLabels)
-        ) {
-          score += 40;
-        }
-        if (gi === qi) score += 5;
+        score = scoreQuestionGroup(question, groups[gi]);
         if (score > bestScore) {
           bestScore = score;
           best = gi;
+          ties = 1;
+        } else if (score === bestScore && score > 0) {
+          ties += 1;
         }
       }
-      if (best < 0) {
-        for (gi = 0; gi < (groups || []).length; gi += 1) {
-          if (used.indexOf(gi) === -1) {
-            best = gi;
-            break;
-          }
-        }
-      }
-      if (best >= 0) {
-        used.push(best);
-        pairs.push({ question: question, group: groups[best] });
-      }
+      if (best >= 0 && bestScore >= minScore && ties === 1) return best;
+      return -1;
+    }
+
+    (questions || []).forEach(function (question, qi) {
+      var best = uniqueBestIndex(question, 80);
+      if (best < 0) return;
+      used.push(best);
+      assigned[qi] = true;
+      pairs.push({ question: question, group: groups[best] });
     });
+
+    (questions || []).forEach(function (question, qi) {
+      var wantKey;
+      var matches;
+      var gi;
+      if (assigned[qi]) return;
+      if (screeningOptionsAreGenericYesNo(question.options)) return;
+      wantKey = screeningOptionLabelKey(question.options);
+      if (!wantKey) return;
+      matches = [];
+      for (gi = 0; gi < (groups || []).length; gi += 1) {
+        if (used.indexOf(gi) !== -1) continue;
+        if (screeningOptionLabelKey(groupLiveOptions(groups[gi])) === wantKey) matches.push(gi);
+      }
+      if (matches.length !== 1) return;
+      used.push(matches[0]);
+      assigned[qi] = true;
+      pairs.push({ question: question, group: groups[matches[0]] });
+    });
+
+    (questions || []).forEach(function (question, qi) {
+      var remainingQuestions;
+      var remainingGroups;
+      var gi;
+      if (assigned[qi]) return;
+      remainingQuestions = 0;
+      remainingGroups = [];
+      (questions || []).forEach(function (other, otherIndex) {
+        if (!assigned[otherIndex]) remainingQuestions += 1;
+      });
+      for (gi = 0; gi < (groups || []).length; gi += 1) {
+        if (used.indexOf(gi) === -1) remainingGroups.push(gi);
+      }
+      if (remainingQuestions !== 1 || remainingGroups.length !== 1) return;
+      if (scoreQuestionGroup(question, groups[remainingGroups[0]]) < 50) return;
+      used.push(remainingGroups[0]);
+      assigned[qi] = true;
+      pairs.push({ question: question, group: groups[remainingGroups[0]] });
+    });
+
     return pairs;
   }
 
@@ -2165,6 +2585,8 @@
     savedPol = yesNoPolarity(savedN);
     optPol = yesNoPolarity(optN);
     if (savedPol && optPol) return savedPol === optPol;
+    if (savedPol === "no" && /\bnot a protected veteran\b/.test(optN)) return true;
+    if (savedPol === "yes" && /^i am a protected veteran$/.test(optN)) return true;
     if (savedN.length >= 10 && (optN.indexOf(savedN) !== -1 || savedN.indexOf(optN) !== -1)) return true;
     return false;
   }
@@ -2185,16 +2607,24 @@
     var questions;
     var groups;
     var pairs;
+    var pairedGroups = [];
     var units = [];
     if (!host) return units;
-    questions = parseSmartRecruitersScreeningDefinition(host.getAttribute && host.getAttribute("definition"));
-    if (!questions.length) return units;
+    questions = parseSmartRecruitersScreeningQuestions(host.getAttribute && host.getAttribute("definition")).filter(
+      function (question) {
+        return screeningDefinitionQuestionKind(question) === "radio";
+      }
+    );
+    if (!questions.length) {
+      questions = parseSmartRecruitersScreeningDefinition(host.getAttribute && host.getAttribute("definition"));
+    }
     groups = collectRenderedScreeningRadioGroups(host);
     pairs = associateScreeningQuestionsToGroups(questions, groups);
     pairs.forEach(function (pair) {
       var question = pair.question;
       var radios = (pair.group && pair.group.radios) || [];
       if (!radios.length) return;
+      pairedGroups.push(pair.group);
       units.push({
         kind: "radio-group",
         elements: radios,
@@ -2206,6 +2636,33 @@
           required: question.required,
           diversity: question.diversity,
           options: question.options
+        }
+      });
+    });
+    groups.forEach(function (group) {
+      var radios;
+      var liveLabel;
+      if (!group || pairedGroups.indexOf(group) !== -1) return;
+      radios = group.radios || [];
+      if (!radios.length) return;
+      liveLabel = nearbyScreeningGroupQuestionText(group);
+      units.push({
+        kind: "radio-group",
+        elements: radios,
+        groupKey: "sr-screening-live:" + hashString(liveLabel || radios.length),
+        inputType: "radio",
+        screening: {
+          questionId: "",
+          label: liveLabel,
+          required: false,
+          diversity: false,
+          options: radios.map(function (radio) {
+            return {
+              id: "",
+              label: readSmartRecruitersSplRadioLabel(radio),
+              value: readSmartRecruitersSplRadioValue(radio)
+            };
+          })
         }
       });
     });
@@ -2236,12 +2693,21 @@
   }
 
   function normalizeScreeningDefinitionQuestion(node) {
+    var fields =
+      (node && (node.questionsFields || node.questionFields || node.fields || node.options)) || [];
+    var multipleChoice = Boolean(
+      node &&
+        (node.multipleChoice === true ||
+          node.multipleChoice === "true" ||
+          (fields[0] && typeof fields[0] === "object" && fields[0].multipleChoice === true))
+    );
     return {
       id: trimText((node && (node.id || node.questionId || node.uuid)) || ""),
       type: trimText((node && (node.type || node.questionType || node.inputType || node.component)) || ""),
       label: trimText((node && (node.label || node.question || node.title || node.text)) || ""),
       required: Boolean(node && (node.required === true || node.required === "true" || node.mandatory === true)),
       diversity: Boolean(node && node.diversity),
+      multipleChoice: multipleChoice,
       options: screeningDefinitionOptionList(node)
     };
   }
@@ -2293,12 +2759,32 @@
     type = normalizeText(question.type || "");
     if (looksLikeSmartRecruitersPrivacyConsent(blob)) return "privacy_consent";
     if (looksLikeSmartRecruitersEmployeeReferral(blob)) return "referral";
+    if (type === "info" || type === "information" || type === "instruction") return "info";
     if (/\brace\/ethnicity\b/.test(blob) || /\bethnicity\b/.test(blob)) return "ethnicity";
-    if (/\brace\b/.test(blob) && !/\bgender\b/.test(blob)) return "ethnicity";
+    if (/\brace\b/.test(blob) && !/\bgender\b/.test(blob) && !/\bhispanic\b/.test(blob) && !/\blatin/.test(blob)) {
+      return "ethnicity";
+    }
     if (/\bgender\b/.test(blob)) return "gender";
     if (isScreeningDefinitionRadioQuestion({ type: question.type })) return "radio";
-    if (type === "radio" || type === "radiogroup" || type === "radio-group" || type === "radiobutton") {
+    if (
+      type === "radio" ||
+      type === "radiogroup" ||
+      type === "radio-group" ||
+      type === "radiobutton" ||
+      type === "choice" ||
+      type === "boolean" ||
+      type === "yesno"
+    ) {
       return "radio";
+    }
+    if (
+      question.multipleChoice ||
+      type === "multiselect" ||
+      type === "multi-select" ||
+      type === "multiselectautocomplete" ||
+      type === "multi_select"
+    ) {
+      return "multiselect";
     }
     if (
       type === "text" ||
@@ -2313,7 +2799,9 @@
       type === "autocomplete" ||
       type === "select" ||
       type === "dropdown" ||
-      type === "combobox"
+      type === "combobox" ||
+      type === "single-select" ||
+      type === "singleselect"
     ) {
       return "autocomplete";
     }
@@ -2449,6 +2937,175 @@
     return null;
   }
 
+  function screeningQuestionHostId(questionId) {
+    var id = trimText(questionId);
+    return id ? "question_" + id : "";
+  }
+
+  function findScreeningControlByQuestionId(scope, questionId) {
+    var want = screeningQuestionHostId(questionId);
+    var nodes;
+    var i;
+    var el;
+    var id;
+    if (!scope || !want) return null;
+    nodes = querySelectorAllDeep(
+      scope,
+      "spl-input, spl-autocomplete, spl-multiselect-autocomplete, [data-spl-field], [id]"
+    );
+    for (i = 0; i < nodes.length; i += 1) {
+      el = nodes[i];
+      if (!el || el.isConnected === false) continue;
+      id = trimText((el.id || (el.getAttribute && el.getAttribute("id"))) || "");
+      if (id === want) return el;
+    }
+    return null;
+  }
+
+  function screeningControlKindFromHost(el, questionKind) {
+    var tag = ((el && el.tagName) || "").toLowerCase();
+    if (tag === "spl-multiselect-autocomplete") return "multiselect";
+    if (tag === "spl-autocomplete") return "autocomplete";
+    if (tag === "spl-input") return "text";
+    if (tag === "spl-radio-group") return "radio";
+    if (questionKind === "multiselect" || questionKind === "autocomplete" || questionKind === "text" || questionKind === "radio") {
+      return questionKind;
+    }
+    return questionKind || "text";
+  }
+
+  function readSmartRecruitersMultiselectValue(host) {
+    var chips;
+    var labels;
+    var text;
+    if (!host) return "";
+    chips = querySelectorAllDeep(host, "spl-chip, [data-test*='chip'], [class*='chip']");
+    labels = (chips || [])
+      .map(function (el) {
+        return trimText(el.innerText || el.textContent || (el.getAttribute && el.getAttribute("label")) || "");
+      })
+      .filter(Boolean);
+    if (labels.length) return labels.join(", ");
+    text = trimText(host.innerText || host.textContent || "");
+    return text;
+  }
+
+  function classifyDefinitionQuestionCategory(question, kind, optionLabels) {
+    var detected;
+    if (kind === "gender") return "gender";
+    if (kind === "ethnicity") return "race_ethnicity";
+    if (kind === "referral") return "referral_source";
+    if (kind === "privacy_consent") return "privacy_consent";
+    detected = detectCategoryFromMeta({
+      tagName: kind === "radio" ? "input" : "input",
+      inputType:
+        kind === "radio"
+          ? "radio"
+          : kind === "multiselect"
+            ? "select-multiple"
+            : kind === "autocomplete"
+              ? "select"
+              : "text",
+      type: kind === "radio" ? "radio" : "text",
+      label: (question && question.label) || "",
+      ariaLabel: (question && question.label) || "",
+      name: "",
+      id: (question && question.id) || "",
+      nearby: "",
+      autocomplete: "",
+      optionLabels: optionLabels || (question && question.options
+        ? question.options.map(function (opt) {
+            return opt.label || opt.value;
+          })
+        : [])
+    });
+    return (detected && detected.category) || "unknown";
+  }
+
+  function parentRadioValueForQuestion(questions, index, radioById) {
+    var i;
+    var prev;
+    var unit;
+    var selected;
+    for (i = index - 1; i >= 0; i -= 1) {
+      prev = questions[i];
+      if (!prev || normalizeText(prev.type) === "info") continue;
+      unit = radioById[prev.id];
+      if (!unit) return { parent: prev, value: "", answered: false };
+      selected = (unit.elements || []).filter(isSmartRecruitersSplRadioChecked);
+      if (selected.length === 1) {
+        return {
+          parent: prev,
+          value: readSmartRecruitersSplRadioLabel(selected[0]),
+          answered: true
+        };
+      }
+      return { parent: prev, value: "", answered: false };
+    }
+    return null;
+  }
+
+  function looksLikeConditionalDetailQuestion(label) {
+    var blob = normalizeText(label);
+    if (!blob) return false;
+    if (/\bif yes\b/.test(blob) && (/\bprevious\b/.test(blob) || /\bexplain\b/.test(blob) || /\bprovide\b/.test(blob))) {
+      return true;
+    }
+    if (/\bplease (list|explain|describe|provide|enter|specify)\b/.test(blob) && /\bname\b/.test(blob)) return true;
+    if (/\bplease (list|explain|describe|provide|enter|specify)\b/.test(blob)) return true;
+    if (/\bdetails?\b/.test(blob) && (/\brelationship\b/.test(blob) || /\bconflict\b/.test(blob))) return true;
+    return looksLikeSanctionedCountryFollowUpQuestion(blob);
+  }
+
+  function applyScreeningConditionalState(questions, units, radioById) {
+    var byId = {};
+    units.forEach(function (unit) {
+      var id = unit && unit.screening && unit.screening.questionId;
+      if (id) byId[id] = unit;
+    });
+    (questions || []).forEach(function (question, index) {
+      var unit = byId[question.id];
+      var parentInfo;
+      var parentUnit;
+      var parentYes;
+      if (!unit || !unit.screening) return;
+      if (!looksLikeConditionalDetailQuestion(question.label)) return;
+      parentInfo = parentRadioValueForQuestion(questions, index, radioById);
+      if (!parentInfo || !parentInfo.parent) return;
+      parentUnit = byId[parentInfo.parent.id];
+      parentYes = /\byes\b/i.test(parentInfo.value);
+      if (parentUnit && parentUnit.screening && parentUnit.screening.category === "company_specific") {
+        unit.screening.category = "company_specific";
+        if (!parentInfo.answered) {
+          unit.screening.conditionalState = "blocked";
+          unit.screening.skipped = true;
+          unit.screening.actionHint = "Blocked by parent confirmation";
+          unit.screening.required = false;
+        } else if (!parentYes) {
+          unit.screening.conditionalState = "not_applicable";
+          unit.screening.skipped = true;
+          unit.screening.actionHint = "Conditionally not applicable";
+          unit.screening.required = false;
+        }
+        return;
+      }
+      if (looksLikeSanctionedCountryFollowUpQuestion(question.label) ||
+          (parentInfo.parent && looksLikeSanctionedCountryCitizenshipQuestion(parentInfo.parent.label))) {
+        if (!parentInfo.answered) {
+          unit.screening.conditionalState = "blocked";
+          unit.screening.skipped = true;
+          unit.screening.actionHint = "Blocked by parent confirmation";
+          unit.screening.required = false;
+        } else if (!parentYes) {
+          unit.screening.conditionalState = "not_applicable";
+          unit.screening.skipped = true;
+          unit.screening.actionHint = "Conditionally not applicable";
+          unit.screening.required = false;
+        }
+      }
+    });
+  }
+
   function collectSmartRecruitersScreeningLogicalUnits(root) {
     var doc = root || document;
     var host = findSmartRecruitersScreeningForm(doc);
@@ -2484,100 +3141,130 @@
       });
     }
 
+    function screeningPayload(question, kind, extra) {
+      var optionLabels = ((question && question.options) || []).map(function (opt) {
+        return opt.label || opt.value;
+      });
+      var category = classifyDefinitionQuestionCategory(question, kind, optionLabels);
+      var payload = Object.assign(
+        {
+          questionId: (question && question.id) || "",
+          label: (question && question.label) || "",
+          required: Boolean(question && question.required),
+          diversity: Boolean(question && question.diversity),
+          kind: kind,
+          category: category,
+          options: (question && question.options) || [],
+          multipleChoice: kind === "multiselect"
+        },
+        extra || {}
+      );
+      if (category === "company_specific") {
+        payload.skipped = true;
+        payload.actionHint = "User confirmation required";
+        payload.required = Boolean(question && question.required);
+      }
+      if (kind === "gender" || kind === "ethnicity") {
+        payload.required = question && question.required !== false;
+      }
+      if (kind === "privacy_consent") payload.required = true;
+      return payload;
+    }
+
     if (!host || host.isConnected === false) return units;
 
     radioUnits = collectSmartRecruitersScreeningRadioUnits(doc);
     radioUnits.forEach(function (unit) {
       var screening = unit.screening || {};
       if (screening.questionId) radioById[screening.questionId] = unit;
-      if (screening.label) radioByLabel[normalizeText(screening.label)] = unit;
+      if (screening.label) radioByLabel[normalizeScreeningQuestionLabel(screening.label)] = unit;
     });
 
     questions = parseSmartRecruitersScreeningQuestions(host.getAttribute && host.getAttribute("definition"));
     questions.forEach(function (question) {
       var kind = screeningDefinitionQuestionKind(question);
-      var radio = radioById[question.id] || radioByLabel[normalizeText(question.label)];
-      var autoHost;
+      var radio = radioById[question.id] || radioByLabel[normalizeScreeningQuestionLabel(question.label)];
+      var controlHost;
       var input;
+      var controlKind;
+      if (kind === "info") return;
       if (kind === "radio") {
         if (radio && usedRadios.indexOf(radio) === -1) {
           usedRadios.push(radio);
           (radio.elements || []).forEach(remember);
+          radio.screening = Object.assign({}, radio.screening || {}, screeningPayload(question, "radio"));
           units.push(radio);
         }
         return;
       }
-      if (kind === "gender") {
-        autoHost = findSmartRecruitersAutocompleteHost(host, "question-eeo-gender-select");
-        input = findSmartRecruitersNestedEditableControl(autoHost, ["combobox", "text"]);
-        if (input) {
-          pushSingle(input, {
-            questionId: question.id,
-            label: question.label || "Gender",
-            required: question.required !== false,
-            kind: "gender",
-            category: "gender"
-          });
-        }
-        return;
+      controlHost = findScreeningControlByQuestionId(host, question.id);
+      if (kind === "gender" && !controlHost) {
+        controlHost = findSmartRecruitersAutocompleteHost(host, "question-eeo-gender-select");
       }
-      if (kind === "ethnicity") {
-        autoHost = findSmartRecruitersAutocompleteHost(host, "question-eeo-ethnicity-select");
-        input = findSmartRecruitersNestedEditableControl(autoHost, ["combobox", "text"]);
-        if (input) {
-          pushSingle(input, {
-            questionId: question.id,
-            label: question.label || "Race/Ethnicity",
-            required: question.required !== false,
-            kind: "ethnicity",
-            category: "race_ethnicity"
-          });
-        }
-        return;
+      if (kind === "ethnicity" && !controlHost) {
+        controlHost = findSmartRecruitersAutocompleteHost(host, "question-eeo-ethnicity-select");
       }
-      if (kind === "referral" || looksLikeSmartRecruitersEmployeeReferral(question.label)) {
+      if ((kind === "referral" || looksLikeSmartRecruitersEmployeeReferral(question.label)) && !controlHost) {
         input = findSmartRecruitersReferralInput(host, seen);
-        if (!input) {
-          var textNodes = querySelectorAllDeep(host, "input, textarea, [role='textbox']");
-          var t;
-          for (t = 0; t < textNodes.length; t += 1) {
-            if (!textNodes[t] || already(textNodes[t]) || textNodes[t].isConnected === false) continue;
-            if (normalizeText(textNodes[t].getAttribute && textNodes[t].getAttribute("role")) === "combobox") {
-              continue;
-            }
-            if (screeningDemographicKindFromPlaceholder(textNodes[t])) continue;
-            input = textNodes[t];
-            break;
-          }
-        }
         if (input) {
-          pushSingle(input, {
-            questionId: question.id,
-            label: question.label,
-            required: Boolean(question.required),
-            kind: "referral",
-            category: "referral_source"
-          });
+          pushSingle(input, screeningPayload(question, "referral"));
         }
         return;
       }
       if (kind === "privacy_consent") {
         consent = findSmartRecruitersPrivacyConsentControl(doc);
         if (consent && consent.element) {
-          pushSingle(consent.element, {
-            questionId: question.id,
-            label: consent.label || question.label,
-            required: true,
-            kind: "privacy_consent",
-            category: "privacy_consent"
-          });
+          pushSingle(
+            consent.element,
+            screeningPayload(question, "privacy_consent", { label: consent.label || question.label })
+          );
         }
+        return;
+      }
+      if (!controlHost) return;
+      controlKind = screeningControlKindFromHost(controlHost, kind);
+      if (controlKind === "autocomplete" || controlKind === "multiselect" || kind === "gender" || kind === "ethnicity") {
+        input = findSmartRecruitersNestedEditableControl(controlHost, ["combobox", "text"]);
+        if (input) {
+          remember(controlHost);
+          pushSingle(
+            input,
+            screeningPayload(question, kind === "gender" || kind === "ethnicity" ? kind : controlKind, {
+              hostId: screeningQuestionHostId(question.id)
+            })
+          );
+        }
+        return;
+      }
+      input = findSmartRecruitersNestedEditableControl(controlHost, ["text", "combobox"]);
+      if (input) {
+        remember(controlHost);
+        pushSingle(
+          input,
+          screeningPayload(question, controlKind === "text" ? "text" : kind, {
+            hostId: screeningQuestionHostId(question.id)
+          })
+        );
       }
     });
 
     radioUnits.forEach(function (unit) {
       if (usedRadios.indexOf(unit) !== -1) return;
       (unit.elements || []).forEach(remember);
+      if (unit.screening && unit.screening.label) {
+        unit.screening.category = classifyDefinitionQuestionCategory(
+          {
+            id: unit.screening.questionId,
+            label: unit.screening.label,
+            options: unit.screening.options
+          },
+          "radio"
+        );
+        if (unit.screening.category === "company_specific") {
+          unit.screening.skipped = true;
+          unit.screening.actionHint = "User confirmation required";
+        }
+      }
       units.push(unit);
     });
 
@@ -2629,6 +3316,7 @@
       }
     }
 
+    applyScreeningConditionalState(questions, units, radioById);
     return units;
   }
 
@@ -3423,6 +4111,16 @@
       salary: trimText(common.salaryExpectation || ""),
       relocation: trimText(prefs.willingToRelocate || ""),
       preferred_locations: trimText(prefs.preferredLocations || ""),
+      current_job_title: trimText(opts.currentJobTitle || ""),
+      current_job_location: trimText(opts.currentJobLocation || ""),
+      areas_of_interest: trimText(common.areasOfInterest || prefs.areasOfInterest || ""),
+      employment_country_citizenship: trimText(
+        work.citizenOfEmploymentCountry || work.employmentCountryCitizenship || ""
+      ),
+      us_immigration_status: trimText(work.usCitizenOrLpr || work.usImmigrationStatus || ""),
+      sanctioned_country_citizenship: trimText(
+        work.sanctionedCountryCitizen || work.cubaIranNorthKoreaSyriaCitizen || ""
+      ),
       // Sensitive demographics: only locally saved values — never inferred.
       veteran_status: trimText(demo.veteranStatus || ""),
       disability_status: trimText(
@@ -3513,7 +4211,10 @@
         legallyAuthorizedToWork: trimText(work.legallyAuthorizedToWork || ""),
         requireSponsorshipNow: trimText(work.requireSponsorshipNow || ""),
         requireSponsorshipFuture: trimText(work.requireSponsorshipFuture || ""),
-        exportControlStatus: trimText(work.exportControlStatus || "")
+        exportControlStatus: trimText(work.exportControlStatus || ""),
+        citizenOfEmploymentCountry: trimText(work.citizenOfEmploymentCountry || ""),
+        usCitizenOrLpr: trimText(work.usCitizenOrLpr || ""),
+        sanctionedCountryCitizen: trimText(work.sanctionedCountryCitizen || "")
       },
       demographics: {
         gender: trimText((data.demographics || {}).gender || ""),
@@ -3660,8 +4361,111 @@
     return trimText(fieldLike && fieldLike.inputType) || "Untitled field";
   }
 
+  function screeningOptionLabels(field) {
+    return ((field && field.options) || [])
+      .map(function (opt) {
+        if (typeof opt === "string") return trimText(opt);
+        return trimText((opt && (opt.label || opt.value)) || "");
+      })
+      .filter(Boolean);
+  }
+
+  function splitLocationNeedles(value) {
+    var text = trimText(value);
+    var parts = [];
+    if (!text) return parts;
+    if (text.indexOf(",") === -1 && text.indexOf(";") === -1) {
+      parts.push(text);
+    }
+    String(text)
+      .split(/[,;|/]+/)
+      .forEach(function (part) {
+        var token = trimText(part);
+        if (token.length < 4) return;
+        if (/^[A-Z]{2}$/.test(token)) return;
+        if (/^(united states|usa|us)$/i.test(token)) return;
+        if (parts.indexOf(token) === -1) parts.push(token);
+      });
+    return parts;
+  }
+
+  function optionLabelsMatchingNeedle(options, needle) {
+    var want = normalizeText(needle);
+    var hits = [];
+    var i;
+    var label;
+    var stem;
+    if (!want) return hits;
+    for (i = 0; i < options.length; i += 1) {
+      label = normalizeText(options[i]);
+      if (!label) continue;
+      if (label === want || label.indexOf(want) !== -1 || want.indexOf(label) !== -1) {
+        if (hits.indexOf(options[i]) === -1) hits.push(options[i]);
+        continue;
+      }
+      stem = want.replace(/(ers|er|ing)$/g, "");
+      if (stem.length >= 5 && label.indexOf(stem) !== -1) {
+        if (hits.indexOf(options[i]) === -1) hits.push(options[i]);
+      }
+    }
+    return hits;
+  }
+
+  function uniquelyMatchedOptionsForNeedles(options, needles) {
+    var chosen = [];
+    (needles || []).forEach(function (needle) {
+      var hits = optionLabelsMatchingNeedle(options, needle);
+      if (hits.length === 1 && chosen.indexOf(hits[0]) === -1) chosen.push(hits[0]);
+    });
+    return chosen;
+  }
+
+  function uniqueScreeningOptionMatches(field, inventory) {
+    var options = screeningOptionLabels(field);
+    var inv = inventory || {};
+    var jobNeedles;
+    var prefNeedles;
+    var jobHits;
+    var prefHits;
+    if (!options.length) return [];
+    if (field.category === "preferred_locations") {
+      jobNeedles = []
+        .concat(splitLocationNeedles(inv.current_job_location))
+        .concat(splitLocationNeedles(inv.location))
+        .concat(splitLocationNeedles(inv.city));
+      jobHits = uniquelyMatchedOptionsForNeedles(options, jobNeedles);
+      if (jobHits.length === 1) return jobHits;
+      if (jobHits.length > 1) return [];
+      prefNeedles = [];
+      String(inv.preferred_locations || "")
+        .split(/[,;]+/)
+        .forEach(function (part) {
+          var token = trimText(part);
+          if (token.length < 3) return;
+          if (prefNeedles.indexOf(token) === -1) prefNeedles.push(token);
+        });
+      prefHits = uniquelyMatchedOptionsForNeedles(options, prefNeedles);
+      return prefHits;
+    }
+    if (field.category === "areas_of_interest") {
+      return uniquelyMatchedOptionsForNeedles(options, [inv.areas_of_interest, inv.current_job_title].filter(Boolean));
+    }
+    if (field.category === "education_discipline") {
+      return uniquelyMatchedOptionsForNeedles(options, [inv.education_discipline].filter(Boolean));
+    }
+    return [];
+  }
+
+  function uniqueScreeningOptionMatch(field, inventory) {
+    var hits = uniqueScreeningOptionMatches(field, inventory);
+    return hits.length === 1 ? hits[0] : "";
+  }
+
   function enrichScanField(field, inventory) {
     var copy = Object.assign({}, field);
+    var optionMatch;
+    var gpaMapped;
+    var optionLabels = screeningOptionLabels(copy);
     copy.question = resolveQuestionText(copy);
     copy.isSensitive = isSensitiveCategory(copy.category);
     copy.skippable = copy.isSensitive;
@@ -3671,6 +4475,67 @@
     if (copy.proposedAnswer === NO_SAVED_ANSWER) {
       copy.hasAnswer = false;
     }
+    if (copy.category === "preferred_locations") {
+      optionMatch = uniqueScreeningOptionMatch(copy, inventory || {});
+      if (optionMatch) {
+        copy.proposedAnswer = optionMatch;
+        copy.hasAnswer = true;
+      } else if (trimText((inventory || {}).current_job_location)) {
+        copy.proposedAnswer = trimText(inventory.current_job_location);
+        copy.hasAnswer = true;
+      } else {
+        var prefHits = uniqueScreeningOptionMatches(copy, inventory || {});
+        if (prefHits.length) {
+          copy.proposedAnswer = prefHits[0];
+          copy.hasAnswer = true;
+        } else {
+          copy.hasAnswer = false;
+          copy.proposedAnswer = NO_SAVED_ANSWER;
+        }
+      }
+    } else if (copy.category === "areas_of_interest") {
+      optionMatch = uniqueScreeningOptionMatch(copy, inventory || {});
+      if (optionMatch) {
+        copy.proposedAnswer = optionMatch;
+        copy.hasAnswer = true;
+      } else if (trimText((inventory || {}).areas_of_interest) || trimText((inventory || {}).current_job_title)) {
+        copy.proposedAnswer =
+          trimText((inventory || {}).areas_of_interest) || trimText((inventory || {}).current_job_title);
+        copy.hasAnswer = true;
+      }
+    } else if (copy.category === "education_discipline") {
+      optionMatch = uniqueScreeningOptionMatch(copy, inventory || {});
+      if (optionMatch) {
+        copy.proposedAnswer = optionMatch;
+        copy.hasAnswer = true;
+      }
+    }
+    if (copy.category === "education_gpa") {
+      gpaMapped = mapNumericGpaToRangeOption(
+        (inventory && inventory.education_gpa) || copy.proposedAnswer,
+        optionLabels
+      );
+      if (gpaMapped) {
+        copy.proposedAnswer = gpaMapped;
+        copy.hasAnswer = true;
+      }
+    }
+    if (copy.category === "export_control_status") {
+      var yesNoOnly = optionLabels.length > 0 && optionLabels.every(function (label) {
+        return /^(yes|no)$/i.test(normalizeText(label).replace(/[^a-z]/g, ""));
+      });
+      if (yesNoOnly && !/^(yes|no)$/i.test(normalizeText(copy.proposedAnswer))) {
+        copy.hasAnswer = false;
+        copy.proposedAnswer = NO_SAVED_ANSWER;
+      }
+    }
+    if (!copy.hasAnswer) {
+      optionMatch = uniqueScreeningOptionMatch(copy, inventory || {});
+      if (optionMatch) {
+        copy.proposedAnswer = optionMatch;
+        copy.hasAnswer = true;
+      }
+    }
     if (copy.category === "privacy_consent") {
       copy.hasAnswer = false;
       copy.proposedAnswer = NO_SAVED_ANSWER;
@@ -3679,6 +4544,25 @@
       if (!isFilledValue(copy.currentValue)) {
         copy.actionHint = "User confirmation required";
       }
+    }
+    if (copy.category === "company_specific") {
+      copy.hasAnswer = false;
+      copy.proposedAnswer = NO_SAVED_ANSWER;
+      copy.skipped = true;
+      copy.skippable = false;
+      copy.actionHint = copy.actionHint || "User confirmation required";
+    }
+    if (copy.conditionalState === "not_applicable") {
+      copy.hasAnswer = false;
+      copy.skipped = true;
+      copy.required = false;
+      copy.actionHint = "Conditionally not applicable";
+    }
+    if (copy.conditionalState === "blocked") {
+      copy.hasAnswer = false;
+      copy.skipped = true;
+      copy.required = false;
+      copy.actionHint = "Blocked by parent confirmation";
     }
     copy.fillStatus = deriveFillStatus(copy);
     return copy;
@@ -3786,8 +4670,10 @@
         nearby: question || ""
       });
       if (screening && screening.label) context.label = screening.label;
-      // Classify from question text, not option labels as primary blob
-      var detected = detectCategoryFromMeta({
+      var detected =
+        screening && screening.category
+          ? { category: screening.category, confidence: 0.99 }
+          : detectCategoryFromMeta({
         tagName: "input",
         inputType: groupType,
         type: groupType,
@@ -3826,7 +4712,11 @@
         confidenceLabel: confidenceLabel(detected.confidence),
         nearbyText: context.nearby,
         fillStatus: "unknown",
-        screeningQuestionId: screening && screening.questionId
+        screeningQuestionId: screening && screening.questionId,
+        screeningKind: screening && screening.kind,
+        skipped: Boolean(screening && screening.skipped),
+        actionHint: (screening && screening.actionHint) || "",
+        conditionalState: (screening && screening.conditionalState) || ""
       });
       return enrichScanField(field, inv);
     }
@@ -3856,7 +4746,18 @@
     if (screening && screening.kind === "privacy_consent") {
       currentValue = isSmartRecruitersConsentChecked(primary) ? screening.label || "on" : "";
     }
+    if (screening && screening.kind === "multiselect") {
+      currentValue =
+        readSmartRecruitersMultiselectValue(
+          closestComposed(primary, function (node) {
+            return (node.tagName || "").toLowerCase() === "spl-multiselect-autocomplete";
+          })
+        ) || currentValue;
+    }
     required = screening && screening.required != null ? Boolean(screening.required) : isRequired(primary);
+    if (screening && (screening.conditionalState === "not_applicable" || screening.conditionalState === "blocked")) {
+      required = false;
+    }
     field = validateScanField({
       fieldId: buildStableFieldId(
         {
@@ -3869,7 +4770,12 @@
         },
         index
       ),
-      inputType: describeInputType(primary),
+      inputType:
+        screening && screening.kind === "multiselect"
+          ? "select-multiple"
+          : screening && (screening.kind === "autocomplete" || screening.kind === "gender" || screening.kind === "ethnicity")
+            ? "select"
+            : describeInputType(primary),
       name: context.name,
       id: (screening && screening.questionId) || context.id,
       label: context.label,
@@ -3877,14 +4783,18 @@
       ariaLabel: context.ariaLabel,
       required: required,
       currentValue: currentValue,
-      options: options,
+      options: (screening && screening.options && screening.options.length ? screening.options : options),
       category: detected.category,
       categoryLabel: CATEGORY_LABELS[detected.category] || "Unknown",
       confidence: Math.round((Number(detected.confidence) || 0) * 100) / 100,
       confidenceLabel: confidenceLabel(detected.confidence),
       nearbyText: context.nearby,
       fillStatus: "unknown",
-      screeningQuestionId: screening && screening.questionId
+      screeningQuestionId: screening && screening.questionId,
+      screeningKind: screening && screening.kind,
+      skipped: Boolean(screening && screening.skipped),
+      actionHint: (screening && screening.actionHint) || "",
+      conditionalState: (screening && screening.conditionalState) || ""
     });
     return enrichScanField(field, inv);
   }
@@ -3902,6 +4812,9 @@
         f.category !== "unknown" &&
         !f.hasAnswer &&
         !f.skipped &&
+        f.category !== "company_specific" &&
+        f.conditionalState !== "not_applicable" &&
+        f.conditionalState !== "blocked" &&
         !isFilledValue(f.currentValue)
       );
     });
@@ -3909,7 +4822,15 @@
       return f.category === "unknown";
     });
     var requiredUnanswered = list.filter(function (f) {
-      return f.required && !isFilledValue(f.currentValue) && !f.hasAnswer && !f.skipped;
+      return (
+        f.required &&
+        !isFilledValue(f.currentValue) &&
+        !f.hasAnswer &&
+        !f.skipped &&
+        f.category !== "company_specific" &&
+        f.conditionalState !== "not_applicable" &&
+        f.conditionalState !== "blocked"
+      );
     });
     return {
       totalFields: list.length,
@@ -4645,7 +5566,20 @@
     textValuesMatch: textValuesMatch,
     phoneValuesMatch: phoneValuesMatch,
     phoneDigitsOnly: phoneDigitsOnly,
-    looksLikeEducationDateField: looksLikeEducationDateField,
+    uniqueScreeningOptionMatch: uniqueScreeningOptionMatch,
+    uniqueScreeningOptionMatches: uniqueScreeningOptionMatches,
+    mapNumericGpaToRangeOption: mapNumericGpaToRangeOption,
+    gpaForGenericScreeningQuestion: gpaForGenericScreeningQuestion,
+    selectHighestDegreeEducation: selectHighestDegreeEducation,
+    looksLikePreviouslyAppliedQuestion: looksLikePreviouslyAppliedQuestion,
+    looksLikeExportControlRestrictionQuestion: looksLikeExportControlRestrictionQuestion,
+    looksLikePreferredLocationsQuestion: looksLikePreferredLocationsQuestion,
+    looksLikeCompanySpecificUserConfirmation: looksLikeCompanySpecificUserConfirmation,
+    classifyScreeningEducationCategory: classifyScreeningEducationCategory,
+    normalizeScreeningQuestionLabel: normalizeScreeningQuestionLabel,
+    findScreeningControlByQuestionId: findScreeningControlByQuestionId,
+    screeningQuestionHostId: screeningQuestionHostId,
+    readSmartRecruitersMultiselectValue: readSmartRecruitersMultiselectValue,
     looksLikeLocationCityField: looksLikeLocationCityField,
     looksLikeSmartRecruitersCountryChrome: looksLikeSmartRecruitersCountryChrome,
     looksLikeSmartRecruitersDropzoneChrome: looksLikeSmartRecruitersDropzoneChrome,

@@ -19,8 +19,20 @@
     veteran_status: true,
     gender: true,
     race_ethnicity: true,
+    hispanic_latino: true,
     referral_source: true,
-    privacy_consent: true
+    privacy_consent: true,
+    education_school: true,
+    education_discipline: true,
+    education_degree: true,
+    education_gpa: true,
+    education_end_month: true,
+    education_end_year: true,
+    preferred_locations: true,
+    areas_of_interest: true,
+    employment_country_citizenship: true,
+    us_immigration_status: true,
+    sanctioned_country_citizenship: true
   };
 
   function trimText(value) {
@@ -1723,27 +1735,11 @@
   }
 
   function answerForCategory(category, inventory) {
-    var AF = autofill();
     if (category === "city" || category === "location") {
       return trimText((inventory && (inventory.city || inventory.location || inventory.current_location)) || "");
     }
     if (category === "resume_upload") {
       return trimText((inventory && (inventory.resume_filename || inventory.resume_upload)) || "");
-    }
-    if (
-      category === "work_authorization" ||
-      category === "sponsorship_now" ||
-      category === "sponsorship_later" ||
-      category === "relocation" ||
-      category === "disability_status" ||
-      category === "veteran_status" ||
-      category === "gender" ||
-      category === "race_ethnicity"
-    ) {
-      return trimText((inventory && inventory[category]) || "");
-    }
-    if (AF && typeof AF.getTextAnswerForCategory === "function") {
-      return AF.getTextAnswerForCategory(category, inventory || {});
     }
     return trimText((inventory && inventory[category]) || "");
   }
@@ -1763,11 +1759,55 @@
   }
 
   function looksLikeScreeningRadioField(field) {
-    return Boolean(field && field.screeningQuestionId && field.inputType === "radio");
+    if (!field || field.inputType !== "radio") return false;
+    if (field.screeningQuestionId) return true;
+    return Boolean(
+      field.category === "employment_country_citizenship" ||
+        field.category === "us_immigration_status" ||
+        field.category === "sanctioned_country_citizenship" ||
+        field.category === "work_authorization" ||
+        field.category === "sponsorship_now" ||
+        field.category === "sponsorship_later" ||
+        field.category === "hispanic_latino" ||
+        field.category === "disability_status" ||
+        field.category === "veteran_status"
+    );
   }
 
   function looksLikeScreeningDemographicAutocomplete(field) {
-    return Boolean(field && (field.category === "gender" || field.category === "race_ethnicity"));
+    return Boolean(
+      field &&
+        (field.category === "gender" ||
+          field.category === "race_ethnicity" ||
+          field.category === "education_degree" ||
+          field.category === "education_gpa" ||
+          field.category === "education_end_month" ||
+          field.category === "education_end_year" ||
+          field.screeningKind === "autocomplete" ||
+          field.screeningKind === "gender" ||
+          field.screeningKind === "ethnicity")
+    );
+  }
+
+  function looksLikeScreeningMultiSelectField(field) {
+    return Boolean(
+      field &&
+        (field.screeningKind === "multiselect" ||
+          field.inputType === "select-multiple" ||
+          field.category === "education_discipline" ||
+          field.category === "preferred_locations" ||
+          field.category === "areas_of_interest")
+    );
+  }
+
+  function looksLikeScreeningTextField(field) {
+    return Boolean(
+      field &&
+        field.screeningQuestionId &&
+        (field.screeningKind === "text" ||
+          field.category === "education_school" ||
+          field.category === "referral_source")
+    );
   }
 
   function screeningDemographicKindFromCategory(category) {
@@ -1832,6 +1872,10 @@
       hops += 1;
     }
     return null;
+  }
+
+  function closestScreeningSelectHost(el) {
+    return closestComposedTag(el, "spl-multiselect-autocomplete") || closestComposedTag(el, "spl-autocomplete");
   }
 
   function findNodeByIdDeep(root, id) {
@@ -2397,7 +2441,7 @@
 
   function findAssociatedScreeningMenu(input, root) {
     var controls = trimText(input && input.getAttribute && input.getAttribute("aria-controls"));
-    var host = closestComposedTag(input, "spl-autocomplete") || findSmartRecruitersScreeningHost(root) || root;
+    var host = closestScreeningSelectHost(input) || findSmartRecruitersScreeningHost(root) || root;
     var menu = null;
     if (controls) menu = findNodeByIdDeep(host, controls) || findNodeByIdDeep(root, controls);
     if (menu) return menu;
@@ -2409,14 +2453,14 @@
   }
 
   function collectScreeningAutocompleteOptions(input, root) {
-    var host = closestComposedTag(input, "spl-autocomplete");
+    var host = closestScreeningSelectHost(input);
     return collectVisibleScreeningOptionRows(host).map(function (row) {
       return row.el;
     });
   }
 
   function activeScreeningOptionText(input, optionEls, root) {
-    var host = closestComposedTag(input, "spl-autocomplete");
+    var host = closestScreeningSelectHost(input);
     return readActiveVisibleOptionLabel(host, input);
   }
 
@@ -2443,15 +2487,45 @@
 
   function dispatchComposedEvent(el, type, init) {
     var opts = Object.assign({ bubbles: true, cancelable: true, composed: true }, init || {});
+    var ev = null;
     if (!el || typeof el.dispatchEvent !== "function") return false;
     try {
       if ((type === "input" || type === "beforeinput") && typeof InputEvent === "function") {
-        el.dispatchEvent(new InputEvent(type, opts));
-        return true;
+        ev = new InputEvent(type, opts);
       }
+    } catch (_) {
+      ev = null;
+    }
+    if (!ev) {
+      try {
+        ev = new Event(type, opts);
+      } catch (_) {
+        ev = { type: type, bubbles: Boolean(opts.bubbles), cancelable: Boolean(opts.cancelable), composed: true };
+      }
+    }
+    try {
+      if (opts.data != null && ev.data == null) ev.data = opts.data;
     } catch (_) {}
     try {
-      el.dispatchEvent(new Event(type, opts));
+      if (opts.inputType && ev.inputType !== opts.inputType) {
+        Object.defineProperty(ev, "inputType", { configurable: true, value: opts.inputType });
+      }
+    } catch (_) {
+      try {
+        ev.inputType = opts.inputType;
+      } catch (__) {}
+    }
+    try {
+      if (opts.composed && ev.composed !== true) {
+        Object.defineProperty(ev, "composed", { configurable: true, value: true });
+      }
+    } catch (_) {
+      try {
+        ev.composed = true;
+      } catch (__) {}
+    }
+    try {
+      el.dispatchEvent(ev);
       return true;
     } catch (_) {
       return false;
@@ -2553,7 +2627,7 @@
   }
 
   function clickMatchingScreeningOption(input, root, matchedLabel) {
-    var host = closestComposedTag(input, "spl-autocomplete");
+    var host = closestScreeningSelectHost(input);
     var exact = findExactVisibleScreeningOptions(host, matchedLabel);
     if (exact.length !== 1) return false;
     return clickExactVisibleScreeningOptionRow(exact[0]);
@@ -2591,12 +2665,12 @@
     clickEl(btn);
     dispatchOptionPointerFallback(btn);
     await sleep(80);
-    host = closestComposedTag(input, "spl-autocomplete") || host;
+    host = closestScreeningSelectHost(input) || host;
     return !trimText(committedDemographicVisibleLabel(host, input));
   }
 
   async function commitScreeningDemographicSelection(input, root, matchedLabel) {
-    var host = closestComposedTag(input, "spl-autocomplete");
+    var host = closestScreeningSelectHost(input);
     var exact;
     var active;
     var option;
@@ -2607,11 +2681,11 @@
     var y;
     var want = String(matchedLabel || "").replace(/\s+/g, " ").trim().toLowerCase();
     await waitUntil(function () {
-      var liveHost = closestComposedTag(input, "spl-autocomplete") || host;
+      var liveHost = closestScreeningSelectHost(input) || host;
       var liveInput = findComboboxInDemographicHost(liveHost) || input;
       return screeningInputExpanded(liveInput) && querySplSelectOptions(liveHost).length > 0;
     }, 16, 50);
-    host = closestComposedTag(input, "spl-autocomplete") || host;
+    host = closestScreeningSelectHost(input) || host;
     exact = findExactVisibleScreeningOptions(host, matchedLabel);
     if (exact.length !== 1) return false;
     clickExactVisibleScreeningOptionRow(exact[0]);
@@ -2662,144 +2736,471 @@
     }
   }
 
-  async function fillScreeningDemographicAutocomplete(field, inventory, root) {
-    var kind = screeningDemographicKindFromCategory(field && field.category);
-    var answer = answerForCategory(field && field.category, inventory);
-    var mappedLabel = kind === "gender" ? mapGenderToPlatformLabel(answer) : trimText(answer);
-    var host = findScreeningDemographicHost(root, kind);
-    var input = findComboboxInDemographicHost(host) || findScreeningDemographicInput(root, kind);
-    var after;
-    var debug;
-    var visibleRows;
-    var visibleLabels;
-    var exact;
-    var committed;
-    var cleared;
-
-    function visibleLabelsNow(liveHost) {
-      return collectVisibleScreeningOptionRows(liveHost).map(function (row) {
-        return row.label;
-      });
+  function findScreeningQuestionHost(root, questionId) {
+    var want = trimText(questionId) ? "question_" + trimText(questionId) : "";
+    var screening = findSmartRecruitersScreeningHost(root);
+    var scopes = [];
+    var s;
+    var nodes;
+    var i;
+    var el;
+    var id;
+    if (!want) return null;
+    if (screening && screening.shadowRoot) scopes.push(screening.shadowRoot);
+    if (screening) scopes.push(screening);
+    scopes.push(root || document);
+    for (s = 0; s < scopes.length; s += 1) {
+      nodes = queryDeepInclusive(
+        scopes[s],
+        "spl-input, spl-autocomplete, spl-multiselect-autocomplete, [data-spl-field]"
+      );
+      for (i = 0; i < nodes.length; i += 1) {
+        el = nodes[i];
+        if (!isLiveDocumentNode(el)) continue;
+        id = trimText((el.id || (el.getAttribute && el.getAttribute("id"))) || "");
+        if (id === want) return el;
+      }
     }
+    return null;
+  }
 
-    function fail(message, el, liveHost) {
-      debug = demographicDebug(el || input, root, {
-        category: (field && field.category) || kind,
-        proposed: answer,
-        allowed: visibleLabelsNow(liveHost || host)
-      });
+  function findNestedScreeningInput(host) {
+    var input;
+    if (!host) return null;
+    input = findComboboxInDemographicHost(host);
+    if (input) return input;
+    if (host.shadowRoot && host.shadowRoot.querySelector) {
+      try {
+        input = host.shadowRoot.querySelector("input, textarea, [role='combobox'], [role='textbox']");
+      } catch (_) {
+        input = null;
+      }
+    }
+    return isLiveDocumentNode(input) ? input : null;
+  }
+
+  function fieldOptionLabels(field) {
+    return ((field && field.options) || [])
+      .map(function (opt) {
+        return trimText((opt && (opt.label || opt.value)) || "");
+      })
+      .filter(Boolean);
+  }
+
+  function mapGpaToSelectOption(saved, options) {
+    var AF = autofill();
+    if (AF && typeof AF.mapNumericGpaToRangeOption === "function") {
+      return trimText(AF.mapNumericGpaToRangeOption(saved, options));
+    }
+    var n = parseFloat(String(saved || "").replace(/[^0-9.]/g, ""));
+    var i;
+    var label;
+    var exact = trimText(saved);
+    if (exact) {
+      for (i = 0; i < (options || []).length; i += 1) {
+        label = trimText(options[i]);
+        if (label.toLowerCase() === exact.toLowerCase()) return label;
+      }
+    }
+    if (!isFinite(n)) return "";
+    for (i = 0; i < (options || []).length; i += 1) {
+      label = trimText(options[i]);
+      if (/3\.5\s+and\s+above/i.test(label) && n >= 3.5) return label;
+      if (/3\.0\s*-\s*3\.4/i.test(label) && n >= 3 && n < 3.5) return label;
+    }
+    return "";
+  }
+
+  function mapDegreeToSelectOption(saved, options) {
+    var want = normalizeText(saved).replace(/[\u2019']/g, "").replace(/\./g, "");
+    var i;
+    var label;
+    var norm;
+    if (!want) return "";
+    for (i = 0; i < (options || []).length; i += 1) {
+      label = trimText(options[i]);
+      norm = normalizeText(label).replace(/[\u2019']/g, "").replace(/\./g, "");
+      if (norm === want) return label;
+      if (want === "master of science" && /master of science/.test(norm)) return label;
+      if (want === "ms" && /master of science/.test(norm)) return label;
+    }
+    return "";
+  }
+
+  function looksLikeCategoricalGpaOptions(options) {
+    var labels = options || [];
+    var i;
+    var hits = 0;
+    for (i = 0; i < labels.length; i += 1) {
+      if (
+        /\d+(?:\.\d+)?\s*[-–—]\s*\d+(?:\.\d+)?/.test(labels[i]) ||
+        /\band above\b/i.test(labels[i]) ||
+        /\bless than\b/i.test(labels[i]) ||
+        /\bbelow\b/i.test(labels[i])
+      ) {
+        hits += 1;
+      }
+    }
+    return hits >= 2;
+  }
+
+  function resolveScreeningSelectAnswer(field, inventory) {
+    var category = field && field.category;
+    var raw = answerForCategory(category, inventory);
+    var options = fieldOptionLabels(field);
+    var AF = autofill();
+    var matched;
+    var matches;
+    if (category === "gender") return mapGenderToPlatformLabel(raw);
+    if (category === "education_gpa") {
+      matched = mapGpaToSelectOption(raw, options);
+      if (matched) return matched;
+      if (looksLikeCategoricalGpaOptions(options)) return "";
+      return "";
+    }
+    if (category === "education_degree") return mapDegreeToSelectOption(raw, options) || trimText(raw);
+    if (
+      category === "preferred_locations" ||
+      category === "areas_of_interest" ||
+      category === "education_discipline"
+    ) {
+      if (AF && typeof AF.uniqueScreeningOptionMatches === "function") {
+        matches = AF.uniqueScreeningOptionMatches(field, inventory || {}) || [];
+        if (matches.length) return matches[0];
+      } else if (AF && typeof AF.uniqueScreeningOptionMatch === "function") {
+        matched = AF.uniqueScreeningOptionMatch(field, inventory || {});
+        if (matched) return matched;
+      }
+      return "";
+    }
+    return trimText(raw);
+  }
+
+  function readMultiselectCommittedLabels(host) {
+    var AF = autofill();
+    if (AF && typeof AF.readSmartRecruitersMultiselectValue === "function") {
+      return trimText(AF.readSmartRecruitersMultiselectValue(host));
+    }
+    return trimText((host && (host.innerText || host.textContent)) || "");
+  }
+
+  function hostContainsSelectedLabel(host, label) {
+    var blob = normalizeText(readMultiselectCommittedLabels(host) + " " + trimText(host && host.value));
+    return Boolean(blob && normalizeText(label) && blob.indexOf(normalizeText(label)) !== -1);
+  }
+
+  async function fillScreeningTextField(field, inventory, root) {
+    var host = findScreeningQuestionHost(root, field && field.screeningQuestionId);
+    var input = findNestedScreeningInput(host);
+    var answer = answerForCategory(field && field.category, inventory);
+    var after;
+    if (!answer) return { ok: false, status: "skipped", reason: "No saved answer." };
+    if (!host || !input) {
+      return { ok: false, status: "failed", reason: "Screening text field was not found." };
+    }
+    if (trimText(input.value) === trimText(answer)) {
+      return { ok: false, status: "skipped", reason: "Field is already completed.", value: answer };
+    }
+    try {
+      if (typeof input.scrollIntoView === "function") input.scrollIntoView({ block: "nearest" });
+    } catch (_) {}
+    try {
+      if (typeof input.focus === "function") input.focus();
+    } catch (_) {}
+    if (!setScreeningInputNativeValue(input, answer)) {
+      return { ok: false, status: "failed", reason: "Could not set field value." };
+    }
+    dispatchComposedEvent(input, "input", { data: answer, inputType: "insertText" });
+    dispatchComposedEvent(input, "change", {});
+    try {
+      if (typeof input.blur === "function") input.blur();
+    } catch (_) {}
+    await sleep(120);
+    host = findScreeningQuestionHost(root, field.screeningQuestionId) || host;
+    after = findNestedScreeningInput(host) || input;
+    if (trimText(after.value) !== trimText(answer)) {
       return {
         ok: false,
         status: "failed",
-        reason: demographicFailureReason(message, debug),
-        value: debug.value || ""
+        reason: "Verification failed; text value did not persist."
       };
     }
+    return { ok: true, status: "filled", reason: "", value: answer };
+  }
 
-    async function failWrongSensitiveValue(expected, actual, el, liveHost) {
-      var liveInput = el;
-      var liveHostNow = liveHost || host;
-      if (actual && !demographicValueEquals(actual, expected)) {
-        await clearCommittedDemographicValue(liveHostNow, liveInput);
+  function screeningSelectFail(field, mappedLabel, message, extra) {
+    var info = extra || {};
+    var allowed = info.allowed;
+    var bits = [message];
+    if (field && field.category) bits.push("category=" + field.category);
+    if (info.source) bits.push("source=" + info.source);
+    if (info.raw) bits.push("raw=" + info.raw);
+    bits.push("proposed=" + trimText(info.raw || mappedLabel || (field && field.category) || ""));
+    if (info.target) bits.push("target=" + info.target);
+    if (allowed) bits.push("allowed=" + allowed);
+    if (info.expanded != null) bits.push("aria-expanded=" + info.expanded);
+    if (info.menuFound != null) bits.push("menuFound=" + info.menuFound);
+    return {
+      ok: false,
+      status: "failed",
+      reason: bits.join("; ")
+    };
+  }
+
+  async function collectLiveSelectOptionLabels(host, input) {
+    var labels = [];
+    var seen = {};
+    if (!host || !input) return labels;
+    try {
+      if (typeof input.click === "function") input.click();
+    } catch (_) {}
+    try {
+      if (typeof input.focus === "function") input.focus();
+    } catch (_) {}
+    setScreeningInputNativeValue(input, "");
+    dispatchScreeningInputEvents(input, "", { data: "", inputType: "deleteContentBackward" });
+    await waitUntil(function () {
+      return querySplSelectOptions(host).length > 0;
+    }, 16, 50);
+    querySplSelectOptions(host).forEach(function (el) {
+      var label = visibleOptionLabel(el) || splSelectOptionLabel(el);
+      if (!label || seen[label]) return;
+      seen[label] = true;
+      labels.push(label);
+    });
+    return labels;
+  }
+
+  function fieldWithSelectOptions(field, labels) {
+    return Object.assign({}, field, {
+      options: (labels || []).map(function (label) {
+        return { label: label, value: label };
+      })
+    });
+  }
+
+  async function fillScreeningSelectField(field, inventory, root) {
+    var kind = screeningDemographicKindFromCategory(field && field.category);
+    var mappedLabel = "";
+    var rawAnswer = answerForCategory(field && field.category, inventory);
+    var host =
+      findScreeningQuestionHost(root, field && field.screeningQuestionId) ||
+      (kind ? findScreeningDemographicHost(root, kind) : null);
+    var input = findNestedScreeningInput(host);
+    var after;
+    var exact;
+    var committed;
+    var isMulti = looksLikeScreeningMultiSelectField(field) || ((host && host.tagName) || "").toLowerCase() === "spl-multiselect-autocomplete";
+    var visibleLabels;
+    var liveOptions = fieldOptionLabels(field);
+    var mappedField = field;
+    var AF = autofill();
+    var sourceKey = (field && field.category) || "";
+
+    function diag(message, more) {
+      visibleLabels = querySplSelectOptions(host)
+        .map(function (el) {
+          return visibleOptionLabel(el);
+        })
+        .filter(Boolean)
+        .join(" | ");
+      if (!visibleLabels) {
+        visibleLabels = fieldOptionLabels(mappedField).join(" | ");
       }
-      return fail(
-        "High-severity: incorrect sensitive value committed; expected " +
-          expected +
-          ", got " +
-          (actual || "(empty)") +
-          ".",
-        el,
-        liveHostNow
+      return screeningSelectFail(
+        field,
+        mappedLabel || rawAnswer,
+        message,
+        Object.assign(
+          {
+            source: sourceKey,
+            raw: rawAnswer,
+            target: mappedLabel,
+            allowed: visibleLabels,
+            expanded: input ? input.getAttribute("aria-expanded") : "",
+            menuFound: querySplSelectOptions(host).length > 0
+          },
+          more || {}
+        )
       );
     }
 
-    if (!kind) {
-      return { ok: false, status: "skipped", reason: "Unsupported demographic field." };
-    }
-    if (!input) {
-      if (!answer) return { ok: false, status: "skipped", reason: "No saved answer." };
-      return fail("Screening autocomplete was not found.");
-    }
-    if (!answer || !mappedLabel) {
-      return { ok: false, status: "skipped", reason: "No saved answer." };
+    if (!host || !input) {
+      mappedLabel = resolveScreeningSelectAnswer(field, inventory);
+      if (!mappedLabel && !rawAnswer) {
+        return { ok: false, status: "skipped", reason: "No saved answer." };
+      }
+      return diag("Screening select was not found.");
     }
 
-    committed = committedDemographicVisibleLabel(host, input);
-    if (demographicValueEquals(committed, mappedLabel) && !screeningInputExpanded(input)) {
+    mappedField = liveOptions.length ? fieldWithSelectOptions(field, liveOptions) : field;
+    mappedLabel = resolveScreeningSelectAnswer(mappedField, inventory);
+    committed = isMulti
+      ? readMultiselectCommittedLabels(host)
+      : committedDemographicVisibleLabel(host, input);
+    if (
+      mappedLabel &&
+      (isMulti ? hostContainsSelectedLabel(host, mappedLabel) : demographicValueEquals(committed, mappedLabel)) &&
+      !screeningInputExpanded(input)
+    ) {
       return {
         ok: false,
         status: "skipped",
         reason: "Field is already completed.",
-        value: committed || mappedLabel
+        value: mappedLabel
       };
     }
-    if (committed && !demographicValueEquals(committed, mappedLabel)) {
-      cleared = await clearCommittedDemographicValue(host, input);
-      host = findScreeningDemographicHost(root, kind) || host;
-      input = findComboboxInDemographicHost(host) || findScreeningDemographicInput(root, kind) || input;
-      committed = committedDemographicVisibleLabel(host, input);
-      if (committed && !demographicValueEquals(committed, mappedLabel)) {
-        return failWrongSensitiveValue(mappedLabel, committed, input, host);
-      }
-      if (!cleared && committed) {
-        return failWrongSensitiveValue(mappedLabel, committed, input, host);
+
+    if (!mappedLabel && !liveOptions.length) {
+      liveOptions = await collectLiveSelectOptionLabels(host, input);
+      host = findScreeningQuestionHost(root, field && field.screeningQuestionId) || closestScreeningSelectHost(input) || host;
+      input = findNestedScreeningInput(host) || input;
+      mappedField = fieldWithSelectOptions(field, liveOptions);
+      mappedLabel = resolveScreeningSelectAnswer(mappedField, inventory);
+      if (
+        !mappedLabel &&
+        field.category === "preferred_locations" &&
+        AF &&
+        typeof AF.uniqueScreeningOptionMatches === "function"
+      ) {
+        mappedLabel = (AF.uniqueScreeningOptionMatches(mappedField, inventory || {}) || [])[0] || "";
       }
     }
 
-    await closeOtherScreeningDemographicMenus(root, kind);
-    host = findScreeningDemographicHost(root, kind) || host;
-    input = findComboboxInDemographicHost(host) || findScreeningDemographicInput(root, kind) || input;
+    if (!mappedLabel) {
+      if (
+        !rawAnswer &&
+        !(field.category === "preferred_locations" && trimText(inventory && inventory.current_job_location)) &&
+        !(field.category === "areas_of_interest" && trimText(inventory && inventory.current_job_title))
+      ) {
+        return { ok: false, status: "skipped", reason: "No saved answer." };
+      }
+      return diag("No uniquely safe option for the saved answer.");
+    }
+    committed = isMulti
+      ? readMultiselectCommittedLabels(host)
+      : committedDemographicVisibleLabel(host, input);
+    if (
+      (isMulti ? hostContainsSelectedLabel(host, mappedLabel) : demographicValueEquals(committed, mappedLabel)) &&
+      !screeningInputExpanded(input)
+    ) {
+      return {
+        ok: false,
+        status: "skipped",
+        reason: "Field is already completed.",
+        value: mappedLabel
+      };
+    }
+    if (!isMulti && committed && !demographicValueEquals(committed, mappedLabel)) {
+      await clearCommittedDemographicValue(host, input);
+      host = findScreeningQuestionHost(root, field.screeningQuestionId) || host;
+      input = findNestedScreeningInput(host) || input;
+    }
+
+    try {
+      if (typeof input.click === "function") input.click();
+    } catch (_) {}
+    try {
+      if (typeof input.focus === "function") input.focus();
+    } catch (_) {}
     if (!(await typeScreeningDemographicValue(input, mappedLabel))) {
-      return fail("Could not set field value.", input, host);
+      return diag("Could not set field value.");
     }
     await waitUntil(function () {
-      var liveHost = findScreeningDemographicHost(root, kind) || host;
-      var liveInput = findComboboxInDemographicHost(liveHost) || input;
+      var liveHost = findScreeningQuestionHost(root, field.screeningQuestionId) || closestScreeningSelectHost(input) || host;
+      var liveInput = findNestedScreeningInput(liveHost) || input;
       return screeningInputExpanded(liveInput) && querySplSelectOptions(liveHost).length > 0;
     }, 16, 50);
-    host = findScreeningDemographicHost(root, kind) || host;
-    input = findComboboxInDemographicHost(host) || findScreeningDemographicInput(root, kind) || input;
-    visibleRows = collectVisibleScreeningOptionRows(host);
-    visibleLabels = visibleRows.map(function (row) {
-      return row.label;
-    });
+    host = findScreeningQuestionHost(root, field.screeningQuestionId) || closestScreeningSelectHost(input) || host;
+    input = findNestedScreeningInput(host) || input;
     exact = findExactVisibleScreeningOptions(host, mappedLabel);
     if (exact.length > 1) {
-      return fail("Ambiguous visible option; expected exactly one \"" + mappedLabel + "\" row.", input, host);
+      return diag("Ambiguous visible option; expected exactly one \"" + mappedLabel + "\" row.");
     }
     if (!exact.length) {
-      return fail("No matching visible option for \"" + mappedLabel + "\".", input, host);
+      return diag("No matching visible option for \"" + mappedLabel + "\".");
     }
     await commitScreeningDemographicSelection(input, root, mappedLabel);
     await sleep(120);
     await waitUntil(function () {
-      var live = findScreeningDemographicInput(root, kind);
+      var live = findNestedScreeningInput(findScreeningQuestionHost(root, field.screeningQuestionId) || host);
       return !live || !screeningInputExpanded(live);
     }, 16, 50);
-    after = findScreeningDemographicInput(root, kind) || input;
-    host = findScreeningDemographicHost(root, kind) || host;
-    committed = committedDemographicVisibleLabel(host, after);
-    if (committed && !demographicValueEquals(committed, mappedLabel)) {
-      return failWrongSensitiveValue(mappedLabel, committed, after, host);
-    }
+    host = findScreeningQuestionHost(root, field.screeningQuestionId) || host;
+    after = findNestedScreeningInput(host) || input;
     try {
       if (typeof after.blur === "function") after.blur();
     } catch (_) {}
     await sleep(80);
-    after = findScreeningDemographicInput(root, kind) || after;
-    host = findScreeningDemographicHost(root, kind) || host;
+    host = findScreeningQuestionHost(root, field.screeningQuestionId) || host;
+    after = findNestedScreeningInput(host) || after;
+    if (after && screeningInputExpanded(after)) {
+      return diag("Verification failed; dropdown is still open.", {
+        expanded: after.getAttribute("aria-expanded")
+      });
+    }
+    if (isMulti) {
+      if (trimText(after && after.value)) {
+        return diag("Verification failed; search input did not clear.");
+      }
+      if (!hostContainsSelectedLabel(host, mappedLabel)) {
+        return diag("Verification failed; selected chip did not persist.");
+      }
+      return { ok: true, status: "filled", reason: "", value: mappedLabel };
+    }
     committed = committedDemographicVisibleLabel(host, after);
-    if (screeningInputExpanded(after)) {
-      return fail("Verification failed; dropdown is still open.", after, host);
-    }
     if (!demographicValueEquals(committed, mappedLabel)) {
-      if (committed) return failWrongSensitiveValue(mappedLabel, committed, after, host);
-      return fail("Verification failed; autocomplete selection did not persist.", after, host);
-    }
-    if (screeningInputInvalid(after)) {
-      return fail("Verification failed; question is still invalid.", after, host);
+      return diag("Verification failed; autocomplete selection did not persist.");
     }
     return { ok: true, status: "filled", reason: "", value: committed || mappedLabel };
+  }
+
+  async function fillScreeningMultiSelectField(field, inventory, root) {
+    var host = findScreeningQuestionHost(root, field && field.screeningQuestionId);
+    var input = findNestedScreeningInput(host);
+    var liveOptions = fieldOptionLabels(field);
+    var mappedField;
+    var labels = [];
+    var AF = autofill();
+    var i;
+    var result;
+    var last = null;
+    var one;
+    var nextInventory;
+    if (!liveOptions.length && host && input) {
+      liveOptions = await collectLiveSelectOptionLabels(host, input);
+    }
+    mappedField = fieldWithSelectOptions(field, liveOptions);
+    if (AF && typeof AF.uniqueScreeningOptionMatches === "function") {
+      labels = AF.uniqueScreeningOptionMatches(mappedField, inventory || {}) || [];
+    }
+    if (!labels.length) {
+      one = resolveScreeningSelectAnswer(mappedField, inventory);
+      if (one) labels = [one];
+    }
+    if (!labels.length) return fillScreeningSelectField(mappedField, inventory, root);
+    for (i = 0; i < labels.length; i += 1) {
+      nextInventory = Object.assign({}, inventory);
+      if (field.category === "preferred_locations") {
+        nextInventory.current_job_location = labels[i];
+        nextInventory.preferred_locations = labels[i];
+      } else if (field.category === "areas_of_interest") {
+        nextInventory.areas_of_interest = labels[i];
+        nextInventory.current_job_title = labels[i];
+      } else if (field.category === "education_discipline") {
+        nextInventory.education_discipline = labels[i];
+      } else {
+        nextInventory[field.category] = labels[i];
+      }
+      result = await fillScreeningSelectField(mappedField, nextInventory, root);
+      last = result;
+      if (result && result.status === "failed") return result;
+    }
+    return last || { ok: false, status: "failed", reason: "Multi-select did not persist." };
+  }
+
+  async function fillScreeningDemographicAutocomplete(field, inventory, root) {
+    return fillScreeningSelectField(field, inventory, root);
   }
 
   function readSelectedOptionsDictionary(host) {
@@ -3087,6 +3488,16 @@
         reason: "Verification failed; radio selection did not persist."
       };
     }
+    var groupHost = target && (target.parentElement || target.parentNode);
+    var groupValue = trimText((groupHost && (groupHost.value || (groupHost.getAttribute && groupHost.getAttribute("value")))) || "");
+    var optionValue = trimText(target.getAttribute && target.getAttribute("value"));
+    if (groupValue && optionValue && groupValue !== optionValue) {
+      return {
+        ok: false,
+        status: "failed",
+        reason: "Verification failed; radio group value did not match the selected option."
+      };
+    }
     return {
       ok: true,
       status: "filled",
@@ -3369,14 +3780,113 @@
   }
 
   function pushResult(results, field, fillResult, value) {
+    var result = fillResult || {};
+    if (
+      field &&
+      field.fillStatus === "ready" &&
+      result.status === "skipped" &&
+      /no saved answer|could not resolve field/i.test(result.reason || "")
+    ) {
+      result = {
+        ok: false,
+        status: "failed",
+        reason: "Ready field was not filled."
+      };
+    }
     results.push({
       category: field.category || "unknown",
       label: field.label || field.question || field.ariaLabel || field.category || "Field",
-      status: (fillResult && fillResult.status) || "failed",
-      reason: (fillResult && fillResult.reason) || "",
-      ok: Boolean(fillResult && fillResult.ok),
-      value: fillResult && fillResult.ok ? value || fillResult.value || "" : ""
+      status: result.status || "failed",
+      reason: result.reason || "",
+      ok: Boolean(result.ok),
+      value: result.ok ? value || result.value || "" : ""
     });
+  }
+
+  function readJsonLdJobPosting(root) {
+    var doc = root && root.nodeType === 9 ? root : (root && root.ownerDocument) || root || document;
+    var scripts;
+    var i;
+    var parsed;
+    var list;
+    var item;
+    var j;
+    try {
+      scripts = doc.querySelectorAll ? doc.querySelectorAll('script[type="application/ld+json"]') : [];
+    } catch (_) {
+      scripts = [];
+    }
+    function asList(value) {
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      if (value["@graph"] && Array.isArray(value["@graph"])) return value["@graph"];
+      return [value];
+    }
+    function isJobPosting(node) {
+      var type = node && (node["@type"] || node.type);
+      if (!type) return false;
+      if (Array.isArray(type)) {
+        return type.some(function (entry) {
+          return normalizeText(entry) === "jobposting";
+        });
+      }
+      return normalizeText(type) === "jobposting";
+    }
+    for (i = 0; i < scripts.length; i += 1) {
+      try {
+        parsed = JSON.parse((scripts[i].textContent || scripts[i].innerText || "").trim());
+      } catch (_) {
+        continue;
+      }
+      list = asList(parsed);
+      for (j = 0; j < list.length; j += 1) {
+        item = list[j];
+        if (isJobPosting(item)) return item;
+      }
+    }
+    return null;
+  }
+
+  function formatJsonLdJobLocation(job) {
+    function fromPlace(place) {
+      var address;
+      var parts;
+      if (!place) return "";
+      if (typeof place === "string") return trimText(place);
+      if (place.name) return trimText(place.name);
+      address = place.address;
+      if (!address) return "";
+      if (typeof address === "string") return trimText(address);
+      parts = [address.addressLocality, address.addressRegion, address.addressCountry]
+        .map(trimText)
+        .filter(Boolean);
+      return parts.join(", ");
+    }
+    var loc = job && job.jobLocation;
+    if (!loc) return trimText(job && job.jobLocationType);
+    if (Array.isArray(loc)) {
+      return loc.map(fromPlace).filter(Boolean)[0] || "";
+    }
+    return fromPlace(loc);
+  }
+
+  function readLiveSmartRecruitersJobContext(root) {
+    var job = readJsonLdJobPosting(root);
+    var title = "";
+    var location = "";
+    if (job) {
+      title = trimText(job.title);
+      location = formatJsonLdJobLocation(job);
+    }
+    return { title: title, location: location };
+  }
+
+  function applyLiveJobContextToInventory(inventory, root) {
+    var live = readLiveSmartRecruitersJobContext(root);
+    var next = Object.assign({}, inventory || {});
+    if (!trimText(next.current_job_title) && live.title) next.current_job_title = live.title;
+    if (!trimText(next.current_job_location) && live.location) next.current_job_location = live.location;
+    return next;
   }
 
   async function fillSupportedFields(context) {
@@ -3384,7 +3894,7 @@
     if (!isSupportedPage()) return empty;
     var ctx = context || {};
     var root = ctx.root || document;
-    var inventory = Object.assign({}, ctx.inventory || {});
+    var inventory = applyLiveJobContextToInventory(ctx.inventory || {}, root);
     var resume = ctx.resume || null;
     var handled = ctx.handledElements || [];
     var AF = autofill();
@@ -3452,14 +3962,32 @@
     for (i = 0; i < scanFields.length; i += 1) {
       var field = scanFields[i];
       if (demoHandled[field.category]) continue;
+      if (
+        field.skipped ||
+        field.category === "company_specific" ||
+        field.conditionalState === "not_applicable" ||
+        field.conditionalState === "blocked"
+      ) {
+        pushResult(results, field, {
+          ok: false,
+          status: "skipped",
+          reason: field.actionHint || "User confirmation required."
+        });
+        continue;
+      }
       if (field.category === "additional_information" && looksLikeHiringTeamScanField(field)) {
         var hiringAnswer = answerForCategory(field.category, inventory);
         var hiringResult = await fillHiringTeamMessage(hiringAnswer, root);
         pushResult(results, field, hiringResult, hiringResult && hiringResult.value);
         continue;
       }
+      if (looksLikeScreeningMultiSelectField(field)) {
+        var multiResult = await fillScreeningMultiSelectField(field, inventory, root);
+        pushResult(results, field, multiResult, multiResult && multiResult.value);
+        continue;
+      }
       if (looksLikeScreeningDemographicAutocomplete(field)) {
-        var demoResult = await fillScreeningDemographicAutocomplete(field, inventory, root);
+        var demoResult = await fillScreeningSelectField(field, inventory, root);
         pushResult(results, field, demoResult, demoResult && demoResult.value);
         continue;
       }
@@ -3473,18 +4001,17 @@
         pushResult(results, field, privacyResult, privacyResult && privacyResult.value);
         continue;
       }
-      if (field.category === "referral_source") {
-        var liveReferral = resolveLiveElement(field, liveIdentities, used);
-        var referralResult = await fillScreeningReferralField(
-          field,
-          inventory,
-          liveReferral && liveReferral.el
-        );
-        if (liveReferral && liveReferral.el) {
-          markHandled(used, liveReferral.el);
-          markHandled(handled, liveReferral.el);
+      if (looksLikeScreeningTextField(field) || field.category === "referral_source") {
+        var textFill = await fillScreeningTextField(field, inventory, root);
+        if (textFill.status === "failed" && field.category === "referral_source") {
+          var liveReferral = resolveLiveElement(field, liveIdentities, used);
+          textFill = await fillScreeningReferralField(field, inventory, liveReferral && liveReferral.el);
+          if (liveReferral && liveReferral.el) {
+            markHandled(used, liveReferral.el);
+            markHandled(handled, liveReferral.el);
+          }
         }
-        pushResult(results, field, referralResult, referralResult && referralResult.value);
+        pushResult(results, field, textFill, textFill && textFill.value);
         continue;
       }
       var live = resolveLiveElement(field, liveIdentities, used);
@@ -3601,7 +4128,13 @@
     readOptionsDictionary: readOptionsDictionary,
     matchScreeningDemographicOption: matchScreeningDemographicOption,
     mapGenderToPlatformLabel: mapGenderToPlatformLabel,
+    mapGpaToSelectOption: mapGpaToSelectOption,
+    resolveScreeningSelectAnswer: resolveScreeningSelectAnswer,
+    readLiveSmartRecruitersJobContext: readLiveSmartRecruitersJobContext,
     fillScreeningDemographicAutocomplete: fillScreeningDemographicAutocomplete,
+    fillScreeningSelectField: fillScreeningSelectField,
+    fillScreeningTextField: fillScreeningTextField,
+    fillScreeningMultiSelectField: fillScreeningMultiSelectField,
     fillScreeningPrivacyConsent: fillScreeningPrivacyConsent,
     collectVisibleScreeningOptionRows: collectVisibleScreeningOptionRows,
     querySplSelectOptions: querySplSelectOptions,

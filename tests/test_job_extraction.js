@@ -332,6 +332,53 @@ console.log("ok - SmartRecruiters header paragraph title fallback");
 })();
 console.log("ok - Replace Current Job overwrites Greenhouse extraction");
 
+(function testWesternDigitalJsonLdLocation() {
+  const href =
+    "https://jobs.smartrecruiters.com/oneclick-ui/company/WesternDigital/publication/abc?dcr_ci=WesternDigital";
+  const location = {
+    href: href,
+    hostname: "jobs.smartrecruiters.com",
+    pathname: "/oneclick-ui/company/WesternDigital/publication/abc",
+    search: "?dcr_ci=WesternDigital"
+  };
+  const header = createEl("header");
+  header.appendChild(el("h1", "Software Engineer"));
+  header.appendChild(el("p", "San Jose, CA, United States"));
+  const description = el(
+    "article",
+    "We're hiring a Software Engineer in San Jose to join our US engineering team."
+  );
+  const script = el(
+    "script",
+    JSON.stringify({
+      "@type": "JobPosting",
+      title: "Software Engineer",
+      hiringOrganization: { name: "Western Digital" },
+      jobLocation: {
+        "@type": "Place",
+        address: {
+          "@type": "PostalAddress",
+          addressLocality: "San Jose",
+          addressRegion: "CA",
+          addressCountry: "United States"
+        }
+      },
+      description: "We're hiring a Software Engineer in San Jose to join our US engineering team."
+    }),
+    { type: "application/ld+json" }
+  );
+  const Job = loadJob(createDocument([script, header, description]), location);
+  const extracted = Job.extractJobFromPage();
+  assert.strictEqual(extracted.atsPlatform, "smartrecruiters");
+  assert.strictEqual(extracted.title, "Software Engineer");
+  assert.ok(/western\s*digital/i.test(extracted.company));
+  assert.strictEqual(extracted.location, "San Jose, CA, United States");
+  assert.ok(extracted.url.indexOf("jobs.smartrecruiters.com") !== -1);
+  assert.ok(extracted.description.indexOf("US engineering team") !== -1);
+  assert.ok(!/internet explorer|no longer supported/i.test(extracted.location));
+})();
+console.log("ok - SmartRecruiters Western Digital job location extraction");
+
 (function testGreenhouseExtractorUnchanged() {
   const location = {
     href: "https://boards.greenhouse.io/acme/jobs/99",
