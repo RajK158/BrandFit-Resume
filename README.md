@@ -74,7 +74,40 @@ Or:
 python main.py
 ```
 
-The optimize API is available at `http://localhost:8000/api/v1/optimize-resume`.
+The API is available at `http://localhost:8000`. Check `http://localhost:8000/health` before using the AI features.
+
+## Sharing and hosted beta
+
+Each Chrome installation stores its own profile, resumes, jobs, and saved answers locally. A new installation starts with an empty profile, so another user will not receive the developer's saved information.
+
+The AI key belongs only in the backend environment. Never place it in the extension files. After the backend is deployed, set `DEFAULT_API_BASE_URL` in `api.js` to the public HTTPS backend URL. Friends can then install the same extension, create their own profile, and use AI features without running Python or entering an API key.
+
+The backend includes beta safeguards configured through environment variables:
+
+```text
+AI_DAILY_REQUEST_LIMIT=10
+MAX_RESUME_BYTES=5242880
+MAX_JOB_DESCRIPTION_CHARS=50000
+CORS_ALLOW_ORIGINS=chrome-extension://YOUR_EXTENSION_ID
+```
+
+The daily limit is per extension installation and resets at midnight UTC. It is an in-memory beta limit and resets when the backend restarts. Use persistent usage tracking and user authentication before a large public release.
+
+### Container deployment
+
+The backend contains a `Dockerfile`. Deploy the `brandfit-backend` directory on a container host and configure these secrets and environment values on the host:
+
+```text
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your_server_side_key
+GEMINI_MODEL=gemini-flash-latest
+AI_DAILY_REQUEST_LIMIT=10
+MAX_RESUME_BYTES=5242880
+MAX_JOB_DESCRIPTION_CHARS=50000
+CORS_ALLOW_ORIGINS=chrome-extension://YOUR_EXTENSION_ID
+```
+
+For local development, `CORS_ALLOW_ORIGINS=*` remains available. Use the exact extension origin for a distributed build.
 
 ## Load the unpacked Chrome extension
 

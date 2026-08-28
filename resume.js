@@ -3,7 +3,7 @@
 
   const MAX_RESUME_BYTES = 5 * 1024 * 1024;
   const ALLOWED_EXTENSIONS = [".pdf", ".docx"];
-  const PARSE_RESUME_URL = "http://127.0.0.1:8000/api/v1/parse-resume";
+  const PARSE_RESUME_PATH = "/api/v1/parse-resume";
 
   let pendingDraft = null;
   let parsedSnapshot = null;
@@ -1720,12 +1720,12 @@
 
     let response;
     try {
-      response = await fetch(PARSE_RESUME_URL, {
+      response = await global.ImpulsoApi.request(PARSE_RESUME_PATH, {
         method: "POST",
         body: formData
       });
     } catch (_) {
-      throw new Error("Backend is unavailable. Start the FastAPI server and try again.");
+      throw new Error("Backend is unavailable. Check the API connection and try again.");
     }
 
     let result;

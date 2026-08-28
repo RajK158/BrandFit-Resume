@@ -247,16 +247,16 @@ assert.ok(AF, "ImpulsoAutofill should load");
 
 const profile = {
   personal: {
-    firstName: "Raj",
-    lastName: "Kundur",
-    preferredName: "Raj",
-    email: "rajkundur58@gmail.com",
+    firstName: "Alex",
+    lastName: "Morgan",
+    preferredName: "Alex",
+    email: "alex.morgan@example.com",
     phone: "555-0100"
   },
   links: {
-    linkedin: "https://linkedin.com/in/raj",
-    github: "https://github.com/raj",
-    portfolio: "https://rajkundur.dev"
+    linkedin: "https://linkedin.com/in/alex-morgan",
+    github: "https://github.com/alex-morgan",
+    portfolio: "https://alex-morgan.example.com"
   },
   commonAnswers: {
     projectHighlight: "Built Impulso autofill for ATS forms.",
@@ -267,15 +267,15 @@ const profile = {
 };
 
 const inventory = AF.buildAnswerInventory(profile);
-assert.strictEqual(inventory.full_name, "Raj Kundur");
-assert.strictEqual(inventory.preferred_name, "Raj");
-assert.strictEqual(inventory.email, "rajkundur58@gmail.com");
+assert.strictEqual(inventory.full_name, "Alex Morgan");
+assert.strictEqual(inventory.preferred_name, "Alex");
+assert.strictEqual(inventory.email, "alex.morgan@example.com");
 assert.strictEqual(inventory.phone, "555-0100");
-assert.strictEqual(inventory.portfolio, "https://rajkundur.dev");
-assert.strictEqual(AF.getTextAnswerForCategory("full_name", inventory), "Raj Kundur");
-assert.strictEqual(AF.getTextAnswerForCategory("preferred_name", inventory), "Raj");
+assert.strictEqual(inventory.portfolio, "https://alex-morgan.example.com");
+assert.strictEqual(AF.getTextAnswerForCategory("full_name", inventory), "Alex Morgan");
+assert.strictEqual(AF.getTextAnswerForCategory("preferred_name", inventory), "Alex");
 assert.strictEqual(AF.getTextAnswerForCategory("phone", inventory), "555-0100");
-assert.strictEqual(AF.getTextAnswerForCategory("portfolio", inventory), "https://rajkundur.dev");
+assert.strictEqual(AF.getTextAnswerForCategory("portfolio", inventory), "https://alex-morgan.example.com");
 assert.strictEqual(
   AF.getTextAnswerForCategory("project_highlight", inventory),
   "Built Impulso autofill for ATS forms."
@@ -286,10 +286,10 @@ assert.notStrictEqual(
   inventory.portfolio
 );
 assert.strictEqual(
-  AF.getTextAnswerForCategory("full_name", { first_name: "Raj", last_name: "", full_name: "Raj" }),
+  AF.getTextAnswerForCategory("full_name", { first_name: "Alex", last_name: "", full_name: "Alex" }),
   ""
 );
-console.log("ok - inventory mappings for Raj Kundur profile");
+console.log("ok - inventory mappings for generic profile");
 
 assert.strictEqual(AF.classifyLabel("Legal Name (First Name Last Name)", "text").category, "full_name");
 assert.strictEqual(AF.classifyLabel("Preferred Name", "text").category, "preferred_name");
@@ -402,14 +402,14 @@ const portfolio = addField("Website / Portfolio", "input", "url", "portfolio");
 const report = AF.fillBasicTextFields(doc, inventory);
 assert.ok(report && report.summary, "fill report");
 
-assert.strictEqual(legal.value, "Raj Kundur", "Legal Name -> Raj Kundur");
-assert.strictEqual(preferred.value, "Raj", "Preferred Name -> Raj");
-assert.strictEqual(email.value, "rajkundur58@gmail.com", "Email -> rajkundur58@gmail.com");
+assert.strictEqual(legal.value, "Alex Morgan", "Legal Name -> Alex Morgan");
+assert.strictEqual(preferred.value, "Alex", "Preferred Name -> Alex");
+assert.strictEqual(email.value, "alex.morgan@example.com", "Email -> alex.morgan@example.com");
 assert.strictEqual(phone.value, "555-0100", "Phone Number -> saved phone");
-assert.strictEqual(portfolio.value, "https://rajkundur.dev", "Website/Portfolio -> saved portfolio URL");
-console.log("ok - Legal Name -> Raj Kundur");
-console.log("ok - Preferred Name -> Raj");
-console.log("ok - Email -> rajkundur58@gmail.com");
+assert.strictEqual(portfolio.value, "https://alex-morgan.example.com", "Website/Portfolio -> saved portfolio URL");
+console.log("ok - Legal Name -> Alex Morgan");
+console.log("ok - Preferred Name -> Alex");
+console.log("ok - Email -> alex.morgan@example.com");
 console.log("ok - Phone Number -> saved phone");
 console.log("ok - Website/Portfolio -> saved portfolio URL");
 
@@ -432,7 +432,7 @@ assert.ok(
 console.log("ok - referral source stays manual; LinkedIn URL still fills");
 
 legal.value = "Already Set";
-const again = AF.fillTextElement(legal, "Raj Kundur");
+const again = AF.fillTextElement(legal, "Alex Morgan");
 assert.strictEqual(again.status, "skipped");
 assert.strictEqual(legal.value, "Already Set");
 console.log("ok - never overwrite non-empty field");

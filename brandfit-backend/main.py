@@ -1,7 +1,9 @@
+import os
+import re
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 
@@ -16,8 +18,47 @@ from job_matcher import (
     profile_has_career_signal,
 )
 from resume_parser import ResumeExtractionError, extract_resume_text
+from usage_limiter import DailyUsageLimiter
 
 load_dotenv()
+
+
+def positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def cors_origins() -> List[str]:
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "*")
+    values = [value.strip() for value in raw.split(",") if value.strip()]
+    return values or ["*"]
+
+
+AI_DAILY_REQUEST_LIMIT = positive_int_env("AI_DAILY_REQUEST_LIMIT", 10)
+MAX_RESUME_BYTES = positive_int_env("MAX_RESUME_BYTES", 5 * 1024 * 1024)
+MAX_JOB_DESCRIPTION_CHARS = positive_int_env("MAX_JOB_DESCRIPTION_CHARS", 50000)
+usage_limiter = DailyUsageLimiter(AI_DAILY_REQUEST_LIMIT)
+
+
+def require_ai_budget(
+    request: Request,
+    x_impulso_client: Optional[str] = Header(default=None),
+) -> int:
+    supplied = str(x_impulso_client or "").strip()
+    if supplied and re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", supplied):
+        client_id = supplied
+    else:
+        client_id = request.client.host if request.client else "anonymous"
+
+    allowed, remaining = usage_limiter.consume(client_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Daily AI limit reached. Please try again tomorrow.",
+        )
+    return remaining
 
 app = FastAPI(title="Impulso Core AI Engine")
 
@@ -30,10 +71,9 @@ def health():
     }
 
 
-# Configure CORS to accept extension requests seamlessly
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -120,9 +160,14 @@ class AnalyzeJobMatchRequest(BaseModel):
 
 
 @app.post("/api/v1/optimize-resume")
-async def optimize_resume(payload: OptimizeRequest):
+async def optimize_resume(
+    payload: OptimizeRequest,
+    _remaining: int = Depends(require_ai_budget),
+):
     if not payload.job_description or not payload.job_description.strip():
         raise HTTPException(status_code=400, detail="Job description text is completely empty.")
+    if len(payload.job_description) > MAX_JOB_DESCRIPTION_CHARS:
+        raise HTTPException(status_code=413, detail="Job description is too large.")
 
     print(f"Job description length: {len(payload.job_description)} characters")
 
@@ -155,8 +200,13 @@ async def optimize_resume(payload: OptimizeRequest):
 
 
 @app.post("/api/v1/parse-resume")
-async def parse_resume(file: UploadFile = File(...)):
-    file_bytes = await file.read()
+async def parse_resume(
+    file: UploadFile = File(...),
+    _remaining: int = Depends(require_ai_budget),
+):
+    file_bytes = await file.read(MAX_RESUME_BYTES + 1)
+    if len(file_bytes) > MAX_RESUME_BYTES:
+        raise HTTPException(status_code=413, detail="Resume file is too large.")
     print(
         "Resume parse request received "
         f"(bytes={len(file_bytes)}, content_type={file.content_type or 'unknown'})"
@@ -251,7 +301,10 @@ async def parse_resume(file: UploadFile = File(...)):
 
 
 @app.post("/api/v1/analyze-job-match")
-async def analyze_job_match(payload: AnalyzeJobMatchRequest):
+async def analyze_job_match(
+    payload: AnalyzeJobMatchRequest,
+    _remaining: int = Depends(require_ai_budget),
+):
     profile_payload = build_career_relevant_profile(payload.master_profile)
     job_payload = build_career_relevant_job(payload.current_job)
 
@@ -259,6 +312,11 @@ async def analyze_job_match(payload: AnalyzeJobMatchRequest):
         return empty_job_match_result(
             status="error",
             message="Job description is empty. Extract a current job before analyzing match.",
+        )
+    if len(job_payload["description"]) > MAX_JOB_DESCRIPTION_CHARS:
+        return empty_job_match_result(
+            status="error",
+            message="Job description is too large.",
         )
 
     if not profile_has_career_signal(profile_payload):
