@@ -99,6 +99,9 @@
       const url = String(href || "").toLowerCase();
 
       if (host.indexOf("linkedin.com") >= 0) return "linkedin";
+      if (host === "jobs.smartrecruiters.com" || host.indexOf("jobs.smartrecruiters.com") >= 0) {
+        return "smartrecruiters";
+      }
       if (
         host.indexOf("greenhouse.io") >= 0 ||
         host.indexOf("boards.greenhouse") >= 0 ||
@@ -120,6 +123,208 @@
         return "workday";
       }
       return "generic";
+    }
+
+    function isDisplayedElement(el) {
+      if (!el) return false;
+      if (el.hidden) return false;
+      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return false;
+      try {
+        const style = (el.ownerDocument || document).defaultView
+          ? (el.ownerDocument || document).defaultView.getComputedStyle(el)
+          : global.getComputedStyle
+            ? global.getComputedStyle(el)
+            : null;
+        if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      } catch (_) {}
+      return true;
+    }
+
+    function looksLikeSmartRecruitersJunkTitle(text) {
+      const lower = cleanText(text).toLowerCase();
+      if (!lower) return true;
+      if (lower.indexOf("internet explorer") >= 0) return true;
+      if (lower.indexOf("no longer supported") >= 0) return true;
+      if (lower.indexOf("other jobs at") >= 0) return true;
+      if (lower.indexOf("privacy notice") >= 0) return true;
+      if (lower.indexOf("cookie settings") >= 0) return true;
+      return false;
+    }
+
+    function isValidSmartRecruitersTitle(text) {
+      const value = cleanText(text);
+      if (!value || value.length < 3 || value.length > 160) return false;
+      if (looksLikeSmartRecruitersJunkTitle(value)) return false;
+      return true;
+    }
+
+    function acceptSmartRecruitersCompany(name) {
+      const value = cleanText(name);
+      if (!value || value.length > 80) return "";
+      const lower = value.toLowerCase();
+      if (lower.indexOf("other jobs at") >= 0) return "";
+      if (looksLikeSmartRecruitersJunkTitle(value)) return "";
+      return value;
+    }
+
+    function decodeCompanySlug(slug) {
+      let raw = String(slug || "").trim();
+      if (!raw) return "";
+      try {
+        raw = decodeURIComponent(raw.replace(/\+/g, " "));
+      } catch (_) {}
+      raw = raw.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+      return acceptSmartRecruitersCompany(raw);
+    }
+
+    function smartRecruitersCompanyFromUrl(href) {
+      const result = { query: "", oneclick: "", path: "" };
+      try {
+        const parsed = new URL(String(href || ""));
+        result.query = decodeCompanySlug(
+          parsed.searchParams.get("dcr_ci") || parsed.searchParams.get("dcr_CI") || ""
+        );
+        const parts = parsed.pathname.split("/").filter(Boolean);
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          if (parts[i].toLowerCase() === "company" && parts[i + 1]) {
+            result.oneclick = decodeCompanySlug(parts[i + 1]);
+            break;
+          }
+        }
+        const reserved = {
+          "oneclick-ui": true,
+          oneclick: true,
+          company: true,
+          publication: true,
+          apply: true,
+          job: true,
+          jobs: true
+        };
+        if (parts.length >= 1 && !reserved[String(parts[0] || "").toLowerCase()]) {
+          result.path = decodeCompanySlug(parts[0]);
+        }
+      } catch (_) {}
+      return result;
+    }
+
+    function firstValidVisibleTitle(selectors) {
+      for (let i = 0; i < selectors.length; i += 1) {
+        const nodes = document.querySelectorAll(selectors[i]);
+        for (let j = 0; j < nodes.length; j += 1) {
+          const el = nodes[j];
+          if (!isDisplayedElement(el)) continue;
+          const value = textOf(el);
+          if (isValidSmartRecruitersTitle(value)) return value;
+        }
+      }
+      return "";
+    }
+
+    function extractSmartRecruitersTitle(jobPosting) {
+      const jsonTitle = cleanText(jobPosting && jobPosting.title);
+      if (isValidSmartRecruitersTitle(jsonTitle)) return jsonTitle;
+
+      const headerH1 = firstValidVisibleTitle(["header h1"]);
+      if (headerH1) return headerH1;
+
+      const visibleH1 = firstValidVisibleTitle(["h1"]);
+      if (visibleH1) return visibleH1;
+
+      return firstValidVisibleTitle([
+        "header p",
+        "header [class*='title']",
+        "[class*='job-title']",
+        "[class*='jobTitle']",
+        "[data-test*='job-title']"
+      ]);
+    }
+
+    function looksLikeSmartRecruitersJunkLocation(text) {
+      const lower = cleanText(text).toLowerCase();
+      if (!lower) return true;
+      if (lower.indexOf("internet explorer") >= 0) return true;
+      if (lower.indexOf("no longer supported") >= 0) return true;
+      if (lower.indexOf("other jobs at") >= 0) return true;
+      if (lower.indexOf("privacy notice") >= 0) return true;
+      if (lower === "location" || lower.indexOf("location:") === 0) return true;
+      return false;
+    }
+
+    function isValidSmartRecruitersLocation(text) {
+      const value = cleanText(text);
+      if (!value || value.length < 3 || value.length > 160) return false;
+      if (looksLikeSmartRecruitersJunkLocation(value)) return false;
+      if (looksLikeSmartRecruitersJunkTitle(value)) return false;
+      return true;
+    }
+
+    function extractSmartRecruitersLocation(jobPosting) {
+      function expandCountry(value) {
+        var text = cleanText(value);
+        if (/^(us|usa|u\.s\.|u\.s\.a\.)$/i.test(text)) return "United States";
+        return text;
+      }
+      function fromAddress(address) {
+        if (!address) return "";
+        if (typeof address === "string") return cleanText(address);
+        var parts = [
+          address.addressLocality,
+          address.addressRegion,
+          expandCountry(address.addressCountry)
+        ]
+          .map(cleanText)
+          .filter(Boolean);
+        return parts.join(", ");
+      }
+      function fromPlace(place) {
+        if (!place) return "";
+        if (typeof place === "string") return cleanText(place);
+        var fromAddr = fromAddress(place.address);
+        if (isValidSmartRecruitersLocation(fromAddr)) return fromAddr;
+        if (isValidSmartRecruitersLocation(place.name)) return cleanText(place.name);
+        return "";
+      }
+      var loc = jobPosting && jobPosting.jobLocation;
+      var fromLd = "";
+      if (Array.isArray(loc)) {
+        fromLd = loc
+          .map(fromPlace)
+          .filter(Boolean)
+          .join("; ");
+      } else {
+        fromLd = fromPlace(loc);
+      }
+      if (isValidSmartRecruitersLocation(fromLd)) return fromLd;
+      fromLd = cleanText(locationFromJsonLd(jobPosting));
+      if (isValidSmartRecruitersLocation(fromLd)) return fromLd;
+      const headerLoc = firstText([
+        "header [class*='location' i]",
+        "header [data-test*='location']",
+        "[data-test*='job-location']",
+        "[data-testid='job-location']",
+        "[class*='job-location']",
+        "[itemprop='jobLocation']"
+      ]);
+      if (isValidSmartRecruitersLocation(headerLoc)) return headerLoc;
+      const headerP = document.querySelectorAll("header p");
+      for (let i = 0; i < headerP.length; i += 1) {
+        const value = textOf(headerP[i]);
+        if (!isValidSmartRecruitersLocation(value)) continue;
+        if (/\b(ca|ny|tx|united states|usa|,)\b/i.test(value) || /\b[A-Z]{2}\b/.test(value)) {
+          return value;
+        }
+      }
+      return "";
+    }
+
+    function extractSmartRecruitersCompany(jobPosting, href) {
+      const fromLd = acceptSmartRecruitersCompany(organizationNameFromJsonLd(jobPosting));
+      if (fromLd) return fromLd;
+      const fromUrl = smartRecruitersCompanyFromUrl(href || (location && location.href) || "");
+      if (fromUrl.query) return fromUrl.query;
+      if (fromUrl.oneclick) return fromUrl.oneclick;
+      if (fromUrl.path) return fromUrl.path;
+      return "";
     }
 
     function parseJsonLdJobPosting() {
@@ -468,9 +673,13 @@
         ],
         160
       );
+    } else if (atsPlatform === "smartrecruiters") {
+      title = extractSmartRecruitersTitle(jsonLdJob);
+      company = extractSmartRecruitersCompany(jsonLdJob, rawUrl);
+      jobLocation = extractSmartRecruitersLocation(jsonLdJob);
     }
 
-    if (!title) {
+    if (!title && atsPlatform !== "smartrecruiters") {
       title = firstText([
         "h1",
         "[data-testid='job-title']",
@@ -481,7 +690,7 @@
       if (!title && jsonLdJob) title = cleanText(jsonLdJob.title || "");
     }
 
-    if (!company && atsPlatform !== "ashby") {
+    if (!company && atsPlatform !== "ashby" && atsPlatform !== "smartrecruiters") {
       company = firstText([
         "[itemprop='hiringOrganization']",
         "[data-company]",
@@ -492,7 +701,7 @@
       if (!company) company = organizationNameFromJsonLd(jsonLdJob);
     }
 
-    if (!jobLocation) {
+    if (!jobLocation && atsPlatform !== "smartrecruiters") {
       jobLocation = locationFromJsonLd(jsonLdJob) || firstText([
         "[itemprop='jobLocation']",
         "[data-testid='job-location']",
@@ -586,6 +795,7 @@
       greenhouse: "Greenhouse",
       lever: "Lever",
       workday: "Workday",
+      smartrecruiters: "SmartRecruiters",
       linkedin: "LinkedIn",
       generic: "Generic"
     };

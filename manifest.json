@@ -33,6 +33,54 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://job-boards.greenhouse.io/*",
+        "*://boards.greenhouse.io/*",
+        "*://*.greenhouse.io/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/greenhouse.js",
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://jobs.lever.co/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/lever.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.myworkdayjobs.com/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/workday.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://jobs.smartrecruiters.com/*"
+      ],
+      "js": [
+        "autofill.js",
+        "autofill/adapters/smartrecruiters.js",
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
     }
   ]
 }

@@ -132,7 +132,12 @@
         lastName: "",
         email: "",
         phone: "",
-        location: ""
+        location: "",
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        state: "",
+        postalCode: ""
       },
       links: {
         linkedin: "",
@@ -162,7 +167,12 @@
       lastName: String(personal.lastName || ""),
       email: String(personal.email || ""),
       phone: String(personal.phone || ""),
-      location: String(personal.location || "")
+      location: String(personal.location || ""),
+      addressLine1: String(personal.addressLine1 || ""),
+      addressLine2: String(personal.addressLine2 || ""),
+      city: String(personal.city || ""),
+      state: String(personal.state || ""),
+      postalCode: String(personal.postalCode || "")
     };
     base.links = {
       linkedin: String(links.linkedin || ""),
@@ -1012,7 +1022,12 @@
           renderScalarField("Last name", "personal.lastName", draft.personal.lastName, scalarOpts) +
           renderScalarField("Email", "personal.email", draft.personal.email, scalarOpts) +
           renderScalarField("Phone", "personal.phone", draft.personal.phone, scalarOpts) +
-          renderScalarField("Location", "personal.location", draft.personal.location, scalarOpts),
+          renderScalarField("Location", "personal.location", draft.personal.location, scalarOpts) +
+          renderScalarField("Address line 1", "personal.addressLine1", draft.personal.addressLine1, scalarOpts) +
+          renderScalarField("Address line 2 (optional)", "personal.addressLine2", draft.personal.addressLine2, scalarOpts) +
+          renderScalarField("City", "personal.city", draft.personal.city, scalarOpts) +
+          renderScalarField("State", "personal.state", draft.personal.state, scalarOpts) +
+          renderScalarField("Postal code", "personal.postalCode", draft.personal.postalCode, scalarOpts),
         sectionOpenState
       ) +
       collapsibleSection(
@@ -1367,7 +1382,12 @@
           renderScalarField("Last name", "personal.lastName", draft.personal.lastName, scalarOpts) +
           renderScalarField("Email", "personal.email", draft.personal.email, scalarOpts) +
           renderScalarField("Phone", "personal.phone", draft.personal.phone, scalarOpts) +
-          renderScalarField("Location", "personal.location", draft.personal.location, scalarOpts),
+          renderScalarField("Location", "personal.location", draft.personal.location, scalarOpts) +
+          renderScalarField("Address line 1", "personal.addressLine1", draft.personal.addressLine1, scalarOpts) +
+          renderScalarField("Address line 2 (optional)", "personal.addressLine2", draft.personal.addressLine2, scalarOpts) +
+          renderScalarField("City", "personal.city", draft.personal.city, scalarOpts) +
+          renderScalarField("State", "personal.state", draft.personal.state, scalarOpts) +
+          renderScalarField("Postal code", "personal.postalCode", draft.personal.postalCode, scalarOpts),
         masterSectionOpenState
       ) +
       collapsibleSection(
@@ -1541,7 +1561,10 @@
       const draft = normalizeDraft(masterEditDraft);
       const updated = {
         ...existing,
-        personal: draft.personal,
+        personal: {
+          ...(existing.personal || {}),
+          ...draft.personal
+        },
         links: draft.links,
         experience: draft.experience,
         education: draft.education,
@@ -1766,6 +1789,16 @@
     if (firstName) firstName.value = personal.firstName || "";
     if (lastName) lastName.value = personal.lastName || "";
     if (email) email.value = personal.email || "";
+    const addressLine1 = document.getElementById("addressLine1");
+    const addressLine2 = document.getElementById("addressLine2");
+    const city = document.getElementById("city");
+    const state = document.getElementById("state");
+    const postalCode = document.getElementById("postalCode");
+    if (addressLine1) addressLine1.value = personal.addressLine1 || "";
+    if (addressLine2) addressLine2.value = personal.addressLine2 || "";
+    if (city) city.value = personal.city || "";
+    if (state) state.value = personal.state || "";
+    if (postalCode) postalCode.value = personal.postalCode || "";
   }
 
   async function approveReviewedDraft() {

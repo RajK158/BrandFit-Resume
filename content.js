@@ -67,12 +67,15 @@
     };
   }
 
-  function resolveInventory(profilePayload, resume) {
+  function resolveInventory(profilePayload, resume, extras) {
     var AF = window.ImpulsoAutofill;
     if (!AF) return {};
+    var extra = extras || {};
     var opts = {
       hasResume: Boolean(resume && resume.resumeBase64 && resume.resumeName),
-      resumeName: (resume && resume.resumeName) || ""
+      resumeName: (resume && resume.resumeName) || "",
+      currentJobTitle: extra.currentJobTitle || "",
+      currentJobLocation: extra.currentJobLocation || ""
     };
     var inventory = {};
     if (typeof AF.resolveAnswerInventory === "function") {
@@ -121,6 +124,42 @@
       inventory.export_control_status = exportControl;
       inventory.exportControlStatus = exportControl;
     }
+
+    function copyWorkAuthAnswer(inventoryKey, workKeys) {
+      var current = inventory && inventory[inventoryKey];
+      var i;
+      var value = String(current || "").trim();
+      if (value) return value;
+      for (i = 0; i < workKeys.length; i += 1) {
+        value = String((work && work[workKeys[i]]) || "").trim();
+        if (value) return value;
+      }
+      return "";
+    }
+    var employmentCitizen = copyWorkAuthAnswer("employment_country_citizenship", [
+      "citizenOfEmploymentCountry",
+      "employmentCountryCitizenship"
+    ]);
+    var usImmigration = copyWorkAuthAnswer("us_immigration_status", [
+      "usCitizenOrLpr",
+      "usImmigrationStatus"
+    ]);
+    var sanctionedCitizen = copyWorkAuthAnswer("sanctioned_country_citizenship", [
+      "sanctionedCountryCitizen",
+      "cubaIranNorthKoreaSyriaCitizen"
+    ]);
+    if (employmentCitizen) {
+      inventory = inventory || {};
+      inventory.employment_country_citizenship = employmentCitizen;
+    }
+    if (usImmigration) {
+      inventory = inventory || {};
+      inventory.us_immigration_status = usImmigration;
+    }
+    if (sanctionedCitizen) {
+      inventory = inventory || {};
+      inventory.sanctioned_country_citizenship = sanctionedCitizen;
+    }
     return inventory || {};
   }
 
@@ -136,15 +175,19 @@
 
   function fillFromInventory(inventory, options) {
     var AF = window.ImpulsoAutofill;
+    var opts = options || {};
     if (!AF || typeof AF.fillBasicTextFields !== "function") {
       return {
         results: [],
         summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 },
+        handledElements: opts.handledElements || [],
         error: "Autofill engine is not available on this page."
       };
     }
 
-    return AF.fillBasicTextFields(document, inventory || {});
+    return AF.fillBasicTextFields(document, inventory || {}, {
+      handledElements: opts.handledElements || []
+    });
   }
 
   function uploadResumeIfPresent(resume) {
@@ -161,21 +204,154 @@
     });
   }
 
+  function detectActiveAts() {
+    var Ashby = window.ImpulsoAshbyAdapter;
+    if (Ashby && typeof Ashby.isSupportedPage === "function" && Ashby.isSupportedPage()) {
+      return "ashby";
+    }
+    var Greenhouse = window.ImpulsoGreenhouseAdapter;
+    if (Greenhouse && typeof Greenhouse.isSupportedPage === "function" && Greenhouse.isSupportedPage()) {
+      return "greenhouse";
+    }
+    var Lever = window.ImpulsoLeverAdapter;
+    if (Lever && typeof Lever.isSupportedPage === "function" && Lever.isSupportedPage()) {
+      return "lever";
+    }
+    var Workday = window.ImpulsoWorkdayAdapter;
+    if (Workday && typeof Workday.isSupportedPage === "function" && Workday.isSupportedPage()) {
+      return "workday";
+    }
+    var SmartRecruiters = window.ImpulsoSmartRecruitersAdapter;
+    if (
+      SmartRecruiters &&
+      typeof SmartRecruiters.isSupportedPage === "function" &&
+      SmartRecruiters.isSupportedPage()
+    ) {
+      return "smartrecruiters";
+    }
+    return "generic";
+  }
+
+  function nationalPhoneForSeparateCountryCode(phone, countryCode) {
+    var raw = String(phone == null ? "" : phone).replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    var AF = window.ImpulsoAutofill;
+    var digits =
+      AF && typeof AF.phoneDigitsOnly === "function"
+        ? AF.phoneDigitsOnly(raw)
+        : raw.replace(/\D/g, "");
+    var codeDigits =
+      AF && typeof AF.phoneDigitsOnly === "function"
+        ? AF.phoneDigitsOnly(countryCode)
+        : String(countryCode == null ? "" : countryCode).replace(/\D/g, "");
+    if (codeDigits && digits.indexOf(codeDigits) === 0 && digits.length > codeDigits.length + 6) {
+      return digits.slice(codeDigits.length) || raw;
+    }
+    return raw;
+  }
+
+  function loadLatestMasterProfileSnapshot() {
+    return new Promise(function (resolve) {
+      try {
+        if (!chrome || !chrome.storage || !chrome.storage.local) {
+          resolve(null);
+          return;
+        }
+        chrome.storage.local.get(["masterProfile"], function (data) {
+          if (chrome.runtime && chrome.runtime.lastError) {
+            resolve(null);
+            return;
+          }
+          resolve(data && data.masterProfile && typeof data.masterProfile === "object" ? data.masterProfile : null);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
   async function runAutofill(profilePayload, resume, options) {
     var opts = options || {};
-    var inventory = resolveInventory(profilePayload, resume);
+    // Refresh from the latest synced master profile immediately before autofill.
+    var latestMaster = await loadLatestMasterProfileSnapshot();
+    var profile = profilePayload && typeof profilePayload === "object" ? Object.assign({}, profilePayload) : {};
+    if (latestMaster) {
+      if (Array.isArray(latestMaster.education)) {
+        profile.education = latestMaster.education;
+      }
+      if (Array.isArray(latestMaster.experience)) {
+        profile.experience = latestMaster.experience;
+      }
+      if (latestMaster.personal && typeof latestMaster.personal === "object") {
+        profile.personal = Object.assign({}, profile.personal || {}, latestMaster.personal);
+      }
+      if (latestMaster.links && typeof latestMaster.links === "object") {
+        profile.links = Object.assign({}, profile.links || {}, latestMaster.links);
+      }
+      if (latestMaster.workAuthorization && typeof latestMaster.workAuthorization === "object") {
+        profile.workAuthorization = Object.assign(
+          {},
+          profile.workAuthorization || {},
+          latestMaster.workAuthorization
+        );
+      }
+      if (latestMaster.demographics && typeof latestMaster.demographics === "object") {
+        profile.demographics = Object.assign({}, profile.demographics || {}, latestMaster.demographics);
+      }
+    }
+
+    var inventory = resolveInventory(profile, resume, {
+      currentJobTitle: opts.currentJobTitle || "",
+      currentJobLocation: opts.currentJobLocation || ""
+    });
+    var handledElements = [];
+    var ats = detectActiveAts();
+
+    // Keep ordered education records from the latest master profile for multi-entry Greenhouse fill.
+    var AF = window.ImpulsoAutofill;
+    if (AF && typeof AF.listValidEducationRecords === "function") {
+      inventory = Object.assign({}, inventory, {
+        education_records: AF.listValidEducationRecords(profile.education)
+      });
+    } else if (Array.isArray(profile.education)) {
+      inventory = Object.assign({}, inventory, {
+        education_records: profile.education
+      });
+    }
+
+    // Greenhouse phone widgets use a separate country dropdown + national number input.
+    if (ats === "greenhouse" && inventory && inventory.phone_country_code) {
+      inventory = Object.assign({}, inventory, {
+        phone: nationalPhoneForSeparateCountryCode(inventory.phone, inventory.phone_country_code)
+      });
+    }
+    if (ats === "smartrecruiters" && inventory && inventory.phone) {
+      inventory = Object.assign({}, inventory, {
+        phone: nationalPhoneForSeparateCountryCode(
+          inventory.phone,
+          inventory.phone_country_code || "1"
+        )
+      });
+    }
+
     var fillOpts = {
       // Default on: include saved demographic answers automatically.
       fillDemographics: opts.fillDemographics !== false,
-      profile: profilePayload || null,
-      demographics: (profilePayload && profilePayload.demographics) || null,
-      workAuthorization: (profilePayload && profilePayload.workAuthorization) || null
+      profile: profile || null,
+      demographics: (profile && profile.demographics) || null,
+      workAuthorization: (profile && profile.workAuthorization) || null,
+      handledElements: handledElements
     };
-    var report = fillFromInventory(inventory, fillOpts);
+    // SmartRecruiters fields live in nested Shadow DOM. Generic top-document fill
+    // cannot see them and must not run (or counters stay 0/0/0).
+    var report =
+      ats === "smartrecruiters"
+        ? { results: [], summary: { attempted: 0, filled: 0, skipped: 0, failed: 0 } }
+        : fillFromInventory(inventory, fillOpts);
 
-    var Ashby = window.ImpulsoAshbyAdapter;
-    if (Ashby && typeof Ashby.isSupportedPage === "function" && Ashby.isSupportedPage()) {
-      if (typeof Ashby.fillSupportedFields === "function") {
+    if (ats === "ashby") {
+      var Ashby = window.ImpulsoAshbyAdapter;
+      if (Ashby && typeof Ashby.fillSupportedFields === "function") {
         var ashbyReport = await Ashby.fillSupportedFields({
           root: document,
           inventory: inventory,
@@ -187,9 +363,75 @@
         });
         report = mergeReport(report, ashbyReport);
       }
+    } else if (ats === "greenhouse") {
+      var Greenhouse = window.ImpulsoGreenhouseAdapter;
+      if (Greenhouse && typeof Greenhouse.fillSupportedFields === "function") {
+        var greenhouseReport = await Greenhouse.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, greenhouseReport);
+      }
+    } else if (ats === "lever") {
+      var Lever = window.ImpulsoLeverAdapter;
+      if (Lever && typeof Lever.fillSupportedFields === "function") {
+        var leverReport = await Lever.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, leverReport);
+      }
+    } else if (ats === "workday") {
+      var Workday = window.ImpulsoWorkdayAdapter;
+      if (Workday && typeof Workday.fillSupportedFields === "function") {
+        var workdayReport = await Workday.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, workdayReport);
+      }
+    } else if (ats === "smartrecruiters") {
+      var SmartRecruiters = window.ImpulsoSmartRecruitersAdapter;
+      if (SmartRecruiters && typeof SmartRecruiters.fillSupportedFields === "function") {
+        var smartRecruitersReport = await SmartRecruiters.fillSupportedFields({
+          root: document,
+          inventory: inventory,
+          fillDemographics: fillOpts.fillDemographics,
+          profile: fillOpts.profile,
+          demographics: fillOpts.demographics,
+          workAuthorization: fillOpts.workAuthorization,
+          resume: resume || null,
+          handledElements: handledElements,
+          tabId: opts.tabId
+        });
+        report = mergeReport(report, smartRecruitersReport);
+      }
     }
 
-    uploadResumeIfPresent(resume);
+    if (ats !== "smartrecruiters") {
+      uploadResumeIfPresent(resume);
+    }
     return {
       ok: !report.error,
       error: report.error || "",
@@ -289,7 +531,9 @@
       if (message.profile && typeof message.profile === "object") {
         runAutofill(message.profile, resume, {
           fillDemographics: message.fillDemographics !== false,
-          tabId: tabId
+          tabId: tabId,
+          currentJobTitle: message.currentJobTitle || "",
+          currentJobLocation: message.currentJobLocation || ""
         })
           .then(sendResponse)
           .catch(function (error) {

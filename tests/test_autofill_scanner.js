@@ -33,6 +33,18 @@ const cases = [
     expected: "email"
   },
   {
+    name: "Confirm your email",
+    label: "Confirm your email",
+    inputType: "email",
+    expected: "email"
+  },
+  {
+    name: "Message to hiring manager",
+    label: "Message to hiring manager",
+    inputType: "textarea",
+    expected: "additional_information"
+  },
+  {
     name: "Phone Number",
     label: "Phone Number",
     inputType: "text",
@@ -90,7 +102,7 @@ const cases = [
     name: "Hispanic or Latino",
     label: "Hispanic or Latino",
     inputType: "radio",
-    expected: "race_ethnicity"
+    expected: "hispanic_latino"
   },
   {
     name: "Veteran Status",
@@ -241,8 +253,8 @@ console.log("ok - gender question boundary resists nearby race options");
 const hispanicQ = AF.classifyLabel("Hispanic or Latino", "radio", {
   optionLabels: ["Yes", "No"]
 });
-assert.strictEqual(hispanicQ.category, "race_ethnicity");
-console.log("ok - Hispanic or Latino stays race/ethnicity");
+assert.strictEqual(hispanicQ.category, "hispanic_latino");
+console.log("ok - Hispanic or Latino is a dedicated hispanic/latino field");
 
 if (failed) {
   console.error(failed + " classification test(s) failed");

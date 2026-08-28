@@ -268,7 +268,10 @@
       currentVisaStatus: "",
       visaExpirationDate: "",
       // Explicitly saved only — never inferred from auth/sponsorship/visa/citizenship.
-      exportControlStatus: ""
+      exportControlStatus: "",
+      citizenOfEmploymentCountry: "",
+      usCitizenOrLpr: "",
+      sanctionedCountryCitizen: ""
     };
     return { ...base, ...(overrides || {}) };
   }
@@ -301,9 +304,13 @@
   function createDefaultDemographics(overrides) {
     const base = {
       gender: "",
+      hispanicLatino: "",
+      transgender: "",
       raceEthnicity: "",
       veteranStatus: "",
-      disabilityStatus: ""
+      generalVeteranStatus: "",
+      disabilityStatus: "",
+      ageRange: ""
     };
     return { ...base, ...(overrides || {}) };
   }
@@ -318,8 +325,15 @@
         lastName: "",
         email: "",
         phone: "",
+        phoneCountry: "",
+        phoneCountryCode: "",
         location: "",
-        preferredName: ""
+        preferredName: "",
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        state: "",
+        postalCode: ""
       },
       links: {
         linkedin: "",
@@ -524,13 +538,17 @@
   function syncLegacyKeysFromProfile(profile) {
     const personal = (profile && profile.personal) || {};
     const links = (profile && profile.links) || {};
+    // Keep a chrome.storage snapshot so content-script autofill can refresh
+    // education/contact data immediately before filling (IndexedDB is extension-page only).
+    const snapshot = createDefaultMasterProfile(profile || {});
 
     return chromeStorageSet({
       firstName: personal.firstName || "",
       lastName: personal.lastName || "",
       email: personal.email || "",
       github: links.github || "",
-      linkedin: links.linkedin || ""
+      linkedin: links.linkedin || "",
+      masterProfile: snapshot
     });
   }
 
@@ -629,6 +647,13 @@
         console.warn("Failed to persist deduped projects on load:", error);
       }
       return toPersist;
+    }
+
+    // Refresh chrome.storage snapshot so content-script autofill sees latest IndexedDB profile.
+    try {
+      await syncLegacyKeysFromProfile(normalized);
+    } catch (error) {
+      console.warn("Failed to sync master profile snapshot for autofill:", error);
     }
 
     return normalized;
@@ -1795,7 +1820,18 @@
     const draft = parsedDraft || {};
     const conflicts = [];
 
-    const personalFields = ["firstName", "lastName", "email", "phone", "location"];
+    const personalFields = [
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "location",
+      "addressLine1",
+      "addressLine2",
+      "city",
+      "state",
+      "postalCode"
+    ];
     personalFields.forEach((field) => {
       const existingValue = (master.personal && master.personal[field]) || "";
       const parsedValue = (draft.personal && draft.personal[field]) || "";
@@ -1886,6 +1922,11 @@
           draft.personal && draft.personal.lastName,
           choices["personal.lastName"]
         ),
+        preferredName: _pickScalar(
+          master.personal && master.personal.preferredName,
+          draft.personal && draft.personal.preferredName,
+          choices["personal.preferredName"]
+        ),
         email: _pickScalar(
           master.personal && master.personal.email,
           draft.personal && draft.personal.email,
@@ -1896,10 +1937,45 @@
           draft.personal && draft.personal.phone,
           choices["personal.phone"]
         ),
+        phoneCountry: _pickScalar(
+          master.personal && master.personal.phoneCountry,
+          draft.personal && draft.personal.phoneCountry,
+          choices["personal.phoneCountry"]
+        ),
+        phoneCountryCode: _pickScalar(
+          master.personal && master.personal.phoneCountryCode,
+          draft.personal && draft.personal.phoneCountryCode,
+          choices["personal.phoneCountryCode"]
+        ),
         location: _pickScalar(
           master.personal && master.personal.location,
           draft.personal && draft.personal.location,
           choices["personal.location"]
+        ),
+        addressLine1: _pickScalar(
+          master.personal && master.personal.addressLine1,
+          draft.personal && draft.personal.addressLine1,
+          choices["personal.addressLine1"]
+        ),
+        addressLine2: _pickScalar(
+          master.personal && master.personal.addressLine2,
+          draft.personal && draft.personal.addressLine2,
+          choices["personal.addressLine2"]
+        ),
+        city: _pickScalar(
+          master.personal && master.personal.city,
+          draft.personal && draft.personal.city,
+          choices["personal.city"]
+        ),
+        state: _pickScalar(
+          master.personal && master.personal.state,
+          draft.personal && draft.personal.state,
+          choices["personal.state"]
+        ),
+        postalCode: _pickScalar(
+          master.personal && master.personal.postalCode,
+          draft.personal && draft.personal.postalCode,
+          choices["personal.postalCode"]
         )
       },
       links: {

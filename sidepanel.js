@@ -447,6 +447,32 @@ document.addEventListener("DOMContentLoaded", async () => {
       document.getElementById("email").value = personal.email;
       updateEmailTypoWarning(personal.email);
     }
+    if (personal.phone) {
+      const phoneEl = document.getElementById("phone");
+      if (phoneEl) phoneEl.value = personal.phone;
+    }
+    if (personal.phoneCountry) {
+      const phoneCountryEl = document.getElementById("phoneCountry");
+      if (phoneCountryEl) phoneCountryEl.value = personal.phoneCountry;
+    }
+    if (personal.phoneCountryCode) {
+      const phoneCountryCodeEl = document.getElementById("phoneCountryCode");
+      if (phoneCountryCodeEl) phoneCountryCodeEl.value = personal.phoneCountryCode;
+    }
+    if (personal.location) {
+      const locationEl = document.getElementById("location");
+      if (locationEl) locationEl.value = personal.location;
+    }
+    const addressLine1El = document.getElementById("addressLine1");
+    if (addressLine1El) addressLine1El.value = personal.addressLine1 || "";
+    const addressLine2El = document.getElementById("addressLine2");
+    if (addressLine2El) addressLine2El.value = personal.addressLine2 || "";
+    const cityEl = document.getElementById("city");
+    if (cityEl) cityEl.value = personal.city || "";
+    const stateEl = document.getElementById("state");
+    if (stateEl) stateEl.value = personal.state || "";
+    const postalCodeEl = document.getElementById("postalCode");
+    if (postalCodeEl) postalCodeEl.value = personal.postalCode || "";
 
     if (window.ImpulsoResume) {
       await window.ImpulsoResume.init();
@@ -470,6 +496,24 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
   const preferredNameEl = document.getElementById("preferredName");
   const preferredName = preferredNameEl ? preferredNameEl.value : "";
   const email = document.getElementById("email").value;
+  const phoneEl = document.getElementById("phone");
+  const phone = phoneEl ? phoneEl.value : "";
+  const phoneCountryEl = document.getElementById("phoneCountry");
+  const phoneCountry = phoneCountryEl ? phoneCountryEl.value : "";
+  const phoneCountryCodeEl = document.getElementById("phoneCountryCode");
+  const phoneCountryCode = phoneCountryCodeEl ? phoneCountryCodeEl.value : "";
+  const locationEl = document.getElementById("location");
+  const location = locationEl ? locationEl.value : "";
+  const addressLine1El = document.getElementById("addressLine1");
+  const addressLine1 = addressLine1El ? addressLine1El.value : "";
+  const addressLine2El = document.getElementById("addressLine2");
+  const addressLine2 = addressLine2El ? addressLine2El.value : "";
+  const cityEl = document.getElementById("city");
+  const city = cityEl ? cityEl.value : "";
+  const stateEl = document.getElementById("state");
+  const state = stateEl ? stateEl.value : "";
+  const postalCodeEl = document.getElementById("postalCode");
+  const postalCode = postalCodeEl ? postalCodeEl.value : "";
 
   try {
     if (email.trim() && !window.ImpulsoStorage.isValidEmailFormat(email)) {
@@ -487,7 +531,16 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
         firstName: firstName,
         lastName: lastName,
         preferredName: preferredName,
-        email: email
+        email: email,
+        phone: phone,
+        phoneCountry: phoneCountry,
+        phoneCountryCode: phoneCountryCode,
+        location: location,
+        addressLine1: addressLine1,
+        addressLine2: addressLine2,
+        city: city,
+        state: state,
+        postalCode: postalCode
       }
     };
 
@@ -522,6 +575,24 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
 
 // 3. Current job extraction is handled by window.ImpulsoJob (job.js).
 
+async function scanActiveApplicationForm(tabId, inventory) {
+  await chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    files: ["autofill.js", "autofill/adapters/smartrecruiters.js"]
+  });
+  const injection = await chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    func: function (answers) {
+      if (!window.ImpulsoAutofill || typeof window.ImpulsoAutofill.scanPage !== "function") {
+        return { error: "Scanner failed to load on this page." };
+      }
+      return window.ImpulsoAutofill.scanPage(answers || {});
+    },
+    args: [inventory || {}]
+  });
+  return injection && injection[0] ? injection[0].result : null;
+}
+
 // 4. Form Filling Orchestration Call
 document.getElementById("fillBtn").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -536,6 +607,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
 
   let resumeBase64 = "";
   let resumeName = "";
+  let resumeMime = "";
   try {
     if (window.ImpulsoStorage) {
       const currentJob = await window.ImpulsoStorage.getCurrentJob();
@@ -545,6 +617,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         if (selected && selected.document && selected.document.fileData) {
           resumeBase64 = selected.document.fileData;
           resumeName = selected.document.name || "";
+          resumeMime = selected.document.type || "";
         }
       } else {
         const defaultResume = await window.ImpulsoStorage.getDefaultResume();
@@ -552,6 +625,7 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         if (defaultResume && defaultResume.fileData) {
           resumeBase64 = defaultResume.fileData;
           resumeName = defaultResume.name || "";
+          resumeMime = defaultResume.type || "";
         }
       }
     }
@@ -570,10 +644,23 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
       typeof window.ImpulsoAutofill.resolveAutofillProfilePayload === "function"
         ? window.ImpulsoAutofill.resolveAutofillProfilePayload(masterProfile)
         : masterProfile;
+    let currentJob = null;
+    try {
+      currentJob = await window.ImpulsoStorage.getCurrentJob();
+    } catch (_) {
+      currentJob = null;
+    }
 
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["autofill.js", "autofill/adapters/ashby.js", "content.js"]
+      files: [
+        "autofill.js",
+        "autofill/adapters/ashby.js",
+        "autofill/adapters/lever.js",
+        "autofill/adapters/workday.js",
+        "autofill/adapters/smartrecruiters.js",
+        "content.js"
+      ]
     });
 
     const response = await chrome.tabs.sendMessage(tab.id, {
@@ -581,9 +668,12 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
       profile: profilePayload,
       // Always include saved demographic answers when an exact value exists.
       fillDemographics: true,
+      currentJobTitle: currentJob && currentJob.title ? currentJob.title : "",
+      currentJobLocation: currentJob && currentJob.location ? currentJob.location : "",
       resume: {
         resumeBase64: resumeBase64,
-        resumeName: resumeName
+        resumeName: resumeName,
+        resumeMime: resumeMime
       }
     });
 
@@ -593,6 +683,34 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
     }
 
     const summary = (response.report && response.report.summary) || {};
+    const filled = summary.filled || 0;
+    const skipped = summary.skipped || 0;
+    const failedCount = summary.failed || 0;
+    try {
+      const inventory = await buildScanAnswerInventory();
+      const postScan = await scanActiveApplicationForm(tab.id, inventory);
+      if (postScan && !postScan.error) {
+        latestFormScan = postScan;
+        refreshFormScanView();
+      }
+    } catch (scanError) {
+      console.error("Post-autofill rescan failed:", scanError);
+    }
+    const scanView = latestFormScan ? applyScanSkipState(latestFormScan) : null;
+    const readyCount = scanView
+      ? scanView.fields.filter(function (f) {
+          return f && f.fillStatus === "ready";
+        }).length
+      : 0;
+    if (readyCount > 0 && filled === 0 && skipped === 0 && failedCount === 0) {
+      setFormScanStatus(
+        "Autofill did not run. " +
+          readyCount +
+          " ready field(s) were not attempted. Reload the extension and try again.",
+        true
+      );
+      return;
+    }
     const failed = Array.isArray(response.report && response.report.results)
       ? response.report.results.filter(function (r) {
           return r && r.status === "failed";
@@ -611,15 +729,16 @@ document.getElementById("fillBtn").addEventListener("click", async () => {
         : "";
 
     setFormScanStatus(
-      "Autofill complete. " +
-        (summary.filled || 0) +
+      "Autofill result: " +
+        filled +
         " filled, " +
-        (summary.skipped || 0) +
+        skipped +
         " skipped, " +
-        (summary.failed || 0) +
+        failedCount +
         " failed." +
-        failHint,
-      Boolean(summary.failed)
+        failHint +
+        (latestFormScan ? " Scan refreshed from the live page." : ""),
+      Boolean(failedCount)
     );
   } catch (error) {
     console.error("Trigger Auto-Apply failed:", error);
@@ -651,6 +770,15 @@ function applyScanSkipState(scan) {
   const fields = scan.fields.map(function (field) {
     const copy = Object.assign({}, field);
     const skipped = skippedScanFieldIds.has(copy.fieldId);
+    const preserveSkip =
+      copy.category === "company_specific" ||
+      copy.conditionalState === "not_applicable" ||
+      copy.conditionalState === "blocked";
+    if (preserveSkip) {
+      copy.skipped = true;
+      copy.fillStatus = "skipped";
+      return copy;
+    }
     copy.skipped = skipped;
     if (skipped) {
       copy.fillStatus = "skipped";
@@ -763,6 +891,11 @@ function renderFormScanCard(field) {
     '">' +
     escapeScanHtml(requiredLabel) +
     "</span></div>" +
+    (field.actionHint
+      ? '<div class="form-scan-row"><span class="form-scan-k">Action</span><span class="form-scan-v">' +
+        escapeScanHtml(field.actionHint) +
+        "</span></div>"
+      : "") +
     (field.isSensitive
       ? '<div class="form-scan-sensitive-note">Sensitive — uses only your locally saved answer. Never inferred.</div>'
       : "") +
@@ -846,8 +979,9 @@ async function buildScanAnswerInventory() {
   const profile = await window.ImpulsoStorage.getMasterProfile();
   let hasResume = false;
   let resumeName = "";
+  let currentJob = null;
   try {
-    const currentJob = await window.ImpulsoStorage.getCurrentJob();
+    currentJob = await window.ImpulsoStorage.getCurrentJob();
     if (currentJob && currentJob.id) {
       const selected = await window.ImpulsoStorage.getSelectedResumeDocumentForJob(currentJob.id);
       if (selected && selected.document && selected.document.fileData) {
@@ -869,12 +1003,16 @@ async function buildScanAnswerInventory() {
   if (typeof window.ImpulsoAutofill.resolveAnswerInventory === "function") {
     return window.ImpulsoAutofill.resolveAnswerInventory(profile, {
       hasResume: hasResume,
-      resumeName: resumeName
+      resumeName: resumeName,
+      currentJobTitle: currentJob && currentJob.title ? currentJob.title : "",
+      currentJobLocation: currentJob && currentJob.location ? currentJob.location : ""
     });
   }
   return window.ImpulsoAutofill.buildAnswerInventory(profile, {
     hasResume: hasResume,
-    resumeName: resumeName
+    resumeName: resumeName,
+    currentJobTitle: currentJob && currentJob.title ? currentJob.title : "",
+    currentJobLocation: currentJob && currentJob.location ? currentJob.location : ""
   });
 }
 
@@ -899,24 +1037,7 @@ if (scanFormBtn) {
       }
 
       const inventory = await buildScanAnswerInventory();
-
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["autofill.js"]
-      });
-
-      const injection = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: function (answers) {
-          if (!window.ImpulsoAutofill || typeof window.ImpulsoAutofill.scanPage !== "function") {
-            return { error: "Scanner failed to load on this page." };
-          }
-          return window.ImpulsoAutofill.scanPage(answers || {});
-        },
-        args: [inventory]
-      });
-
-      const payload = injection && injection[0] ? injection[0].result : null;
+      const payload = await scanActiveApplicationForm(tab.id, inventory);
       if (!payload || payload.error) {
         setFormScanStatus((payload && payload.error) || "Scan returned no data.", true);
         return;

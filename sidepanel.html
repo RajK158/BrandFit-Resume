@@ -72,6 +72,43 @@
       <input type="email" id="email" placeholder="alex@example.com">
       <div id="emailTypoWarning" class="email-typo-warning" hidden role="status" aria-live="polite"></div>
 
+      <label for="phone">Phone</label>
+      <input type="tel" id="phone" placeholder="555-0100" autocomplete="tel-national">
+
+      <div class="row">
+        <div>
+          <label for="phoneCountry">Phone country</label>
+          <input type="text" id="phoneCountry" placeholder="United States" autocomplete="country-name">
+        </div>
+        <div>
+          <label for="phoneCountryCode">Phone country code</label>
+          <input type="text" id="phoneCountryCode" placeholder="+1" autocomplete="tel-country-code">
+        </div>
+      </div>
+
+      <label for="location">Current location (City)</label>
+      <input type="text" id="location" placeholder="Long Beach, California, United States" autocomplete="address-level2">
+
+      <label for="addressLine1">Address Line 1</label>
+      <input type="text" id="addressLine1" placeholder="Street address" autocomplete="address-line1">
+
+      <label for="addressLine2">Address Line 2 <span class="optional-tag">optional</span></label>
+      <input type="text" id="addressLine2" placeholder="Apt, suite, unit" autocomplete="address-line2">
+
+      <div class="row">
+        <div>
+          <label for="city">City</label>
+          <input type="text" id="city" placeholder="City" autocomplete="address-level2">
+        </div>
+        <div>
+          <label for="state">State</label>
+          <input type="text" id="state" placeholder="CA or California" autocomplete="address-level1">
+        </div>
+      </div>
+
+      <label for="postalCode">Postal Code</label>
+      <input type="text" id="postalCode" placeholder="Postal or ZIP code" autocomplete="postal-code">
+
       <button id="saveBtn" class="action btn-secondary" type="button">Save Core Profile</button>
 
       <div id="masterProfilePanel" class="master-profile-panel">
@@ -142,6 +179,27 @@
                 <option value="A person admitted as an asylee to the United States">A person admitted as an asylee to the United States</option>
                 <option value="None of the above">None of the above</option>
                 <option value="Prefer not to answer">Prefer not to answer</option>
+              </select>
+
+              <label class="app-info-field" for="appCitizenEmploymentCountry">Citizen of the country you will be employed in</label>
+              <select id="appCitizenEmploymentCountry" data-app-section="workAuthorization" data-app-field="citizenOfEmploymentCountry">
+                <option value="">Select…</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+
+              <label class="app-info-field" for="appUsCitizenOrLpr">U.S. citizen, lawful permanent resident, asylee, or refugee</label>
+              <select id="appUsCitizenOrLpr" data-app-section="workAuthorization" data-app-field="usCitizenOrLpr">
+                <option value="">Select…</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+
+              <label class="app-info-field" for="appSanctionedCountryCitizen">Citizen of Cuba, Iran, North Korea, or Syria</label>
+              <select id="appSanctionedCountryCitizen" data-app-section="workAuthorization" data-app-field="sanctionedCountryCitizen">
+                <option value="">Select…</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
               </select>
             </fieldset>
 
@@ -215,6 +273,19 @@
                 Optional demographic information is stored locally on this device, is never inferred from your resume, and can be left blank.
               </p>
 
+              <label class="app-info-field" for="appAgeRange">Age range</label>
+              <select id="appAgeRange" data-app-section="demographics" data-app-field="ageRange">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="17 or younger">17 or younger</option>
+                <option value="18-20">18-20</option>
+                <option value="21-29">21-29</option>
+                <option value="30-39">30-39</option>
+                <option value="40-49">40-49</option>
+                <option value="50-59">50-59</option>
+                <option value="60 or older">60 or older</option>
+              </select>
+
               <label class="app-info-field" for="appGender">Gender</label>
               <select id="appGender" data-app-section="demographics" data-app-field="gender">
                 <option value="">Leave blank</option>
@@ -223,6 +294,22 @@
                 <option value="Man">Man</option>
                 <option value="Non-binary">Non-binary</option>
                 <option value="Self-describe">Self-describe</option>
+              </select>
+
+              <label class="app-info-field" for="appHispanicLatino">Hispanic or Latino</label>
+              <select id="appHispanicLatino" data-app-section="demographics" data-app-field="hispanicLatino">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+
+              <label class="app-info-field" for="appTransgender">Do you identify as transgender?</label>
+              <select id="appTransgender" data-app-section="demographics" data-app-field="transgender">
+                <option value="">Leave blank</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
               </select>
 
               <label class="app-info-field" for="appRaceEthnicity">Race or ethnicity</label>
@@ -240,7 +327,15 @@
                 <option value="Self-describe">Self-describe</option>
               </select>
 
-              <label class="app-info-field" for="appVeteranStatus">Veteran status</label>
+              <label class="app-info-field" for="appGeneralVeteranStatus">Veteran status</label>
+              <select id="appGeneralVeteranStatus" data-app-section="demographics" data-app-field="generalVeteranStatus">
+                <option value="">Leave blank</option>
+                <option value="I am a veteran">I am a veteran</option>
+                <option value="I am not a veteran">I am not a veteran</option>
+                <option value="Prefer not to answer">Prefer not to answer</option>
+              </select>
+
+              <label class="app-info-field" for="appVeteranStatus">Protected veteran status</label>
               <select id="appVeteranStatus" data-app-section="demographics" data-app-field="veteranStatus">
                 <option value="">Leave blank</option>
                 <option value="Prefer not to answer">Prefer not to answer</option>
