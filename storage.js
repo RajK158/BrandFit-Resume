@@ -11,6 +11,7 @@
   const STORE_JOBS = "jobs";
   const STORE_APPLICATIONS = "applications";
   const STORE_JOB_PROFILES = "jobProfiles";
+  const APPLICATION_STATUSES = ["Applied", "Interview", "Rejected", "Offer", "Withdrawn"];
 
   const LEGACY_PROFILE_KEYS = [
     "firstName",
@@ -1309,6 +1310,119 @@
     return toSave;
   }
 
+  function normalizeApplicationStatus(value) {
+    const text = String(value || "").trim().toLowerCase();
+    const match = APPLICATION_STATUSES.find((status) => status.toLowerCase() === text);
+    return match || "Applied";
+  }
+
+  function createApplicationRecord(overrides) {
+    const source = overrides && typeof overrides === "object" ? overrides : {};
+    const timestamp = nowIso();
+    const title = String(source.title || "").trim();
+    const company = String(source.company || "").trim();
+    const jobUrl = String(source.jobUrl || source.url || "").trim();
+    const jobId = String(
+      source.jobId || buildStableJobId(jobUrl, company, title)
+    ).trim();
+    const id = String(source.id || "application-" + jobId).trim();
+    const hasScore =
+      source.matchScore !== null &&
+      source.matchScore !== undefined &&
+      String(source.matchScore).trim() !== "";
+    const score = hasScore ? Number(source.matchScore) : NaN;
+    const resumeType = ["default", "tailored", "none"].includes(source.resumeType)
+      ? source.resumeType
+      : "none";
+
+    return {
+      id: id,
+      jobId: jobId,
+      company: company,
+      title: title,
+      jobUrl: jobUrl,
+      location: String(source.location || "").trim(),
+      atsPlatform: String(source.atsPlatform || "generic").trim() || "generic",
+      appliedAt: source.appliedAt || timestamp,
+      status: normalizeApplicationStatus(source.status),
+      statusUpdatedAt: source.statusUpdatedAt || timestamp,
+      resumeId: String(source.resumeId || "").trim(),
+      resumeName: String(source.resumeName || "").trim(),
+      resumeType: resumeType,
+      matchScore: Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null,
+      notes: String(source.notes || "").trim(),
+      createdAt: source.createdAt || timestamp,
+      updatedAt: source.updatedAt || timestamp
+    };
+  }
+
+  async function getApplication(id) {
+    if (!id) return null;
+    try {
+      return await withStore(STORE_APPLICATIONS, "readonly", (store) =>
+        idbRequest(store.get(String(id)))
+      );
+    } catch (error) {
+      throw new Error("Failed to read application from IndexedDB: " + error.message);
+    }
+  }
+
+  async function listApplications() {
+    try {
+      const applications = await withStore(STORE_APPLICATIONS, "readonly", (store) =>
+        idbRequest(store.getAll())
+      );
+      return (Array.isArray(applications) ? applications : []).sort((a, b) =>
+        String(b.appliedAt || b.createdAt || "").localeCompare(
+          String(a.appliedAt || a.createdAt || "")
+        )
+      );
+    } catch (error) {
+      throw new Error("Failed to list applications from IndexedDB: " + error.message);
+    }
+  }
+
+  async function saveApplication(applicationRecord) {
+    if (!applicationRecord || typeof applicationRecord !== "object") {
+      throw new Error("saveApplication requires an application object");
+    }
+
+    const draft = createApplicationRecord(applicationRecord);
+    const existing = await getApplication(draft.id);
+    const statusChanged = Boolean(existing && existing.status !== draft.status);
+    const toSave = createApplicationRecord({
+      ...draft,
+      createdAt: (existing && existing.createdAt) || draft.createdAt,
+      appliedAt: (existing && existing.appliedAt) || draft.appliedAt,
+      statusUpdatedAt: statusChanged
+        ? nowIso()
+        : (existing && existing.statusUpdatedAt) || draft.statusUpdatedAt,
+      updatedAt: nowIso()
+    });
+
+    try {
+      await withStore(STORE_APPLICATIONS, "readwrite", (store) =>
+        idbRequest(store.put(toSave))
+      );
+    } catch (error) {
+      throw new Error("Failed to save application to IndexedDB: " + error.message);
+    }
+
+    return toSave;
+  }
+
+  async function deleteApplication(id) {
+    if (!id) return false;
+    try {
+      await withStore(STORE_APPLICATIONS, "readwrite", (store) =>
+        idbRequest(store.delete(String(id)))
+      );
+      return true;
+    } catch (error) {
+      throw new Error("Failed to delete application from IndexedDB: " + error.message);
+    }
+  }
+
   function _asStringList(value) {
     if (!Array.isArray(value)) return [];
     const out = [];
@@ -2318,6 +2432,13 @@
     listJobs: listJobs,
     saveJob: saveJob,
     deleteJob: deleteJob,
+    APPLICATION_STATUSES: APPLICATION_STATUSES.slice(),
+    normalizeApplicationStatus: normalizeApplicationStatus,
+    createApplicationRecord: createApplicationRecord,
+    getApplication: getApplication,
+    listApplications: listApplications,
+    saveApplication: saveApplication,
+    deleteApplication: deleteApplication,
     getCurrentJob: getCurrentJob,
     setCurrentJob: setCurrentJob,
     clearCurrentJob: clearCurrentJob,
