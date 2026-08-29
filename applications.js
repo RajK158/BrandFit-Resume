@@ -28,6 +28,33 @@
     return match || "Applied";
   }
 
+  function scoreFromAnalysis(analysis) {
+    if (!analysis || typeof analysis !== "object") return null;
+    const raw = analysis.matchScore != null ? analysis.matchScore : analysis.match_score;
+    const score = Number(raw);
+    return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
+  }
+
+  function findStoredMatchScore(currentJob, lookup) {
+    const direct = scoreFromAnalysis(lookup && lookup.analysis);
+    if (direct != null) return direct;
+    const latest = scoreFromAnalysis(currentJob && currentJob.matchAnalysis);
+    if (latest != null) return latest;
+    const analyses = currentJob && currentJob.matchAnalyses;
+    if (!analyses || typeof analyses !== "object") return null;
+    const ordered = Object.keys(analyses)
+      .map((key) => analyses[key])
+      .filter(Boolean)
+      .sort((left, right) =>
+        String(right.analyzedAt || "").localeCompare(String(left.analyzedAt || ""))
+      );
+    for (const analysis of ordered) {
+      const score = scoreFromAnalysis(analysis);
+      if (score != null) return score;
+    }
+    return null;
+  }
+
   function hashText(value) {
     const text = clean(value);
     let hash = 2166136261;
@@ -417,11 +444,9 @@
     let matchScore = null;
     try {
       const match = await global.ImpulsoStorage.getJobMatchAnalysisForJob(currentJob.id);
-      if (match && match.analysis && Number.isFinite(Number(match.analysis.matchScore))) {
-        matchScore = Number(match.analysis.matchScore);
-      }
+      matchScore = findStoredMatchScore(currentJob, match);
     } catch (_) {
-      matchScore = currentJob.matchAnalysis && currentJob.matchAnalysis.matchScore;
+      matchScore = findStoredMatchScore(currentJob, null);
     }
 
     const resumeDocument = selected.document || null;
@@ -527,6 +552,7 @@
   global.ImpulsoApplications = {
     APPLICATION_STATUSES: APPLICATION_STATUSES.slice(),
     normalizeApplication: normalizeApplication,
+    findStoredMatchScore: findStoredMatchScore,
     applicationsToCsv: applicationsToCsv,
     parseApplicationsCsv: parseApplicationsCsv,
     refresh: refreshApplications,

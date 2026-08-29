@@ -396,4 +396,20 @@ console.log("ok - SmartRecruiters Western Digital job location extraction");
 })();
 console.log("ok - Greenhouse job extractor preserved");
 
+(function testGreenhouseCompanyUrlFallback() {
+  const location = {
+    href: "https://job-boards.greenhouse.io/spacex/jobs/8569160002",
+    hostname: "job-boards.greenhouse.io",
+    pathname: "/spacex/jobs/8569160002",
+    search: ""
+  };
+  const title = el("h1", "Software Engineer (Starship)", { class: "app-title" });
+  const document = createDocument([title]);
+  const Job = loadJob(document, location);
+  const extracted = Job.extractJobFromPage();
+  assert.strictEqual(extracted.atsPlatform, "greenhouse");
+  assert.strictEqual(extracted.company, "SpaceX");
+})();
+console.log("ok - Greenhouse company URL fallback");
+
 console.log("All Current Job extraction tests passed.");

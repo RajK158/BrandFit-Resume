@@ -46,6 +46,27 @@ const withoutScore = core.normalizeApplication({
 });
 assert.strictEqual(withoutScore.matchScore, null);
 
+assert.strictEqual(
+  core.findStoredMatchScore(
+    { matchAnalysis: { matchScore: 87 } },
+    { analysis: null, missing: true }
+  ),
+  87
+);
+
+assert.strictEqual(
+  core.findStoredMatchScore(
+    {
+      matchAnalyses: {
+        old: { matchScore: 71, analyzedAt: "2026-08-20T00:00:00.000Z" },
+        latest: { matchScore: 93, analyzedAt: "2026-08-21T00:00:00.000Z" }
+      }
+    },
+    null
+  ),
+  93
+);
+
 const csv = core.applicationsToCsv([
   normalized,
   {
