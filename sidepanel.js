@@ -41,7 +41,14 @@ function showSection(sectionId) {
     if (window.ImpulsoJob) {
       window.ImpulsoJob.refresh();
     }
+    if (window.ImpulsoApplications) {
+      window.ImpulsoApplications.refreshMarkButton();
+    }
     refreshJobMatchAnalysis();
+  }
+
+  if (sectionId === "applications" && window.ImpulsoApplications) {
+    window.ImpulsoApplications.refresh();
   }
 
   if (sectionId === "profile") {
@@ -120,8 +127,16 @@ function refreshHomeStatus() {
   const jobEl = document.getElementById("homeJobStatus");
   const appsEl = document.getElementById("homeApplicationCount");
 
-  if (appsEl) {
-    appsEl.textContent = "0 applications tracked (coming soon)";
+  if (appsEl && window.ImpulsoStorage) {
+    window.ImpulsoStorage
+      .listApplications()
+      .then((applications) => {
+        const count = applications.length;
+        appsEl.textContent = count + (count === 1 ? " application tracked" : " applications tracked");
+      })
+      .catch(() => {
+        appsEl.textContent = "Unable to load applications";
+      });
   }
 
   chrome.storage.local.get(["firstName", "lastName", "email"], (data) => {

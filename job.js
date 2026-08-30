@@ -327,6 +327,53 @@
       return "";
     }
 
+    function formatGreenhouseCompanySlug(slug) {
+      let value = String(slug || "").trim();
+      if (!value) return "";
+      try {
+        value = decodeURIComponent(value);
+      } catch (_) {}
+      const compact = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const knownNames = {
+        spacex: "SpaceX"
+      };
+      if (knownNames[compact]) return knownNames[compact];
+      return value
+        .replace(/[-_]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\b\w/g, function (character) {
+          return character.toUpperCase();
+        });
+    }
+
+    function greenhouseCompanyFromUrl(href) {
+      try {
+        const parsed = new URL(String(href || ""));
+        const parts = parsed.pathname.split("/").filter(Boolean);
+        if (!parts.length) return "";
+        return formatGreenhouseCompanySlug(parts[0]);
+      } catch (_) {
+        return "";
+      }
+    }
+
+    function extractGreenhouseCompany(jobPosting, jobTitle, href) {
+      let value = cleanText(organizationNameFromJsonLd(jobPosting));
+      if (value) return value;
+      value = firstText([".company-name", "#header .company-name"]);
+      if (value) return value;
+      value = firstAttr(["meta[property='og:site_name']", "header img[alt]"], "content");
+      if (!value) value = firstAttr(["header img[alt]", "img[alt*='logo']"], "alt");
+      if (value && !/^greenhouse$/i.test(value)) return value;
+      const titleText = cleanText(document.title || "");
+      const atMatch = titleText.match(/\s+at\s+(.+?)(?:\s*[|\-–—]\s*Greenhouse)?$/i);
+      if (atMatch && atMatch[1]) return cleanText(atMatch[1]);
+      value = companyFromDocumentTitle(titleText, jobTitle);
+      if (value && !/^greenhouse$/i.test(value) && value !== jobTitle) return value;
+      return greenhouseCompanyFromUrl(href);
+    }
+
     function parseJsonLdJobPosting() {
       const scripts = document.querySelectorAll('script[type="application/ld+json"]');
       for (let i = 0; i < scripts.length; i += 1) {
@@ -600,10 +647,7 @@
       );
     } else if (atsPlatform === "greenhouse") {
       title = firstText([".app-title", "h1.app-title", "h1"]);
-      company = firstText([".company-name", "#header .company-name", "meta[property='og:site_name']"]);
-      if (!company) {
-        company = firstAttr(["meta[property='og:site_name']"], "content");
-      }
+      company = extractGreenhouseCompany(jsonLdJob, title, rawUrl);
       jobLocation = firstText([".location", "#header .location", ".app-location"]);
       description = collectDescription(
         ["#content", "#app_body", ".content", "#job_description", "[data-qa='job-description']"],

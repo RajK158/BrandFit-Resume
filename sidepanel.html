@@ -497,8 +497,10 @@
         <button id="analyzeJobMatchBtn" class="action btn-optimize" type="button">Analyze Job Match</button>
         <button id="scanFormBtn" class="action btn-secondary" type="button">Scan Application Form</button>
         <button id="fillBtn" class="action btn-success" type="button">Trigger Auto-Apply</button>
+        <button id="markAppliedBtn" class="action btn-applied" type="button">Mark as Applied</button>
         <div id="jdStatus" class="jd-box" hidden>Pipeline status will appear here.</div>
         <div id="formScanStatus" class="resume-status" aria-live="polite"></div>
+        <div id="applicationTrackStatus" class="resume-status" aria-live="polite"></div>
         <div id="formScanSummary" class="form-scan-summary" hidden></div>
         <div id="formScanResults" class="form-scan-results" hidden></div>
         <div id="jobMatchStaleBanner" class="job-match-stale" hidden role="status" aria-live="polite">
@@ -510,7 +512,24 @@
 
     <section id="section-applications" class="view-section" role="tabpanel" aria-labelledby="nav-applications" hidden>
       <h2 class="section-title">Applications</h2>
-      <p class="placeholder-note">Application tracking will appear here in a later phase. No applications are stored yet.</p>
+      <div class="application-summary" id="applicationSummary">0 applications</div>
+      <div class="application-toolbar">
+        <label class="application-filter-label" for="applicationStatusFilter">Status</label>
+        <select id="applicationStatusFilter" class="application-filter">
+          <option value="all">All</option>
+          <option value="Applied">Applied</option>
+          <option value="Interview">Interview</option>
+          <option value="Rejected">Rejected</option>
+          <option value="Offer">Offer</option>
+          <option value="Withdrawn">Withdrawn</option>
+        </select>
+        <button id="exportApplicationsBtn" class="action btn-secondary application-tool" type="button">Export CSV</button>
+        <button id="importApplicationsBtn" class="action btn-secondary application-tool" type="button">Import CSV</button>
+        <input id="applicationsCsvInput" type="file" accept=".csv,text/csv" hidden />
+      </div>
+      <div id="applicationListStatus" class="resume-status" aria-live="polite"></div>
+      <div id="applicationEmptyState" class="job-empty-state">No applications tracked yet.</div>
+      <div id="applicationsList" class="applications-list" hidden></div>
     </section>
 
     <section id="section-analytics" class="view-section" role="tabpanel" aria-labelledby="nav-analytics" hidden>
@@ -529,6 +548,7 @@
   <script src="autofill.js"></script>
   <script src="resume.js"></script>
   <script src="job.js"></script>
+  <script src="applications.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

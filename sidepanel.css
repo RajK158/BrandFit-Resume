@@ -1444,3 +1444,155 @@ button.action.btn-danger:hover {
   color: var(--muted);
   font-size: 12px;
 }
+
+button.action.btn-applied {
+  background: #0f766e;
+}
+
+button.action.btn-applied:hover {
+  background: #115e59;
+}
+
+.application-summary {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+.application-toolbar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.application-filter-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.application-filter {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+button.action.application-tool {
+  margin: 0;
+}
+
+.applications-list {
+  display: grid;
+  gap: 10px;
+}
+
+.applications-list[hidden] {
+  display: none !important;
+}
+
+.application-card {
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.application-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.application-card-title {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.application-card-company {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.application-link {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.application-link:hover {
+  text-decoration: underline;
+}
+
+.application-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+
+.application-meta-item {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.application-meta-item strong {
+  display: block;
+  color: var(--text);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.application-editor {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.application-editor label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.application-status-select,
+.application-notes {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.application-notes {
+  min-height: 54px;
+  resize: vertical;
+}
+
+.application-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.application-card-actions .action {
+  margin: 0;
+}
