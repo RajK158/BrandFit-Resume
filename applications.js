@@ -258,6 +258,14 @@
     heading.appendChild(company);
     header.appendChild(heading);
 
+    const headerActions = document.createElement("div");
+    headerActions.className = "application-header-actions";
+    const statusBadge = document.createElement("span");
+    statusBadge.className =
+      "application-status-badge status-" + normalizeStatus(application.status).toLowerCase();
+    statusBadge.textContent = normalizeStatus(application.status);
+    headerActions.appendChild(statusBadge);
+
     if (isSafeJobUrl(application.jobUrl)) {
       const link = document.createElement("a");
       link.className = "application-link";
@@ -265,8 +273,9 @@
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.textContent = "Open job";
-      header.appendChild(link);
+      headerActions.appendChild(link);
     }
+    header.appendChild(headerActions);
 
     const meta = document.createElement("div");
     meta.className = "application-meta";

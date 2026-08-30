@@ -6,22 +6,33 @@
 </head>
 <body>
   <header class="app-header">
-    <h1>Impulso</h1>
-    <p>Local-first AI career copilot</p>
+    <div class="brand-lockup">
+      <img class="brand-logo" src="icons/impulso-48.png" alt="" />
+      <div>
+        <h1>Impulso</h1>
+        <p>Apply smarter. Move faster.</p>
+      </div>
+    </div>
+    <div class="local-badge"><span></span>Local first</div>
   </header>
 
   <nav class="side-nav" role="tablist" aria-label="Impulso sections">
     <button type="button" role="tab" id="nav-home" data-section="home" aria-controls="section-home" aria-selected="false">Home</button>
     <button type="button" role="tab" id="nav-profile" data-section="profile" aria-controls="section-profile" aria-selected="false">Profile</button>
-    <button type="button" role="tab" id="nav-current-job" data-section="current-job" aria-controls="section-current-job" aria-selected="true" class="active">Current Job</button>
+    <button type="button" role="tab" id="nav-current-job" data-section="current-job" aria-controls="section-current-job" aria-selected="true" class="active">Job</button>
     <button type="button" role="tab" id="nav-applications" data-section="applications" aria-controls="section-applications" aria-selected="false">Applications</button>
-    <button type="button" role="tab" id="nav-analytics" data-section="analytics" aria-controls="section-analytics" aria-selected="false">Analytics</button>
-    <button type="button" role="tab" id="nav-settings" data-section="settings" aria-controls="section-settings" aria-selected="false">Settings</button>
+    <button type="button" role="tab" id="nav-settings" class="nav-settings" data-section="settings" aria-controls="section-settings" aria-selected="false" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.2 3.5c0-.5-.1-1-.2-1.5l1.8-1.4-2-3.4-2.2.9a8 8 0 0 0-2.6-1.5L14.7 2h-4l-.4 2.4a8 8 0 0 0-2.6 1.5l-2.2-.9-2 3.4 1.8 1.4A8 8 0 0 0 5.2 12c0 .5.1 1 .2 1.5l-1.8 1.4 2 3.4 2.2-.9a8 8 0 0 0 2.6 1.5l.4 2.4h4l.4-2.4a8 8 0 0 0 2.6-1.5l2.2.9 2-3.4-1.8-1.4c.1-.5.2-1 .2-1.5Z"/></svg>
+    </button>
   </nav>
 
   <main class="panel-content">
     <section id="section-home" class="view-section" role="tabpanel" aria-labelledby="nav-home" hidden>
-      <h2 class="section-title">Welcome to Impulso</h2>
+      <div class="section-heading">
+        <span class="section-eyebrow">Your workspace</span>
+        <h2 class="section-title">Welcome back</h2>
+        <p>Everything you need to prepare, apply, and stay organized.</p>
+      </div>
       <div id="homeReadiness" class="readiness-card" aria-live="polite">
         <div class="readiness-row">
           <span class="readiness-score" id="homeReadinessScore">Profile readiness: —</span>
@@ -29,7 +40,7 @@
         </div>
         <ul class="readiness-missing" id="homeReadinessMissing"></ul>
       </div>
-      <ul class="status-list">
+      <ul class="status-list home-status-grid">
         <li>
           <span class="label">Profile status</span>
           <span class="value" id="homeProfileStatus">Loading profile…</span>
@@ -424,11 +435,17 @@
     </section>
 
     <section id="section-current-job" class="view-section active" role="tabpanel" aria-labelledby="nav-current-job">
-      <h2 class="section-title">Current Job</h2>
+      <div class="section-heading">
+        <span class="section-eyebrow">Application workspace</span>
+        <h2 class="section-title">Current Job</h2>
+        <p>Capture the role, choose your resume, and complete the application.</p>
+      </div>
 
-      <div class="panel-box job-panel">
-        <strong>Current Job Capture</strong>
-        <p class="resume-hint">Extract structured job details from the active browser tab.</p>
+      <div class="panel-box job-panel workflow-card">
+        <div class="workflow-heading">
+          <span class="workflow-step">1</span>
+          <div><strong>Capture the job</strong><p class="resume-hint">Read job details from the active browser tab.</p></div>
+        </div>
 
         <div class="job-actions">
           <button id="jobExtractBtn" class="action" type="button">Extract Current Job</button>
@@ -445,11 +462,11 @@
         <div id="jobCard" class="job-card" hidden></div>
       </div>
 
-      <div class="panel-box job-resume-panel">
-        <strong>Job-Specific Resume</strong>
-        <p class="resume-hint">
-          Upload a tailored PDF or DOCX for this job. Master profile and default resume stay unchanged until you approve career edits for this job only.
-        </p>
+      <div class="panel-box job-resume-panel workflow-card">
+        <div class="workflow-heading">
+          <span class="workflow-step">2</span>
+          <div><strong>Choose your resume</strong><p class="resume-hint">Use your default resume or upload a tailored PDF or DOCX.</p></div>
+        </div>
 
         <div class="job-actions">
           <button id="jobResumeUploadBtn" class="action" type="button">Upload Tailored Resume</button>
@@ -492,12 +509,17 @@
         </div>
       </div>
 
-      <div class="panel-box">
-        <strong style="color: #16a34a;">Application Pipeline</strong>
-        <button id="analyzeJobMatchBtn" class="action btn-optimize" type="button">Analyze Job Match</button>
-        <button id="scanFormBtn" class="action btn-secondary" type="button">Scan Application Form</button>
-        <button id="fillBtn" class="action btn-success" type="button">Trigger Auto-Apply</button>
-        <button id="markAppliedBtn" class="action btn-applied" type="button">Mark as Applied</button>
+      <div class="panel-box workflow-card pipeline-card">
+        <div class="workflow-heading">
+          <span class="workflow-step">3</span>
+          <div><strong>Complete the application</strong><p class="resume-hint">Review first, then fill the form when you are ready.</p></div>
+        </div>
+        <div class="pipeline-actions">
+          <button id="analyzeJobMatchBtn" class="action btn-optimize" type="button"><span>1</span>Analyze Job Match</button>
+          <button id="scanFormBtn" class="action btn-secondary" type="button"><span>2</span>Scan Application Form</button>
+          <button id="fillBtn" class="action btn-success" type="button"><span>3</span>Fill Application</button>
+          <button id="markAppliedBtn" class="action btn-applied" type="button"><span>✓</span>Mark as Applied</button>
+        </div>
         <div id="jdStatus" class="jd-box" hidden>Pipeline status will appear here.</div>
         <div id="formScanStatus" class="resume-status" aria-live="polite"></div>
         <div id="applicationTrackStatus" class="resume-status" aria-live="polite"></div>
@@ -511,7 +533,11 @@
     </section>
 
     <section id="section-applications" class="view-section" role="tabpanel" aria-labelledby="nav-applications" hidden>
-      <h2 class="section-title">Applications</h2>
+      <div class="section-heading">
+        <span class="section-eyebrow">Your progress</span>
+        <h2 class="section-title">Applications</h2>
+        <p>Track every application and keep follow-ups in one place.</p>
+      </div>
       <div class="application-summary" id="applicationSummary">0 applications</div>
       <div class="application-toolbar">
         <label class="application-filter-label" for="applicationStatusFilter">Status</label>
@@ -530,11 +556,6 @@
       <div id="applicationListStatus" class="resume-status" aria-live="polite"></div>
       <div id="applicationEmptyState" class="job-empty-state">No applications tracked yet.</div>
       <div id="applicationsList" class="applications-list" hidden></div>
-    </section>
-
-    <section id="section-analytics" class="view-section" role="tabpanel" aria-labelledby="nav-analytics" hidden>
-      <h2 class="section-title">Analytics</h2>
-      <p class="placeholder-note">Analytics and insights will appear here in a later phase.</p>
     </section>
 
     <section id="section-settings" class="view-section" role="tabpanel" aria-labelledby="nav-settings" hidden>
