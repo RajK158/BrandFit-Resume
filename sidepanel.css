@@ -2032,6 +2032,26 @@ label {
   color: var(--navy);
 }
 
+.job-card-url {
+  margin-top: 9px;
+}
+
+.job-card-url a {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.job-card-url a:hover {
+  background: #dbeafe;
+}
+
 .application-summary {
   margin-bottom: 9px;
   padding: 12px 13px;

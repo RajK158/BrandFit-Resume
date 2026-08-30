@@ -1119,9 +1119,11 @@
         "</div>" +
         "</div>" +
         '<div class="job-card-meta">' +
-        "<div><span class=\"label\">Location</span> " +
-        escapeHtml(current.location || "—") +
-        "</div>" +
+        (current.location
+          ? "<div><span class=\"label\">Location</span> " +
+            escapeHtml(current.location) +
+            "</div>"
+          : "") +
         "<div><span class=\"label\">Source</span> " +
         escapeHtml(formatAtsPlatformLabel(current.atsPlatform)) +
         "</div>" +
@@ -1130,10 +1132,10 @@
         "</div>" +
         "</div>" +
         (url
-          ? '<div class="job-card-url"><span class="label">URL</span> <a href="' +
+          ? '<div class="job-card-url"><a href="' +
             escapeHtml(url) +
             '" target="_blank" rel="noopener noreferrer">' +
-            escapeHtml(url) +
+            "Open job posting ↗" +
             "</a></div>"
           : "") +
         '<div class="job-card-preview"><span class="label">Description preview</span><p>' +
