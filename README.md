@@ -1,6 +1,6 @@
 # Impulso
 
-**Early development version.** Impulso is an unfinished Chrome extension plus FastAPI backend for job-application assistance (profile caching, job-description scraping, form autofill, and resume keyword tailoring). Do not treat this as a production-ready release.
+**Early development version.** Impulso is an Chrome extension plus FastAPI backend for job-application assistance (profile caching, job-description scraping, form autofill, and resume keyword tailoring). Do not treat this as a production-ready release.
 
 ## Current folder structure
 
